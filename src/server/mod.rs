@@ -10,6 +10,7 @@ use crate::protocols::ssh::{
     create_ssh_session, handle_ssh_session, sftp_list_directory,
     sftp_upload_file, SshConnectionParams,
 };
+use crate::protocols::telnet::{handle_telnet_session, TelnetConnectionParams};
 use crate::protocols::vnc::{handle_vnc_session, VncConnectionParams};
 use crate::transfer::TransferManager;
 use axum::{
@@ -1370,6 +1371,13 @@ pub async fn ws_tunnel_handler(
                     passphrase: None,
                 };
                 handle_ssh_session(socket, params, cols, rows).await;
+            }
+            "telnet" => {
+                let params = TelnetConnectionParams {
+                    host: conn_rec.host,
+                    port: conn_rec.port,
+                };
+                handle_telnet_session(socket, params, cols, rows).await;
             }
             "vnc" => {
                 let params = VncConnectionParams {

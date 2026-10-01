@@ -6,6 +6,14 @@
   <title>Remote — High-Performance Remote Gateway</title>
   <link rel="stylesheet" href="app.css" />
   <link rel="icon" type="image/png" href="assets/Remoteiconsmall.png" />
+  <!-- Bundled Nerd Fonts Preload -->
+  <link rel="preload" href="assets/fonts/JetBrainsMonoNerdFont-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <link rel="preload" href="assets/fonts/SymbolsNerdFontMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
+  <!-- xterm.js Terminal Engine & Addons -->
+  <link rel="stylesheet" href="assets/vendor/xterm.min.css" />
+  <script src="assets/vendor/xterm.min.js"></script>
+  <script src="assets/vendor/addon-fit.min.js"></script>
+  <script src="assets/vendor/addon-web-links.min.js"></script>
 </head>
 <body>
   <!-- Root App Container -->
@@ -465,6 +473,7 @@
                 <label style="font-size: 11px; font-weight: 600;">Protocol *</label>
                 <select id="conn-protocol" class="form-input" onchange="onProtocolChanged()">
                   <option value="ssh">SSH (Terminal & SFTP)</option>
+                  <option value="telnet">Telnet (Terminal)</option>
                   <option value="vnc">VNC / RFB (Desktop)</option>
                   <option value="rdp">RDP (Windows Desktop)</option>
                   <option value="local_pty">Local PTY (Shell)</option>

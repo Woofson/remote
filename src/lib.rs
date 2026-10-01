@@ -170,4 +170,44 @@ mod tests {
         let disabled_user = db.get_user_by_id(&user.id).expect("get user").expect("user exists");
         assert!(!disabled_user.is_active);
     }
+
+    #[test]
+    fn test_telnet_naws_and_connection() {
+        use protocols::telnet::naws_packet;
+
+        // Verify NAWS packet RFC 1073 format: IAC SB NAWS <width_high> <width_low> <height_high> <height_low> IAC SE
+        let packet = naws_packet(120, 32);
+        assert_eq!(packet, vec![255, 250, 31, 0, 120, 0, 32, 255, 240]);
+
+        // Verify zero fallback to 80x24 standard terminal size
+        let default_packet = naws_packet(0, 0);
+        assert_eq!(default_packet, vec![255, 250, 31, 0, 80, 0, 24, 255, 240]);
+
+        // Verify Database supports Telnet connection records
+        let db = Database::new_in_memory().expect("failed to create in-memory db");
+        let conn = ConnectionRecord {
+            id: Uuid::new_v4().to_string(),
+            name: "BBS Retro Gateway".into(),
+            protocol: "telnet".into(),
+            host: "telehack.com".into(),
+            port: 23,
+            username: None,
+            password_enc: None,
+            private_key_enc: None,
+            settings_json: "{}".into(),
+            icon: None,
+            tags: Some("telnet,bbs".into()),
+            is_global: true,
+            allow_clipboard: "bidirectional".into(),
+            allow_transfer: "disabled".into(),
+            view_only: false,
+            created_by: None,
+            created_at: "2026-09-01T00:00:00Z".into(),
+            updated_at: "2026-09-01T00:00:00Z".into(),
+        };
+        db.save_connection(&conn).expect("save telnet conn");
+        let loaded = db.get_connection_raw(&conn.id).expect("get conn").expect("found");
+        assert_eq!(loaded.protocol, "telnet");
+        assert_eq!(loaded.port, 23);
+    }
 }

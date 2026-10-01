@@ -1,5 +1,6 @@
 pub mod local_pty;
 pub mod ssh;
+pub mod telnet;
 pub mod vnc;
 pub mod rdp;
 

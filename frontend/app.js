@@ -3,6 +3,33 @@
  * Part of the Woofson Suite (CommanderDog, NoteDog, DotDog)
  */
 
+// ================= Terminal Theme (Woofson Golden Amber) =================
+const TERMINAL_THEME = {
+  background: '#090a0d',
+  foreground: '#f4f4f5',
+  cursor: '#f59e0b',
+  cursorAccent: '#121214',
+  selectionBackground: 'rgba(245, 158, 11, 0.35)',
+  selectionForeground: '#ffffff',
+  selectionInactiveBackground: 'rgba(245, 158, 11, 0.20)',
+  black: '#18181b',
+  red: '#ef4444',
+  green: '#10b981',
+  yellow: '#f59e0b',
+  blue: '#3b82f6',
+  magenta: '#d946ef',
+  cyan: '#06b6d4',
+  white: '#e4e4e7',
+  brightBlack: '#52525b',
+  brightRed: '#f87171',
+  brightGreen: '#34d399',
+  brightYellow: '#fbbf24',
+  brightBlue: '#60a5fa',
+  brightMagenta: '#e879f9',
+  brightCyan: '#22d3ee',
+  brightWhite: '#fafafa',
+};
+
 // ================= Global State =================
 const state = {
   currentUser: null,
@@ -12,10 +39,10 @@ const state = {
   connections: [],
   stagedFiles: [],
   panes: {
-    1: { id: 1, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null },
-    2: { id: 2, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null },
-    3: { id: 3, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null },
-    4: { id: 4, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null },
+    1: { id: 1, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
+    2: { id: 2, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
+    3: { id: 3, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
+    4: { id: 4, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
   },
 };
 
@@ -814,6 +841,7 @@ function onProtocolChanged() {
   const proto = document.getElementById('conn-protocol').value;
   const isLocal = proto === 'local_pty';
   const isSsh = proto === 'ssh';
+  const isTelnet = proto === 'telnet';
   const isRdp = proto === 'rdp';
 
   document.getElementById('group-host').style.display = isLocal ? 'none' : 'block';
@@ -827,6 +855,7 @@ function onProtocolChanged() {
   if (proto === 'vnc') document.getElementById('conn-port').value = '5900';
   if (proto === 'rdp') document.getElementById('conn-port').value = '3389';
   if (proto === 'ssh') document.getElementById('conn-port').value = '22';
+  if (proto === 'telnet') document.getElementById('conn-port').value = '23';
 }
 
 async function handleSaveConnection(e) {
@@ -940,9 +969,11 @@ function connectToTarget(connectionId) {
   const rect = bodyEl.getBoundingClientRect();
   const initW = Math.min(3840, Math.max(640, Math.round(rect.width) || 1920));
   const initH = Math.min(2160, Math.max(480, Math.round(rect.height) || 1080));
+  const cols = Math.max(20, Math.floor(initW / 9)) || 120;
+  const rows = Math.max(5, Math.floor(initH / 18)) || 32;
 
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${location.host}/ws/tunnel/${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=120&rows=32`;
+  const wsUrl = `${protocol}//${location.host}/ws/tunnel/${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}`;
 
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
@@ -1006,94 +1037,121 @@ function connectToTarget(connectionId) {
 }
 
 function setupTerminalProtocol(pane, ws, bodyEl) {
-  const term = document.createElement('div');
-  term.className = 'pane-terminal';
-  term.tabIndex = 0;
-  bodyEl.appendChild(term);
+  const container = document.createElement('div');
+  container.className = 'pane-terminal-container';
+  bodyEl.appendChild(container);
+
+  // Initialize xterm.js
+  const term = new Terminal({
+    cursorBlink: true,
+    cursorStyle: 'block',
+    fontSize: 13,
+    fontFamily: '"JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font Mono", "Fira Code", monospace',
+    lineHeight: 1.2,
+    letterSpacing: 0,
+    allowProposedApi: true,
+    scrollback: 10000,
+    theme: TERMINAL_THEME,
+    convertEol: false,
+  });
+
+  // Fit Addon
+  const FitAddonClass = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
+  let fitAddon = null;
+  if (FitAddonClass) {
+    fitAddon = new FitAddonClass();
+    term.loadAddon(fitAddon);
+  }
+
+  // Web Links Addon
+  const WebLinksAddonClass = (window.WebLinksAddon && window.WebLinksAddon.WebLinksAddon) || window.WebLinksAddon;
+  if (WebLinksAddonClass) {
+    term.loadAddon(new WebLinksAddonClass());
+  }
+
+  term.open(container);
   pane.terminal = term;
+  pane.fitAddon = fitAddon;
 
-  let buffer = '';
+  // Fit initial size
+  if (fitAddon) {
+    try {
+      fitAddon.fit();
+    } catch (e) {}
+  }
 
+  // Send window resize event to WebSocket
+  function sendTerminalResize(cols, rows) {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'resize',
+      cols: cols,
+      rows: rows,
+    }));
+  }
+
+  // Handle incoming data from WebSocket
   ws.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'error') {
-          term.textContent += `\r\n[Remote Error]: ${msg.message}\r\n`;
+          term.write(`\r\n\x1b[31m[Remote Error]: ${msg.message}\x1b[0m\r\n`);
+          return;
+        } else if (msg.type === 'clipboard_sync') {
+          if (!pane.conn || (pane.conn.allow_clipboard !== 'disabled' && pane.conn.allow_clipboard !== 'host_to_remote')) {
+            onRemoteClipboardSync(msg.text);
+          }
           return;
         }
-      } catch (err) {}
-      appendTerminalText(term, e.data);
+      } catch (err) {
+        // Plain text data
+      }
+      term.write(e.data);
     } else {
-      const decoder = new TextDecoder('utf-8');
-      const text = decoder.decode(e.data);
-      appendTerminalText(term, text);
+      // Binary data -> write as Uint8Array
+      term.write(new Uint8Array(e.data));
     }
   };
 
-  // Terminal Keyboard Capture
-  term.addEventListener('keydown', (e) => {
+  // On user input in terminal -> send to WebSocket
+  term.onData((data) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (pane.conn && pane.conn.view_only) return;
-
-    if (e.key === 'Enter') {
-      ws.send('\r');
-      e.preventDefault();
-    } else if (e.key === 'Backspace') {
-      ws.send('\x7f');
-      e.preventDefault();
-    } else if (e.key === 'Tab') {
-      ws.send('\t');
-      e.preventDefault();
-    } else if (e.key === 'ArrowUp') {
-      ws.send('\x1b[A');
-      e.preventDefault();
-    } else if (e.key === 'ArrowDown') {
-      ws.send('\x1b[B');
-      e.preventDefault();
-    } else if (e.key === 'ArrowRight') {
-      ws.send('\x1b[C');
-      e.preventDefault();
-    } else if (e.key === 'ArrowLeft') {
-      ws.send('\x1b[D');
-      e.preventDefault();
-    } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
-      ws.send('\x03');
-      e.preventDefault();
-    } else if (e.ctrlKey && e.key.toLowerCase() === 'd') {
-      ws.send('\x04');
-      e.preventDefault();
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      ws.send(e.key);
-      e.preventDefault();
-    }
+    ws.send(data);
   });
 
-  // Global Clipboard paste into terminal
-  term.addEventListener('paste', (e) => {
-    e.preventDefault();
-    if (pane.conn && (pane.conn.view_only || pane.conn.allow_clipboard === 'disabled' || pane.conn.allow_clipboard === 'remote_to_host')) {
-      showToast('Clipboard paste blocked by connection policy', 'warning');
-      return;
-    }
-    const text = (e.clipboardData || window.clipboardData).getData('text');
-    if (text && ws.readyState === WebSocket.OPEN) {
-      ws.send(text);
-    }
+  term.onResize(({ cols, rows }) => {
+    sendTerminalResize(cols, rows);
   });
 
-  term.focus();
-}
+  // ResizeObserver for dynamic terminal resizing
+  let resizeDebounceTimer = null;
+  const resizeObserver = new ResizeObserver(() => {
+    clearTimeout(resizeDebounceTimer);
+    resizeDebounceTimer = setTimeout(() => {
+      if (fitAddon && term.element && term.element.parentElement) {
+        try {
+          fitAddon.fit();
+          sendTerminalResize(term.cols, term.rows);
+        } catch (e) {}
+      }
+    }, 60);
+  });
 
-function appendTerminalText(termEl, text) {
-  // Strip or basic ANSI escape code handler
-  const clean = text
-    .replace(/\x1b\[\?25[hl]/g, '')
-    .replace(/\x1b\[[0-9;]*[mGKH]/g, '')
-    .replace(/\x1b\[[0-9;]*[ABCD]/g, '');
+  resizeObserver.observe(bodyEl);
+  pane.resizeObserver = resizeObserver;
 
-  termEl.textContent += clean;
-  termEl.scrollTop = termEl.scrollHeight;
+  // Initial resize notification and focus after render
+  setTimeout(() => {
+    if (fitAddon) {
+      try {
+        fitAddon.fit();
+        sendTerminalResize(term.cols, term.rows);
+      } catch (e) {}
+    }
+    term.focus();
+  }, 100);
 }
 
 function setupGraphicsProtocol(pane, ws, bodyEl) {
@@ -1335,6 +1393,13 @@ function disconnectPane(paneIndex) {
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
     pane.resizeObserver = null;
+  }
+  if (pane.terminal) {
+    try {
+      pane.terminal.dispose();
+    } catch (e) {}
+    pane.terminal = null;
+    pane.fitAddon = null;
   }
   if (pane.socket) {
     pane.socket.close();
