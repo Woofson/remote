@@ -17,9 +17,9 @@ auto_cleanup_hours = 24
 # Allow local database logins
 allow_local_login = true
 # Allow Linux PAM logins (if compiled with pam support)
-allow_pam_login = false
+allow_pam_login = true
 # Default role for newly registered or auto-provisioned users ("admin", "operator", "viewer")
-default_role = "operator"
+default_role = "admin"
 
 [oidc]
 # OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)

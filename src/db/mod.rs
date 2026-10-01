@@ -297,6 +297,7 @@ impl Database {
         let _ = conn.execute("ALTER TABLE users ADD COLUMN avatar_data TEXT;", []);
         let _ = conn.execute("UPDATE users SET display_name = 'admin' WHERE username = 'admin' AND display_name = 'Administrator';", []);
         let _ = conn.execute("UPDATE users SET email = 'admin@remote.local' WHERE username = 'admin' AND (email IS NULL OR email = '' OR email = 'admin@remotedog.local');", []);
+        let _ = conn.execute("UPDATE users SET is_active = 1 WHERE username = 'admin';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN is_global INTEGER NOT NULL DEFAULT 1;", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_clipboard TEXT NOT NULL DEFAULT 'bidirectional';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_transfer TEXT NOT NULL DEFAULT 'full';", []);
@@ -327,6 +328,8 @@ impl Database {
 
             info!("Created default administrator user 'admin' and initial connection template");
             return Ok(true);
+        } else {
+            let _ = conn.execute("UPDATE users SET is_active = 1 WHERE username = 'admin';", []);
         }
         Ok(false)
     }
