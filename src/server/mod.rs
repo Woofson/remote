@@ -1493,15 +1493,23 @@ pub async fn static_file_handler(uri: axum::http::Uri) -> Response {
 
     if let Some(file) = FrontendAssets::get(&path) {
         let mime = mime_guess::from_path(&path).first_or_octet_stream();
+        let cache_control = if path.ends_with(".html") || path.ends_with(".js") || path.ends_with(".css") {
+            "no-cache, must-revalidate"
+        } else {
+            "public, max-age=86400"
+        };
+
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime.as_ref())
+            .header(header::CACHE_CONTROL, cache_control)
             .body(Body::from(file.data))
             .unwrap()
     } else if let Some(index) = FrontendAssets::get("index.html") {
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+            .header(header::CACHE_CONTROL, "no-cache, must-revalidate")
             .body(Body::from(index.data))
             .unwrap()
     } else {

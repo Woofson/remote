@@ -1052,7 +1052,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     allowProposedApi: true,
     scrollback: 10000,
     theme: TERMINAL_THEME,
-    convertEol: false,
+    convertEol: true,
   });
 
   // Fit Addon
@@ -1108,11 +1108,25 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
         // Plain text data
       }
       term.write(e.data);
-    } else {
-      // Binary data -> write as Uint8Array
+    } else if (e.data instanceof ArrayBuffer) {
       term.write(new Uint8Array(e.data));
+    } else if (e.data instanceof Blob) {
+      e.data.arrayBuffer().then(buf => term.write(new Uint8Array(buf)));
     }
   };
+
+  // Clipboard paste into terminal
+  container.addEventListener('paste', (e) => {
+    e.preventDefault();
+    if (pane.conn && (pane.conn.view_only || pane.conn.allow_clipboard === 'disabled' || pane.conn.allow_clipboard === 'remote_to_host')) {
+      showToast('Clipboard paste blocked by connection policy', 'warning');
+      return;
+    }
+    const text = (e.clipboardData || window.clipboardData)?.getData('text');
+    if (text && ws.readyState === WebSocket.OPEN) {
+      ws.send(text);
+    }
+  });
 
   // On user input in terminal -> send to WebSocket
   term.onData((data) => {
