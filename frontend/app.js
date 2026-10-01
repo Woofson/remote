@@ -701,6 +701,8 @@ function openAddConnectionModal() {
   document.getElementById('conn-username').value = '';
   document.getElementById('conn-password').value = '';
   document.getElementById('conn-private-key').value = '';
+  const certEl = document.getElementById('conn-ssh-certificate');
+  if (certEl) certEl.value = '';
   document.getElementById('conn-tags').value = '';
 
   const isAdm = state.currentUser && state.currentUser.role === 'admin';
@@ -749,6 +751,14 @@ function openEditConnectionModal(id) {
   document.getElementById('conn-private-key').value = '';
   document.getElementById('conn-tags').value = c.tags || '';
 
+  let settings = {};
+  try {
+    if (c.settings_json) settings = JSON.parse(c.settings_json);
+  } catch (err) {}
+
+  const editCertEl = document.getElementById('conn-ssh-certificate');
+  if (editCertEl) editCertEl.value = settings.ssh_certificate || settings.certificate || '';
+
   const isAdm = state.currentUser && state.currentUser.role === 'admin';
   const scopeEl = document.getElementById('conn-is-global');
   if (scopeEl) {
@@ -763,10 +773,6 @@ function openEditConnectionModal(id) {
   document.getElementById('conn-allow-transfer').value = c.allow_transfer || 'full';
   document.getElementById('conn-view-only').value = c.view_only ? 'true' : 'false';
 
-  let settings = {};
-  try {
-    if (c.settings_json) settings = JSON.parse(c.settings_json);
-  } catch (err) {}
   const ignoreCertEl = document.getElementById('conn-rdp-ignore-cert');
   if (ignoreCertEl) ignoreCertEl.value = (settings.ignore_cert !== false) ? 'true' : 'false';
   const domainEl = document.getElementById('conn-rdp-domain');
@@ -848,6 +854,8 @@ function onProtocolChanged() {
   document.getElementById('group-port').style.display = isLocal ? 'none' : 'block';
   document.getElementById('group-auth-user').style.display = isLocal ? 'none' : 'grid';
   document.getElementById('group-ssh-key').style.display = isSsh ? 'block' : 'none';
+  const sshCertGroup = document.getElementById('group-ssh-cert');
+  if (sshCertGroup) sshCertGroup.style.display = isSsh ? 'block' : 'none';
 
   const rdpGroup = document.getElementById('group-rdp-settings');
   if (rdpGroup) rdpGroup.style.display = isRdp ? 'flex' : 'none';
@@ -863,7 +871,8 @@ async function handleSaveConnection(e) {
   const id = document.getElementById('conn-id').value;
   const isGlobalVal = document.getElementById('conn-is-global') ? document.getElementById('conn-is-global').value === 'true' : true;
 
-  const rdpSettings = {
+  const connSettings = {
+    ssh_certificate: document.getElementById('conn-ssh-certificate') ? document.getElementById('conn-ssh-certificate').value.trim() || null : null,
     ignore_cert: document.getElementById('conn-rdp-ignore-cert') ? document.getElementById('conn-rdp-ignore-cert').value === 'true' : true,
     domain: document.getElementById('conn-rdp-domain') ? document.getElementById('conn-rdp-domain').value.trim() || null : null,
     keyboard_layout: document.getElementById('conn-rdp-keyboard-layout') ? document.getElementById('conn-rdp-keyboard-layout').value : 'no',
@@ -887,7 +896,7 @@ async function handleSaveConnection(e) {
     password: document.getElementById('conn-password').value || null,
     private_key: document.getElementById('conn-private-key').value || null,
     tags: document.getElementById('conn-tags').value.trim() || null,
-    settings_json: JSON.stringify(rdpSettings),
+    settings_json: JSON.stringify(connSettings),
     is_global: isGlobalVal,
     allow_clipboard: document.getElementById('conn-allow-clipboard').value,
     allow_transfer: document.getElementById('conn-allow-transfer').value,

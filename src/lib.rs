@@ -210,4 +210,57 @@ mod tests {
         assert_eq!(loaded.protocol, "telnet");
         assert_eq!(loaded.port, 23);
     }
+
+    #[test]
+    fn test_ssh_certificate_params_and_settings() {
+        use protocols::ssh::SshConnectionParams;
+
+        let cert_str = "ssh-ed25519-cert-v01@openssh.com AAAAIHNzaC1lZDI1NTE5LWNlcnQtdjAxQG9wZW5zc2guY29tAAAA... user@domain";
+        let priv_key_str = "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAA...\n-----END OPENSSH PRIVATE KEY-----";
+
+        let params = SshConnectionParams {
+            host: "10.0.0.5".into(),
+            port: 22,
+            username: "bolt".into(),
+            password: None,
+            private_key: Some(priv_key_str.into()),
+            certificate: Some(cert_str.into()),
+            passphrase: None,
+        };
+
+        assert_eq!(params.username, "bolt");
+        assert_eq!(params.certificate.as_deref(), Some(cert_str));
+
+        // Test settings_json parsing for SSH certificate
+        let db = Database::new_in_memory().expect("failed to create in-memory db");
+        let settings = serde_json::json!({
+            "ssh_certificate": cert_str
+        });
+
+        let conn = ConnectionRecord {
+            id: Uuid::new_v4().to_string(),
+            name: "Vault CA Bastion".into(),
+            protocol: "ssh".into(),
+            host: "bastion.corp".into(),
+            port: 2222,
+            username: Some("deploy".into()),
+            password_enc: None,
+            private_key_enc: None,
+            settings_json: settings.to_string(),
+            icon: None,
+            tags: Some("vault,ssh-ca".into()),
+            is_global: true,
+            allow_clipboard: "bidirectional".into(),
+            allow_transfer: "full".into(),
+            view_only: false,
+            created_by: None,
+            created_at: "2026-09-01T00:00:00Z".into(),
+            updated_at: "2026-09-01T00:00:00Z".into(),
+        };
+
+        db.save_connection(&conn).expect("save ssh cert conn");
+        let loaded = db.get_connection_raw(&conn.id).expect("get conn").expect("found");
+        let parsed: serde_json::Value = serde_json::from_str(&loaded.settings_json).expect("valid json");
+        assert_eq!(parsed["ssh_certificate"], cert_str);
+    }
 }

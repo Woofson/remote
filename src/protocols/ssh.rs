@@ -29,7 +29,13 @@ pub struct SshConnectionParams {
     pub username: String,
     pub password: Option<String>,
     pub private_key: Option<String>,
+    pub certificate: Option<String>,
     pub passphrase: Option<String>,
+}
+
+enum SshChannelCommand {
+    Data(Vec<u8>),
+    Resize(u32, u32),
 }
 
 pub fn create_ssh_session(params: &SshConnectionParams) -> Result<Session, String> {
@@ -48,13 +54,28 @@ pub fn create_ssh_session(params: &SshConnectionParams) -> Result<Session, Strin
 
     if let Some(key) = &params.private_key {
         if !key.trim().is_empty() {
+            let mut cert_opt = params.certificate.as_deref().filter(|c| !c.trim().is_empty());
+            let extracted_cert;
+
+            // Auto-detect if user certificate is embedded in the key text
+            if cert_opt.is_none() && key.contains("-cert-v01@openssh.com") {
+                let cert_line = key
+                    .lines()
+                    .find(|line| line.contains("-cert-v01@openssh.com"))
+                    .map(|l| l.trim().to_string());
+                if let Some(cl) = cert_line {
+                    extracted_cert = cl;
+                    cert_opt = Some(&extracted_cert);
+                }
+            }
+
             sess.userauth_pubkey_memory(
                 &params.username,
-                None,
+                cert_opt,
                 key,
                 params.passphrase.as_deref(),
             )
-            .map_err(|e| format!("SSH private key authentication failed: {}", e))?;
+            .map_err(|e| format!("SSH private key / certificate authentication failed: {}", e))?;
             return Ok(sess);
         }
     }
@@ -152,42 +173,83 @@ pub async fn handle_ssh_session(
         return;
     }
 
-    let channel_arc = Arc::new(parking_lot::Mutex::new(channel));
-    let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(256);
+    // Set non-blocking mode on the SSH session for high-throughput, non-deadlocking async streaming
+    sess.set_blocking(false);
+
+    let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(512);
+    let (ssh_cmd_tx, mut ssh_cmd_rx) = mpsc::channel::<SshChannelCommand>(512);
     let is_running = Arc::new(AtomicBool::new(true));
 
-    // Task 1: Read from SSH channel -> Send to WebSocket
-    let channel_read = channel_arc.clone();
+    // Task 1: Dedicated Non-Blocking SSH Worker (Both Read & Write concurrently with zero lock contention)
     let is_running_clone = is_running.clone();
-    let ssh_read_handle = tokio::task::spawn_blocking(move || {
+    let ssh_worker_handle = tokio::task::spawn_blocking(move || {
         let mut buf = [0u8; 8192];
+
         while is_running_clone.load(Ordering::Relaxed) {
-            let read_res = {
-                let mut chan = channel_read.lock();
-                chan.read(&mut buf)
-            };
-            match read_res {
-                Ok(0) => break,
+            let mut did_work = false;
+
+            // 1. Process all pending outgoing commands/writes to SSH channel
+            while let Ok(cmd) = ssh_cmd_rx.try_recv() {
+                did_work = true;
+                match cmd {
+                    SshChannelCommand::Data(data) => {
+                        let mut offset = 0;
+                        while offset < data.len() && is_running_clone.load(Ordering::Relaxed) {
+                            match channel.write(&data[offset..]) {
+                                Ok(0) => break,
+                                Ok(n) => {
+                                    offset += n;
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                    std::thread::sleep(Duration::from_millis(1));
+                                }
+                                Err(e) => {
+                                    warn!("SSH write error: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                        let _ = channel.flush();
+                    }
+                    SshChannelCommand::Resize(c, r) => {
+                        let _ = channel.request_pty_size(c, r, None, None);
+                    }
+                }
+            }
+
+            // 2. Read incoming data from SSH channel -> send to WebSocket
+            match channel.read(&mut buf) {
+                Ok(0) => {
+                    if channel.eof() {
+                        break;
+                    }
+                }
                 Ok(n) => {
+                    did_work = true;
                     let data = buf[..n].to_vec();
                     if ws_sender_tx.blocking_send(Message::Binary(data)).is_err() {
                         break;
                     }
                 }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    // No data waiting currently
+                }
                 Err(e) => {
-                    if e.kind() == std::io::ErrorKind::WouldBlock {
-                        std::thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
                     warn!("SSH read error: {}", e);
                     break;
                 }
             }
+
+            // If neither read nor write had activity, yield CPU for 2ms
+            if !did_work {
+                std::thread::sleep(Duration::from_millis(2));
+            }
         }
+
         is_running_clone.store(false, Ordering::Relaxed);
     });
 
-    // Task 2: Dispatch WebSocket outgoing
+    // Task 2: Dispatch outgoing WebSocket messages
     let (mut ws_sink, mut ws_stream) = socket.split();
     let is_running_ws = is_running.clone();
     let ws_send_handle = tokio::spawn(async move {
@@ -199,13 +261,13 @@ pub async fn handle_ssh_session(
         is_running_ws.store(false, Ordering::Relaxed);
     });
 
-    // Task 3: Read from WebSocket -> Write to SSH Channel
+    // Task 3: Read from WebSocket -> Send commands to SSH worker
     while let Some(Ok(msg)) = ws_stream.next().await {
         match msg {
             Message::Binary(bin) => {
-                let mut chan = channel_arc.lock();
-                let _ = chan.write_all(&bin);
-                let _ = chan.flush();
+                if ssh_cmd_tx.send(SshChannelCommand::Data(bin)).await.is_err() {
+                    break;
+                }
             }
             Message::Text(txt) => {
                 if let Ok(val) = serde_json::from_str::<Value>(&txt) {
@@ -214,15 +276,12 @@ pub async fn handle_ssh_session(
                             "resize" => {
                                 let c = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u32;
                                 let r = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u32;
-                                let mut chan = channel_arc.lock();
-                                let _ = chan.request_pty_size(c, r, None, None);
+                                let _ = ssh_cmd_tx.send(SshChannelCommand::Resize(c, r)).await;
                                 continue;
                             }
                             "clipboard_push" => {
                                 if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
-                                    let mut chan = channel_arc.lock();
-                                    let _ = chan.write_all(content.as_bytes());
-                                    let _ = chan.flush();
+                                    let _ = ssh_cmd_tx.send(SshChannelCommand::Data(content.as_bytes().to_vec())).await;
                                 }
                                 continue;
                             }
@@ -231,9 +290,9 @@ pub async fn handle_ssh_session(
                         }
                     }
                 }
-                let mut chan = channel_arc.lock();
-                let _ = chan.write_all(txt.as_bytes());
-                let _ = chan.flush();
+                if ssh_cmd_tx.send(SshChannelCommand::Data(txt.into_bytes())).await.is_err() {
+                    break;
+                }
             }
             Message::Close(_) => break,
             _ => {}
@@ -242,7 +301,7 @@ pub async fn handle_ssh_session(
 
     is_running.store(false, Ordering::Relaxed);
     let _ = ws_send_handle.abort();
-    let _ = ssh_read_handle.abort();
+    let _ = ssh_worker_handle.abort();
     info!("SSH session closed");
 }
 

@@ -501,10 +501,14 @@
               </div>
             </div>
 
-            <!-- SSH Key -->
+            <!-- SSH Key & Certificate -->
             <div class="form-group" id="group-ssh-key">
               <label style="font-size: 11px; font-weight: 600;">SSH Private Key (Optional)</label>
               <textarea id="conn-private-key" class="form-input" rows="3" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
+            </div>
+            <div class="form-group" id="group-ssh-cert" style="display: none;">
+              <label style="font-size: 11px; font-weight: 600;">SSH User Certificate (Optional — Signed by CA, e.g. ssh-ed25519-cert-v01@openssh.com)</label>
+              <textarea id="conn-ssh-certificate" class="form-input" rows="2" placeholder="ssh-ed25519-cert-v01@openssh.com AAAA... user@host" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
             </div>
 
             <!-- RDP / Windows & TLS Settings -->

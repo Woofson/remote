@@ -1089,12 +1089,23 @@ pub async fn api_sftp_list(
         .private_key_enc
         .and_then(|k| decrypt_secret(&k, &cfg.server.jwt_secret).ok());
 
+    let certificate = if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
+        settings.get("ssh_certificate")
+            .or_else(|| settings.get("certificate"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
     let params = SshConnectionParams {
         host: conn_rec.host,
         port: conn_rec.port,
         username: conn_rec.username.unwrap_or_else(|| "root".into()),
         password,
         private_key,
+        certificate,
         passphrase: None,
     };
 
@@ -1162,12 +1173,23 @@ pub async fn api_sftp_upload_staged(
         .private_key_enc
         .and_then(|k| decrypt_secret(&k, &cfg.server.jwt_secret).ok());
 
+    let certificate = if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
+        settings.get("ssh_certificate")
+            .or_else(|| settings.get("certificate"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.to_string())
+    } else {
+        None
+    };
+
     let params = SshConnectionParams {
         host: conn_rec.host,
         port: conn_rec.port,
         username: conn_rec.username.unwrap_or_else(|| "root".into()),
         password,
         private_key,
+        certificate,
         passphrase: None,
     };
 
@@ -1362,12 +1384,23 @@ pub async fn ws_tunnel_handler(
                 handle_local_pty_session(socket, cols, rows).await;
             }
             "ssh" => {
+                let certificate = if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
+                    settings.get("ssh_certificate")
+                        .or_else(|| settings.get("certificate"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .map(|s| s.to_string())
+                } else {
+                    None
+                };
+
                 let params = SshConnectionParams {
                     host: conn_rec.host,
                     port: conn_rec.port,
                     username: conn_rec.username.unwrap_or_else(|| "root".into()),
                     password,
                     private_key,
+                    certificate,
                     passphrase: None,
                 };
                 handle_ssh_session(socket, params, cols, rows).await;
