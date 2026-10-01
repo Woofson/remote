@@ -1,6 +1,6 @@
-# 🐕 RemoteDog — Changelog
+# 🐕 Remote — Changelog
 
-All notable changes to **RemoteDog** are documented in this file.
+All notable changes to **Remote** are documented in this file.
 The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) and [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
@@ -15,7 +15,7 @@ The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 
 ### ⚡ 64×64 Dirty Tile Diffing & High-FPS Low-Latency Streaming
 * **Sub-Rect Dirty Tile Pipeline**:
-  * Implemented 64×64 pixel grid tile diffing in [`src/protocols/rdp.rs`](file:///home/bolt/projects/remotedog/src/protocols/rdp.rs).
+  * Implemented 64×64 pixel grid tile diffing in [`src/protocols/rdp.rs`](file:///home/bolt/projects/remote/src/protocols/rdp.rs).
   * Only sends changed 16 KB tiles instead of flooding the WebSocket with 8.3 MB full frames on every cursor blink or minor screen tick (**99.8% reduction in network bandwidth and client CPU**).
   * Automatically coalesces full frames when major screen overhauls occur (>40% screen dirty).
 * **Frame Coalescing & Zero-Lag Buffer Draining**:
@@ -50,9 +50,9 @@ The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
 ### 📁 Native RDPDR Drive Redirection (`\\tsclient\Dropbox`)
 * **Bi-Directional File Transfer with Windows Explorer**:
   * Integrated `ironrdp-rdpdr` and `ironrdp-rdpdr-native` static virtual channels.
-  * Announces RemoteDog's `./data/staging` directory as a native redirected drive (`\\tsclient\Dropbox` or *"Dropbox on RemoteDog"* in "This PC").
+  * Announces Remote's `./data/staging` directory as a native redirected drive (`\\tsclient\Dropbox` or *"Dropbox on Remote"* in "This PC").
   * Files uploaded via the web interface or dragged onto any active RDP pane instantly appear in Windows File Explorer.
-  * Files dragged into `\\tsclient\Dropbox` inside Windows immediately appear in the RemoteDog Dropbox Drawer for local client download.
+  * Files dragged into `\\tsclient\Dropbox` inside Windows immediately appear in the Remote Dropbox Drawer for local client download.
   * Configurable per-connection toggle (`Drive Redirection (\\tsclient\Dropbox)`).
 
 ### 🛠️ RDP Experience Presets & Performance Tuning
@@ -84,12 +84,12 @@ The project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html
   * **User Profile & Account Settings (`#user-profile-modal`)**: Synchronized 1:1 with CommanderDog's profile modal layout, featuring avatar camera badge button, authentication type label (`Local Database Account` vs `Authentik / OIDC SSO Account`), `ADMIN` role badge, upload/reset actions, and credentials recovery fields.
   * **Admin User Management (`#users-modal`)**: Updated user table to display avatars, usernames, display names, emails, roles, auth providers, and status.
   * **Add/Edit User Modal (`#user-edit-modal`)**: Matched CommanderDog user creation layout with username, display name, email, password, and role selector.
-  * **About RemoteDog Modal (`#about-modal`)**: Added system architecture and runtime specifications card.
+  * **About Remote Modal (`#about-modal`)**: Added system architecture and runtime specifications card.
 
 ### ✨ Portable Profile Pictures
 * **100% In-Database Portability**:
   * User profile photos are cropped to center-squares and resized to **160×160px** via client-side HTML5 canvas, then compressed as high-quality WebP/JPEG data URIs.
-  * Stored directly inside the SQLite `users.avatar_data` column, keeping `remotedog.db` completely self-contained with zero external file dependencies or broken paths when moving across servers, Docker containers, or backup archives.
+  * Stored directly inside the SQLite `users.avatar_data` column, keeping `remote.db` completely self-contained with zero external file dependencies or broken paths when moving across servers, Docker containers, or backup archives.
   * Dynamic avatar rendering with initial fallback in top navbar pill, profile dropdown menu header, profile modal, and admin user directory.
 
 ### 👤 Identity, Nickname Customization & User Disabling

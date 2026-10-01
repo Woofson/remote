@@ -1,12 +1,12 @@
 /**
- * 🐕 RemoteDog — High-Performance Remote Gateway Client
+ * 🐕 Remote — High-Performance Remote Gateway Client
  * Part of the Woofson Suite (CommanderDog, NoteDog, DotDog)
  */
 
 // ================= Global State =================
 const state = {
   currentUser: null,
-  jwtToken: localStorage.getItem('remotedog_token') || '',
+  jwtToken: localStorage.getItem('remote_token') || localStorage.getItem('remotedog_token') || '',
   activePaneIndex: 1,
   paneLayout: 1,
   connections: [],
@@ -282,7 +282,7 @@ function updateHeaderProfile(user) {
   const menuName = document.getElementById('menu-user-name');
   if (menuName) menuName.textContent = uname;
   const menuEmail = document.getElementById('menu-user-email');
-  if (menuEmail) menuEmail.textContent = user.email || `${user.username}@remotedog.local`;
+  if (menuEmail) menuEmail.textContent = user.email || `${user.username}@remote.local`;
   const menuAvatar = document.getElementById('menu-avatar-large');
   if (menuAvatar) renderAvatarElement(menuAvatar, avatar, initial);
 
@@ -352,8 +352,9 @@ async function handleLoginSubmit() {
     if (res.ok) {
       state.jwtToken = data.token;
       state.currentUser = data.user;
+      localStorage.setItem('remote_token', data.token);
       localStorage.setItem('remotedog_token', data.token);
-      document.cookie = `remotedog_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
+      document.cookie = `remote_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
       onAuthenticated();
     } else {
       errEl.textContent = data.error || 'Invalid username or password';
@@ -377,7 +378,9 @@ function loginWithOidc() {
 function logout() {
   state.jwtToken = '';
   state.currentUser = null;
+  localStorage.removeItem('remote_token');
   localStorage.removeItem('remotedog_token');
+  document.cookie = 'remote_token=; path=/; max-age=0; SameSite=Lax';
   document.cookie = 'remotedog_token=; path=/; max-age=0; SameSite=Lax';
   window.location.reload();
 }
@@ -760,7 +763,7 @@ function openEditConnectionModal(id) {
   const fontSmoothing = document.getElementById('conn-rdp-font-smoothing');
   if (fontSmoothing) fontSmoothing.checked = settings.font_smoothing !== false;
   const driveRedir = document.getElementById('conn-rdp-drive-redirection');
-  if (driveRedir) driveRedir.checked = settings.enable_drive_redirection !== false;
+  if (driveRedir) driveRedir.checked = !!settings.enable_drive_redirection;
   const audio = document.getElementById('conn-rdp-audio');
   if (audio) audio.checked = !!settings.enable_audio;
 
@@ -971,7 +974,7 @@ function connectToTarget(connectionId) {
     bodyEl.innerHTML = `
       <div class="pane-empty-state" style="padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%;">
         <div class="empty-icon" style="opacity: 0.8;">
-          <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" class="empty-brand-img" style="filter: grayscale(30%); width: 44px; height: 44px;" />
+          <img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" style="filter: grayscale(30%); width: 44px; height: 44px;" />
         </div>
         <div>
           <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: var(--woofson-text);">Session Disconnected</h3>
@@ -1016,7 +1019,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'error') {
-          term.textContent += `\r\n[RemoteDog Error]: ${msg.message}\r\n`;
+          term.textContent += `\r\n[Remote Error]: ${msg.message}\r\n`;
           return;
         }
       } catch (err) {}
@@ -1238,13 +1241,19 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
     };
   }
 
+  let pendingPointer = null;
+  let pointerRaf = null;
+
   canvas.addEventListener('mousemove', (e) => {
     const pos = getCanvasCoords(e);
-    if (!pointerThrottleTimer) {
-      sendPointer(mouseMask, pos.x, pos.y);
-      pointerThrottleTimer = setTimeout(() => {
-        pointerThrottleTimer = null;
-      }, 16); // ~60fps throttle
+    pendingPointer = pos;
+    if (!pointerRaf) {
+      pointerRaf = requestAnimationFrame(() => {
+        if (pendingPointer) {
+          sendPointer(mouseMask, pendingPointer.x, pendingPointer.y);
+        }
+        pointerRaf = null;
+      });
     }
   });
 
@@ -1346,7 +1355,7 @@ function disconnectPane(paneIndex) {
 
   document.getElementById(`pane-${paneIndex}-body`).innerHTML = `
     <div class="pane-empty-state">
-      <div class="empty-icon"><img src="assets/Remotedogiconsmall.png" alt="RemoteDog" class="empty-brand-img" /></div>
+      <div class="empty-icon"><img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" /></div>
       <h3>Ready for Session</h3>
       <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
         <button class="btn btn-primary" onclick="openConnectionsModal()">Connect Target</button>

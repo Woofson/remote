@@ -1,4 +1,4 @@
-/* 🐕 Woofson Design System — Golden Amber Palette for RemoteDog */
+/* 🐕 Woofson Design System — Golden Amber Palette for Remote */
 :root {
   --woofson-bg-void: #121214;
   --woofson-bg-panel: #18181b;
@@ -588,9 +588,10 @@ body, html {
 }
 
 .pane-canvas {
-  image-rendering: pixelated;
+  image-rendering: auto;
   max-width: 100%;
   max-height: 100%;
+  cursor: default;
 }
 
 .pane-terminal {

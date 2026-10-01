@@ -1,0 +1,7 @@
+Per 01.09.2026:
+
+- Simple but powerful web-proxy, for gathering of web-interfaces like proxmox, truenas, portainer etc etc, things that sysadmins and homelabbers use alot.
+- Terminal doesnt support advanced colored terminals/shells, like fish, zsh. This must be attended.
+- Follow the design language of CommanderDog when it comes to UI/UX.
+- \\tsclient\dropbox doesnt work.
+- Keyboard language sync/select.

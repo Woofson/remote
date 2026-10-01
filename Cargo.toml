@@ -1,5 +1,5 @@
 [package]
-name = "remotedog"
+name = "remote"
 version = "0.2.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
@@ -7,11 +7,11 @@ description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-P
 license = "MIT"
 
 [lib]
-name = "remotedog"
+name = "remote"
 path = "src/lib.rs"
 
 [[bin]]
-name = "remotedog"
+name = "remote"
 path = "src/main.rs"
 
 [dependencies]
@@ -47,13 +47,14 @@ dirs = "5.0"
 open = "5.3"
 async-trait = "0.1"
 urlencoding = "2.1"
-ironrdp-client = { version = "0.1.0", features = ["rustls", "rdpdr"] }
+ironrdp-client = { version = "0.1.0", features = ["rustls"] }
 ironrdp-connector = "0.10.0"
 ironrdp-session = "0.11.0"
 ironrdp-pdu = "0.9.0"
 ironrdp-graphics = "0.9.0"
 ironrdp-async = "0.10.0"
 ironrdp-tls = { version = "0.2.2", features = ["rustls"] }
+ironrdp-tokio = { version = "0.10.0", features = ["reqwest"] }
 ironrdp-rdpdr = "0.7.0"
 ironrdp-rdpdr-native = "0.7.0"
 smallvec = "1.16.0"

@@ -1,10 +1,10 @@
-# RemoteDog Configuration File
+# Remote Configuration File
 # Unified High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Woofson UI
 
 [server]
 bind_address = "0.0.0.0:8088"
 data_dir = "./data"
-jwt_secret = "remotedog-super-secret-jwt-key-woofson-2026"
+jwt_secret = "remote-super-secret-jwt-key-woofson-2026"
 token_expiry_hours = 24
 
 [storage]
@@ -25,14 +25,14 @@ default_role = "operator"
 # OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)
 enabled = false
 provider_name = "Authentik"
-issuer_url = "https://authentik.example.com/application/o/remotedog/"
+issuer_url = "https://authentik.example.com/application/o/remote/"
 client_id = ""
 client_secret = ""
 redirect_uri = "http://localhost:8088/api/auth/oidc/callback"
 scopes = ["openid", "profile", "email", "groups"]
 auto_provision_users = true
-admin_group = "RemoteDog-Admins"
-operator_group = "RemoteDog-Operators"
+admin_group = "Remote-Admins"
+operator_group = "Remote-Operators"
 
 [clipboard]
 # Default clipboard synchronization mode ("bidirectional", "server_to_client", "client_to_server", "disabled")

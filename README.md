@@ -1,4 +1,4 @@
-# <img src="assets/Remotedogiconsmall.png" alt="RemoteDog Logo" height="40" style="vertical-align: -6px; margin-right: 8px;" /> RemoteDog
+# <img src="assets/Remoteiconsmall.png" alt="Remote Logo" height="40" style="vertical-align: -6px; margin-right: 8px;" /> Remote
 
 <div align="center">
   <p><em>High-Performance, Ultra-Low-Resource Remote Gateway (RDP, VNC, SSH) in Rust & HTML5 — By Woofson</em></p>
@@ -8,9 +8,9 @@
 
 ## Overview
 
-**RemoteDog** is a modern, single-binary replacement for Apache Guacamole built from the ground up in **Rust & HTML5**. It eliminates the heavy Java Tomcat/MySQL/`guacd` stack, replacing it with an ultra-lightweight, memory-safe, sub-millisecond asynchronous gateway using **Tokio, Axum, and pure HTML5 Canvas/WebGL**.
+**Remote** is a modern, single-binary replacement for Apache Guacamole built from the ground up in **Rust & HTML5**. It eliminates the heavy Java Tomcat/MySQL/`guacd` stack, replacing it with an ultra-lightweight, memory-safe, sub-millisecond asynchronous gateway using **Tokio, Axum, and pure HTML5 Canvas/WebGL**.
 
-Adhering strictly to the **Woofson Design System** (`CommanderDog`, `NoteDog`, `DotDog`), RemoteDog features multi-pane remote viewports, bi-directional clipboard synchronization, drag-and-drop file staging, and native user RBAC ready for **Authentik / OIDC single sign-on**.
+Adhering strictly to the **Woofson Design System** (`CommanderDog`, `NoteDog`, `DotDog`), Remote features multi-pane remote viewports, bi-directional clipboard synchronization, drag-and-drop file staging, and native user RBAC ready for **Authentik / OIDC single sign-on**.
 
 ---
 
@@ -55,7 +55,7 @@ Adhering strictly to the **Woofson Design System** (`CommanderDog`, `NoteDog`, `
 
 ## 🎨 Design & Color Palette
 
-RemoteDog is styled with the official **Woofson Golden Amber Palette**:
+Remote is styled with the official **Woofson Golden Amber Palette**:
 
 | Token | Hex | Usage |
 | :--- | :--- | :--- |
@@ -74,17 +74,17 @@ RemoteDog is styled with the official **Woofson Golden Amber Palette**:
 ### 1. Build and Run
 
 ```bash
-cd /home/bolt/projects/remotedog
+cd /home/bolt/projects/remote
 cargo run --release
 ```
 
 ### 2. Initial Login Credentials
 
-On first launch, RemoteDog automatically seeds a default administrator:
+On first launch, Remote automatically seeds a default administrator:
 
 * **URL:** `http://localhost:8088`
 * **Username:** `admin`
-* **Password:** `remotedog`
+* **Password:** `remote`
 
 *(Please change this password upon first login in User Management!)*
 
@@ -96,7 +96,7 @@ On first launch, RemoteDog automatically seeds a default administrator:
 [server]
 bind_address = "0.0.0.0:8088"
 data_dir = "./data"
-jwt_secret = "remotedog-super-secret-jwt-key-woofson-2026"
+jwt_secret = "remote-super-secret-jwt-key-woofson-2026"
 token_expiry_hours = 24
 
 [storage]
@@ -110,13 +110,13 @@ default_role = "operator"
 [oidc]
 enabled = false
 provider_name = "Authentik"
-issuer_url = "https://authentik.example.com/application/o/remotedog/"
-client_id = "remotedog-client"
+issuer_url = "https://authentik.example.com/application/o/remote/"
+client_id = "remote-client"
 client_secret = "your-secret"
 redirect_uri = "http://localhost:8088/api/auth/oidc/callback"
 scopes = ["openid", "profile", "email", "groups"]
 auto_provision_users = true
-admin_group = "RemoteDog-Admins"
+admin_group = "Remote-Admins"
 
 [clipboard]
 default_mode = "bidirectional"
@@ -128,7 +128,7 @@ max_text_size_bytes = 1048576
 ## 📂 Project Structure
 
 ```
-remotedog/
+remote/
 ├── Cargo.toml               # Rust package & dependency definitions
 ├── config.toml              # Server, OIDC, storage, and clipboard settings
 ├── src/

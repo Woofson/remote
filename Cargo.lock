@@ -1676,7 +1676,6 @@ dependencies = [
  "ironrdp-pdu",
  "ironrdp-propertyset",
  "ironrdp-rdcleanpath",
- "ironrdp-rdpdr",
  "ironrdp-session",
  "ironrdp-svc",
  "ironrdp-tls",
@@ -3011,7 +3010,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
-name = "remotedog"
+name = "remote"
 version = "0.2.0"
 dependencies = [
  "aes-gcm 0.10.3",
@@ -3034,6 +3033,7 @@ dependencies = [
  "ironrdp-rdpdr-native",
  "ironrdp-session",
  "ironrdp-tls",
+ "ironrdp-tokio",
  "jsonwebtoken",
  "libc",
  "mime_guess",

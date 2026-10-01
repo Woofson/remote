@@ -113,7 +113,7 @@ fn extract_claims(headers: &HeaderMap, secret: &str) -> Result<Claims, (StatusCo
         if let Ok(cookies) = cookie_header.to_str() {
             for c in cookies.split(';') {
                 let parts: Vec<&str> = c.trim().split('=').collect();
-                if parts.len() == 2 && parts[0] == "remotedog_token" {
+                if parts.len() == 2 && (parts[0] == "remote_token" || parts[0] == "remotedog_token") {
                     return verify_jwt(parts[1], secret)
                         .map_err(|e| (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))));
                 }
@@ -365,16 +365,16 @@ pub async fn api_oidc_callback(
     let html = format!(
         r#"<!DOCTYPE html>
         <html>
-        <head><title>RemoteDog OIDC Authenticated</title></head>
+        <head><title>Remote OIDC Authenticated</title></head>
         <body style="background:#121214;color:#f59e0b;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
           <div style="text-align:center;">
-            <img src="/assets/Remotedogiconsmall.png" alt="RemoteDog" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
-            <h2 style="margin:0;font-weight:700;color:#f4f4f5;">RemoteDog Authenticated!</h2>
+            <img src="/assets/Remoteiconsmall.png" alt="Remote" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
+            <h2 style="margin:0;font-weight:700;color:#f4f4f5;">Remote Authenticated!</h2>
             <p style="color:#a1a1aa;margin-top:6px;">Redirecting to dashboard...</p>
           </div>
           <script>
-            localStorage.setItem('remotedog_token', '{}');
-            document.cookie = 'remotedog_token={}; path=/; max-age=86400; SameSite=Lax';
+            localStorage.setItem('remote_token', '{}');
+            document.cookie = 'remote_token={}; path=/; max-age=86400; SameSite=Lax';
             window.location.href = '/';
           </script>
         </body>
@@ -1381,7 +1381,7 @@ pub async fn ws_tunnel_handler(
                 let mut disable_themes = false;
                 let mut font_smoothing = true;
 
-                let mut enable_drive_redirection = conn_rec.allow_transfer != "disabled";
+                let mut enable_drive_redirection = false;
                 let mut keyboard_layout = None;
 
                 if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {

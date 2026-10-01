@@ -31,7 +31,7 @@ impl Default for ServerConfig {
         Self {
             bind_address: "0.0.0.0:8088".to_string(),
             data_dir: "./data".to_string(),
-            jwt_secret: "remotedog-secret-key-woofson-2026".to_string(),
+            jwt_secret: "remote-secret-key-woofson-2026".to_string(),
             token_expiry_hours: 24,
         }
     }
@@ -90,14 +90,14 @@ impl Default for OidcConfig {
         Self {
             enabled: false,
             provider_name: "Authentik".to_string(),
-            issuer_url: "https://authentik.example.com/application/o/remotedog/".to_string(),
+            issuer_url: "https://authentik.example.com/application/o/remote/".to_string(),
             client_id: String::new(),
             client_secret: String::new(),
             redirect_uri: "http://localhost:8088/api/auth/oidc/callback".to_string(),
             scopes: vec!["openid".into(), "profile".into(), "email".into(), "groups".into()],
             auto_provision_users: true,
-            admin_group: "RemoteDog-Admins".to_string(),
-            operator_group: "RemoteDog-Operators".to_string(),
+            admin_group: "Remote-Admins".to_string(),
+            operator_group: "Remote-Operators".to_string(),
         }
     }
 }

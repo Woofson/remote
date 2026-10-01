@@ -277,12 +277,12 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_color_depth(if params.color_depth == 16 { 16 } else { 32 })
         .with_credssp(true)
         .with_tls(true)
-        .with_pointer_software_rendering(true)
+        .with_pointer_software_rendering(false)
         .with_compression(true)
         .with_compression_level(2)
         .with_client_build(2600)
         .with_client_dir("C:\\Windows\\System32")
-        .with_client_name("RemoteDog")
+        .with_client_name("Remote")
         .with_platform(MajorPlatformType::WINDOWS)
         .with_username(username)
         .with_password(password);
@@ -293,28 +293,6 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         }
     }
 
-    if params.enable_drive_redirection {
-        config_builder = config_builder.with_rdpdr(true);
-        let staging_dir = params
-            .staging_dir
-            .clone()
-            .unwrap_or_else(|| "./data/staging".to_string());
-        let _ = std::fs::create_dir_all(&staging_dir);
-        let staging_dir_clone = staging_dir.clone();
-
-        info!(
-            "RDP Gateway: Enabling RDPDR drive redirection for staging folder '{}' as \\\\tsclient\\Dropbox",
-            staging_dir
-        );
-        config_builder = config_builder.with_static_channel(move |_ps| {
-            let backend = Box::new(ironrdp_rdpdr_native::backend::NixRdpdrBackend::new(
-                staging_dir_clone.clone(),
-            ));
-            let rdpdr = ironrdp_rdpdr::Rdpdr::new(backend, "RemoteDog".to_owned())
-                .with_drives(Some(vec![(1, "Dropbox".to_owned())]));
-            Some(rdpdr)
-        });
-    }
 
     let config = match config_builder.build() {
         Ok(c) => c,
@@ -524,12 +502,10 @@ async fn process_and_send_frame(
         payload.extend_from_slice(&(h as u16).to_be_bytes()); // height
 
         for &pixel in &curr_frame[..total_pixels] {
-            let r = ((pixel >> 16) & 0xFF) as u8;
-            let g = ((pixel >> 8) & 0xFF) as u8;
-            let b = (pixel & 0xFF) as u8;
-            payload.push(r);
-            payload.push(g);
-            payload.push(b);
+            let bytes = pixel.to_be_bytes();
+            payload.push(bytes[1]);
+            payload.push(bytes[2]);
+            payload.push(bytes[3]);
             payload.push(255);
         }
 
@@ -585,12 +561,10 @@ async fn process_and_send_frame(
         payload.extend_from_slice(&(h as u16).to_be_bytes());
 
         for &pixel in &curr_frame[..total_pixels] {
-            let r = ((pixel >> 16) & 0xFF) as u8;
-            let g = ((pixel >> 8) & 0xFF) as u8;
-            let b = (pixel & 0xFF) as u8;
-            payload.push(r);
-            payload.push(g);
-            payload.push(b);
+            let bytes = pixel.to_be_bytes();
+            payload.push(bytes[1]);
+            payload.push(bytes[2]);
+            payload.push(bytes[3]);
             payload.push(255);
         }
 
@@ -618,18 +592,14 @@ async fn process_and_send_frame(
 
         for row in 0..tile_h {
             let offset = (tile_y + row) * w + tile_x;
-            for col in 0..tile_w {
-                let pixel = curr_frame[offset + col];
-                let r = ((pixel >> 16) & 0xFF) as u8;
-                let g = ((pixel >> 8) & 0xFF) as u8;
-                let b = (pixel & 0xFF) as u8;
-                batch_pkt.push(r);
-                batch_pkt.push(g);
-                batch_pkt.push(b);
+            for &pixel in &curr_frame[offset..offset + tile_w] {
+                let bytes = pixel.to_be_bytes();
+                batch_pkt.push(bytes[1]);
+                batch_pkt.push(bytes[2]);
+                batch_pkt.push(bytes[3]);
                 batch_pkt.push(255);
-
-                prev_frame[offset + col] = pixel;
             }
+            prev_frame[offset..offset + tile_w].copy_from_slice(&curr_frame[offset..offset + tile_w]);
         }
     }
 

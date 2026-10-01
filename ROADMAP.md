@@ -1,6 +1,6 @@
-# <img src="frontend/assets/Remotedogiconsmall.png" alt="RemoteDog Logo" height="36" style="vertical-align: -6px; margin-right: 8px;" /> RemoteDog — Roadmap & Architecture Plan
+# <img src="frontend/assets/Remoteiconsmall.png" alt="Remote Logo" height="36" style="vertical-align: -6px; margin-right: 8px;" /> Remote — Roadmap & Architecture Plan
 
-This document outlines the strategic roadmap and architectural milestones for **RemoteDog**, focusing on high-performance remote access, granular user-centric access control, and enterprise single sign-on integration.
+This document outlines the strategic roadmap and architectural milestones for **Remote**, focusing on high-performance remote access, granular user-centric access control, and enterprise single sign-on integration.
 
 ---
 
@@ -45,7 +45,7 @@ The Connections Manager is unified directly with SQLite RBAC, user profile manag
 
 ### 2. Global Shared vs. Personal Private Connections
 
-RemoteDog distinguishes between shared organizational resources and personal private tunnels:
+Remote distinguishes between shared organizational resources and personal private tunnels:
 
 * **Global Organizational Connections**:
   * Managed centrally by **Admins**.
@@ -76,11 +76,11 @@ RemoteDog distinguishes between shared organizational resources and personal pri
 
 ## 📌 Phase 3: 100% Reverse Proxy Readiness & Cloud-Native Deployment
 
-RemoteDog is committed to being **100% cloud-native and flawlessly deployable behind any enterprise reverse proxy, ingress controller, or zero-trust tunnel** (Nginx, Traefik, Caddy, HAProxy, Envoy, Cloudflare Tunnels, Authentik Outpost, and Kubernetes Ingress).
+Remote is committed to being **100% cloud-native and flawlessly deployable behind any enterprise reverse proxy, ingress controller, or zero-trust tunnel** (Nginx, Traefik, Caddy, HAProxy, Envoy, Cloudflare Tunnels, Authentik Outpost, and Kubernetes Ingress).
 
 ### 1. Subpath Mounting & Dynamic Base URL (`X-Forwarded-Prefix`)
 * **Flexible Subpath Hosting**:
-  * Ability to host RemoteDog under root (`https://remote.domain.com/`) or under arbitrary subpaths (e.g. `https://gateway.domain.com/remotedog/` or `https://tools.internal/dog/`).
+  * Ability to host Remote under root (`https://remote.domain.com/`) or under arbitrary subpaths (e.g. `https://gateway.domain.com/remote/` or `https://tools.internal/remote/`).
   * Dynamic asset path resolution in frontend (`app.js`, `style.css`, SVGs, icons) respecting `base_path` configuration and `X-Forwarded-Prefix` headers.
   * Zero redirect loops or broken asset references when accessing with or without trailing slashes.
 
@@ -99,7 +99,7 @@ RemoteDog is committed to being **100% cloud-native and flawlessly deployable be
 ### 4. Reverse Proxy Header-Based / Forward Authentication
 * **Authentik / Authelia / Traefik ForwardAuth Integration**:
   * Optional trusted header authentication mode (e.g., `X-authentik-username`, `X-authentik-email`, `Remote-User`, `Remote-Email`, `Remote-Groups`).
-  * When placed behind an Authentik / Authelia proxy outpost, automatically sign the user into RemoteDog based on validated upstream reverse proxy headers without prompting for duplicate logins.
+  * When placed behind an Authentik / Authelia proxy outpost, automatically sign the user into Remote based on validated upstream reverse proxy headers without prompting for duplicate logins.
 
 ### 5. Production Reverse Proxy Configuration Recipes
 * Provide tested, production-grade drop-in configuration snippets in the repository:
@@ -119,7 +119,7 @@ RemoteDog is committed to being **100% cloud-native and flawlessly deployable be
 * **Email-Based Password Recovery**:
   * Magic link / one-time reset token emailed to verified user addresses with Argon2id hash update.
 * **Authentik / Keycloak / Okta OIDC Sync**:
-  * Map Identity Provider group claims (e.g., `groups: ["infra-admins", "remote-viewers"]`) directly to RemoteDog user roles and connection pools.
+  * Map Identity Provider group claims (e.g., `groups: ["infra-admins", "remote-viewers"]`) directly to Remote user roles and connection pools.
 * **Just-In-Time (JIT) User Provisioning**:
   * Automatically create and configure user profiles upon first successful OIDC login.
 * **OAuth2 / WebAuthn / FIDO2 Passkeys**:

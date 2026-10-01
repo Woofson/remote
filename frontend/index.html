@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RemoteDog — High-Performance Remote Gateway</title>
+  <title>Remote — High-Performance Remote Gateway</title>
   <link rel="stylesheet" href="app.css" />
-  <link rel="icon" type="image/png" href="assets/Remotedogiconsmall.png" />
+  <link rel="icon" type="image/png" href="assets/Remoteiconsmall.png" />
 </head>
 <body>
   <!-- Root App Container -->
@@ -14,8 +14,8 @@
     <!-- Top Application Header (Matches CommanderDog) -->
     <header class="app-header">
       <div class="logo-area" style="display: flex; align-items: center; gap: 8px;">
-        <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" style="height: 22px; width: auto; object-fit: contain; vertical-align: middle;" />
-        <span class="app-logo-text" style="font-weight: 700;">RemoteDog</span>
+        <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 22px; width: auto; object-fit: contain; vertical-align: middle;" />
+        <span class="app-logo-text" style="font-weight: 700;">Remote</span>
       </div>
 
       <!-- Right-Aligned Tools, Layout Switchers & Profile Controls -->
@@ -76,7 +76,7 @@
               <div class="profile-avatar-large profile-avatar-clickable" id="menu-avatar-large" onclick="openUserProfileModal()" title="Edit profile">A</div>
               <div style="overflow: hidden; flex: 1;">
                 <div style="font-weight: 700; font-size: 13px;" id="menu-user-name">admin</div>
-                <div style="font-size: 11px; color: var(--woofson-text-dim, #71717a);" id="menu-user-email">admin@remotedog.local</div>
+                <div style="font-size: 11px; color: var(--woofson-text-dim, #71717a);" id="menu-user-email">admin@remote.local</div>
                 <span class="user-role-badge" id="nav-user-role" style="margin-top: 4px; display: inline-block;">ADMIN</span>
               </div>
             </div>
@@ -94,7 +94,7 @@
             </div>
             <div class="dropdown-item" onclick="openAboutModal()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-              <span>About RemoteDog</span>
+              <span>About Remote</span>
             </div>
             <div class="profile-dropdown-footer">
               <button type="button" class="profile-action-btn" onclick="openUserProfileModal()" title="User Profile">
@@ -148,7 +148,7 @@
         </div>
         <div class="pane-body" id="pane-1-body">
           <div class="pane-empty-state">
-            <div class="empty-icon"><img src="assets/Remotedogiconsmall.png" alt="RemoteDog" class="empty-brand-img" /></div>
+            <div class="empty-icon"><img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" /></div>
             <h3>No Active Connection</h3>
             <p>Select a saved connection or launch a local terminal.</p>
             <button class="btn btn-primary" onclick="openConnectionsModal()">Open Connections</button>
@@ -325,8 +325,8 @@
     <div class="modal-overlay login-screen-overlay" id="login-modal">
       <!-- Top-Left Corner Branding Logo -->
       <div class="login-corner-brand">
-        <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" class="login-corner-logo" />
-        <span class="login-corner-name">RemoteDog</span>
+        <img src="assets/Remoteiconsmall.png" alt="Remote" class="login-corner-logo" />
+        <span class="login-corner-name">Remote</span>
       </div>
 
       <!-- Lower-Right Version Badge -->
@@ -338,11 +338,11 @@
       <div class="login-card">
         <div class="login-card-header">
           <div class="login-brand-icon">
-            <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" class="login-brand-img" />
+            <img src="assets/Remoteiconsmall.png" alt="Remote" class="login-brand-img" />
           </div>
           <div class="login-header-text">
             <h2 class="login-title">Hello friend.</h2>
-            <p class="login-subtitle">RemoteDog is ready when you are.</p>
+            <p class="login-subtitle">Remote is ready when you are.</p>
           </div>
         </div>
         <form id="login-form" onsubmit="event.preventDefault(); handleLoginSubmit();">
@@ -547,8 +547,8 @@
                   <span>Font Smoothing (ClearType)</span>
                 </label>
                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                  <input type="checkbox" id="conn-rdp-drive-redirection" checked />
-                  <span>Drive Redirection (\\tsclient\Dropbox)</span>
+                  <input type="checkbox" id="conn-rdp-drive-redirection" />
+                  <span>Drive Redirection (\\tsclient\Dropbox - Experimental)</span>
                 </label>
                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                   <input type="checkbox" id="conn-rdp-audio" />
@@ -778,21 +778,21 @@
       </div>
     </div>
 
-    <!-- About RemoteDog Modal (Matches CommanderDog) -->
+    <!-- About Remote Modal (Matches CommanderDog) -->
     <div class="modal-overlay" id="about-modal" style="display: none;">
       <div class="modal-box" style="width: 580px; max-height: 85vh;">
         <div class="modal-header">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" style="height: 18px; width: auto; object-fit: contain; vertical-align: middle;">
-            <span style="font-weight: 700; font-size: 14px;">About RemoteDog</span>
+            <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 18px; width: auto; object-fit: contain; vertical-align: middle;">
+            <span style="font-weight: 700; font-size: 14px;">About Remote</span>
           </div>
           <button class="btn btn-icon" onclick="closeAboutModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
         </div>
         <div class="modal-body" style="padding: 20px; overflow-y: auto;">
           <!-- Banner & Version Header -->
           <div style="text-align: center; margin-bottom: 18px; padding: 16px; background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px);">
-            <img src="assets/Remotedogiconsmall.png" alt="RemoteDog" style="height: 52px; width: auto; object-fit: contain; margin-bottom: 8px;">
-            <div style="font-size: 18px; font-weight: 800; color: var(--woofson-accent, #f59e0b); letter-spacing: 0.5px;">RemoteDog</div>
+            <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 52px; width: auto; object-fit: contain; margin-bottom: 8px;">
+            <div style="font-size: 18px; font-weight: 800; color: var(--woofson-accent, #f59e0b); letter-spacing: 0.5px;">Remote</div>
             <div style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px;">Ultra-Low-Resource Remote Gateway — By Woofson</div>
             <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap;">
               <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: var(--woofson-accent, #f59e0b); border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700; padding: 2px 8px; border-radius: 4px;">v0.2.0 (Single Binary)</span>
@@ -803,7 +803,7 @@
 
           <!-- Description -->
           <p style="font-size: 12px; color: var(--woofson-text-main, #f4f4f5); line-height: 1.6; margin-bottom: 16px;">
-            <strong>RemoteDog</strong> is an ultra-high-performance, memory-safe alternative to Apache Guacamole. Built in modern Rust with pure HTML5 Canvas and WebSockets, RemoteDog delivers RDP, VNC, and SSH multi-pane access with native clipboard auto-sync and SFTP dropboxes using a fraction of traditional gateway resources.
+            <strong>Remote</strong> is an ultra-high-performance, memory-safe alternative to Apache Guacamole. Built in modern Rust with pure HTML5 Canvas and WebSockets, Remote delivers RDP, VNC, and SSH multi-pane access with native clipboard auto-sync and SFTP dropboxes using a fraction of traditional gateway resources.
           </p>
 
           <!-- System Details Card -->
@@ -819,7 +819,7 @@
               <div><span style="color: var(--woofson-text-muted);">Protocols:</span> <span>RDP, RFB/VNC, SSH, Local PTY</span></div>
               <div><span style="color: var(--woofson-text-muted);">Auth:</span> <span>Argon2id + JWT + Authentik OIDC</span></div>
               <div><span style="color: var(--woofson-text-muted);">Database:</span> <span>SQLite 3 (Bundled C)</span></div>
-              <div><span style="color: var(--woofson-text-muted);">Repository:</span> <a href="https://github.com/Woofson/remotedog" target="_blank" style="color: var(--woofson-accent); text-decoration: none;">github.com/Woofson/remotedog</a></div>
+              <div><span style="color: var(--woofson-text-muted);">Repository:</span> <a href="https://github.com/Woofson/remote" target="_blank" style="color: var(--woofson-accent); text-decoration: none;">github.com/Woofson/remote</a></div>
               <div><span style="color: var(--woofson-text-muted);">License:</span> <span>MIT License</span></div>
             </div>
           </div>
