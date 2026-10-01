@@ -1,9 +1,9 @@
 use parking_lot::RwLock;
-use remote::auth::{hash_password, OidcService};
-use remote::config::AppConfig;
-use remote::db::Database;
-use remote::server::{create_router, AppState};
-use remote::transfer::TransferManager;
+use remoted::auth::{hash_password, OidcService};
+use remoted::config::AppConfig;
+use remoted::db::Database;
+use remoted::server::{create_router, AppState};
+use remoted::transfer::TransferManager;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
@@ -14,12 +14,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "remote=info,tower_http=info".into()),
+                .unwrap_or_else(|_| "remoted=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    remote::init_crypto_provider();
+    remoted::init_crypto_provider();
 
     println!(
         r#"

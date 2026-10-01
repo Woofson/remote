@@ -1,5 +1,5 @@
 [package]
-name = "remote"
+name = "remoted"
 version = "0.2.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
@@ -7,11 +7,11 @@ description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-P
 license = "MIT"
 
 [lib]
-name = "remote"
+name = "remoted"
 path = "src/lib.rs"
 
 [[bin]]
-name = "remote"
+name = "remoted"
 path = "src/main.rs"
 
 [dependencies]
