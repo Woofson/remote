@@ -5,6 +5,11 @@ edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-Pane HTML5 Canvas & Woofson UI"
 license = "MIT"
+repository = "https://github.com/Woofson/remote"
+homepage = "https://github.com/Woofson/remote"
+readme = "README.md"
+keywords = ["remote", "rdp", "vnc", "ssh", "gateway"]
+categories = ["network-programming", "command-line-utilities", "web-programming"]
 
 [lib]
 name = "remoted"
