@@ -252,50 +252,63 @@ pub async fn handle_ssh_session(
     // Task 2: Dispatch outgoing WebSocket messages
     let (mut ws_sink, mut ws_stream) = socket.split();
     let is_running_ws = is_running.clone();
-    let ws_send_handle = tokio::spawn(async move {
+    let mut ws_send_handle = tokio::spawn(async move {
         while let Some(msg) = ws_sender_rx.recv().await {
             if ws_sink.send(msg).await.is_err() {
                 break;
             }
         }
+        let _ = ws_sink.close().await;
         is_running_ws.store(false, Ordering::Relaxed);
     });
 
     // Task 3: Read from WebSocket -> Send commands to SSH worker
-    while let Some(Ok(msg)) = ws_stream.next().await {
-        match msg {
-            Message::Binary(bin) => {
-                if ssh_cmd_tx.send(SshChannelCommand::Data(bin)).await.is_err() {
-                    break;
-                }
+    loop {
+        tokio::select! {
+            _ = &mut ws_send_handle => {
+                break;
             }
-            Message::Text(txt) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
-                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
-                        match msg_type {
-                            "resize" => {
-                                let c = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u32;
-                                let r = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u32;
-                                let _ = ssh_cmd_tx.send(SshChannelCommand::Resize(c, r)).await;
-                                continue;
-                            }
-                            "clipboard_push" => {
-                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
-                                    let _ = ssh_cmd_tx.send(SshChannelCommand::Data(content.as_bytes().to_vec())).await;
+            msg_opt = ws_stream.next() => {
+                match msg_opt {
+                    Some(Ok(msg)) => {
+                        match msg {
+                            Message::Binary(bin) => {
+                                if ssh_cmd_tx.send(SshChannelCommand::Data(bin)).await.is_err() {
+                                    break;
                                 }
-                                continue;
                             }
-                            "ping" => continue,
+                            Message::Text(txt) => {
+                                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
+                                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
+                                        match msg_type {
+                                            "resize" => {
+                                                let c = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u32;
+                                                let r = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u32;
+                                                let _ = ssh_cmd_tx.send(SshChannelCommand::Resize(c, r)).await;
+                                                continue;
+                                            }
+                                            "clipboard_push" => {
+                                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
+                                                    let _ = ssh_cmd_tx.send(SshChannelCommand::Data(content.as_bytes().to_vec())).await;
+                                                }
+                                                continue;
+                                            }
+                                            "ping" => continue,
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                if ssh_cmd_tx.send(SshChannelCommand::Data(txt.into_bytes())).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Message::Close(_) => break,
                             _ => {}
                         }
                     }
-                }
-                if ssh_cmd_tx.send(SshChannelCommand::Data(txt.into_bytes())).await.is_err() {
-                    break;
+                    _ => break,
                 }
             }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
 

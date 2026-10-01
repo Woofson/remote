@@ -208,47 +208,60 @@ pub async fn handle_telnet_session(
     // Task 3: Dispatch WebSocket messages to client
     let (mut ws_sink, mut ws_stream) = socket.split();
     let is_running_ws = is_running.clone();
-    let ws_send_handle = tokio::spawn(async move {
+    let mut ws_send_handle = tokio::spawn(async move {
         while let Some(msg) = ws_sender_rx.recv().await {
             if ws_sink.send(msg).await.is_err() {
                 break;
             }
         }
+        let _ = ws_sink.close().await;
         is_running_ws.store(false, Ordering::Relaxed);
     });
 
     // Task 4: Handle WebSocket incoming messages from client (keystrokes, resize, clipboard)
     let tcp_sender = tcp_sender_tx.clone();
-    while let Some(Ok(msg)) = ws_stream.next().await {
-        match msg {
-            Message::Binary(bin) => {
-                let _ = tcp_sender.send(bin).await;
+    loop {
+        tokio::select! {
+            _ = &mut ws_send_handle => {
+                break;
             }
-            Message::Text(txt) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
-                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
-                        match msg_type {
-                            "resize" => {
-                                let c = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
-                                let r = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
-                                let _ = tcp_sender.send(naws_packet(c, r)).await;
-                                continue;
+            msg_opt = ws_stream.next() => {
+                match msg_opt {
+                    Some(Ok(msg)) => {
+                        match msg {
+                            Message::Binary(bin) => {
+                                let _ = tcp_sender.send(bin).await;
                             }
-                            "clipboard_push" => {
-                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
-                                    let _ = tcp_sender.send(content.as_bytes().to_vec()).await;
+                            Message::Text(txt) => {
+                                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
+                                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
+                                        match msg_type {
+                                            "resize" => {
+                                                let c = val.get("cols").and_then(|v| v.as_u64()).unwrap_or(80) as u16;
+                                                let r = val.get("rows").and_then(|v| v.as_u64()).unwrap_or(24) as u16;
+                                                let _ = tcp_sender.send(naws_packet(c, r)).await;
+                                                continue;
+                                            }
+                                            "clipboard_push" => {
+                                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
+                                                    let _ = tcp_sender.send(content.as_bytes().to_vec()).await;
+                                                }
+                                                continue;
+                                            }
+                                            "ping" => continue,
+                                            _ => {}
+                                        }
+                                    }
                                 }
-                                continue;
+                                let _ = tcp_sender.send(txt.into_bytes()).await;
                             }
-                            "ping" => continue,
+                            Message::Close(_) => break,
                             _ => {}
                         }
                     }
+                    _ => break,
                 }
-                let _ = tcp_sender.send(txt.into_bytes()).await;
             }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
 

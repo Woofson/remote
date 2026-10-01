@@ -403,6 +403,9 @@ function loginWithOidc() {
 }
 
 function logout() {
+  for (let i = 1; i <= 4; i++) {
+    disconnectPane(i);
+  }
   state.jwtToken = '';
   state.currentUser = null;
   localStorage.removeItem('remote_token');
@@ -1010,7 +1013,25 @@ function connectToTarget(connectionId) {
     statsEl.style.color = 'var(--woofson-danger, #ef4444)';
     showToast(`Disconnected from ${conn.name}`);
 
-    // Free canvas/terminal resources and display a clean Reconnect banner
+    // Free canvas/terminal resources and clean up pane state
+    if (pane.resizeObserver) {
+      pane.resizeObserver.disconnect();
+      pane.resizeObserver = null;
+    }
+    if (pane.terminal) {
+      try {
+        pane.terminal.dispose();
+      } catch (e) {}
+      pane.terminal = null;
+      pane.fitAddon = null;
+    }
+    if (pane.canvas) {
+      pane.canvas = null;
+      pane.ctx = null;
+    }
+    pane.socket = null;
+
+    // Display a clean Reconnect banner
     bodyEl.innerHTML = `
       <div class="pane-empty-state" style="padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%;">
         <div class="empty-icon" style="opacity: 0.8;">
@@ -1424,7 +1445,12 @@ function disconnectPane(paneIndex) {
     pane.terminal = null;
     pane.fitAddon = null;
   }
+  if (pane.canvas) {
+    pane.canvas = null;
+    pane.ctx = null;
+  }
   if (pane.socket) {
+    pane.socket.onclose = null;
     pane.socket.close();
     pane.socket = null;
   }

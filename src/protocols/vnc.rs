@@ -397,98 +397,111 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
     // Task 2: Dispatch WebSocket outgoing
     let (mut ws_sink, mut ws_stream) = socket.split();
     let is_running_ws = is_running.clone();
-    let ws_send_handle = tokio::spawn(async move {
+    let mut ws_send_handle = tokio::spawn(async move {
         while let Some(msg) = ws_sender_rx.recv().await {
             if ws_sink.send(msg).await.is_err() {
                 break;
             }
         }
+        let _ = ws_sink.close().await;
         is_running_ws.store(false, Ordering::Relaxed);
     });
 
     // Task 3: Handle incoming client inputs from browser
-    while let Some(Ok(msg)) = ws_stream.next().await {
-        match msg {
-            Message::Binary(bin) => {
-                if bin.is_empty() {
-                    continue;
-                }
-                match bin[0] {
-                    0x02 => {
-                        // Pointer Event: [0x02, mask: u8, x: u16, y: u16]
-                        if bin.len() >= 6 {
-                            let mask = bin[1];
-                            let x = u16::from_be_bytes([bin[2], bin[3]]);
-                            let y = u16::from_be_bytes([bin[4], bin[5]]);
-
-                            let mut pe = [0u8; 6];
-                            pe[0] = 5; // PointerEvent
-                            pe[1] = mask;
-                            pe[2..4].copy_from_slice(&x.to_be_bytes());
-                            pe[4..6].copy_from_slice(&y.to_be_bytes());
-
-                            let mut stream_w = stream_write_arc.lock();
-                            let _ = stream_w.write_all(&pe);
-                            let _ = stream_w.flush();
-                        }
-                    }
-                    0x04 => {
-                        // Key Event: [0x04, down_flag: u8, keysym: u32]
-                        if bin.len() >= 6 {
-                            let down = bin[1];
-                            let keysym = u32::from_be_bytes([bin[2], bin[3], bin[4], bin[5]]);
-
-                            let mut ke = [0u8; 8];
-                            ke[0] = 4; // KeyEvent
-                            ke[1] = down;
-                            ke[4..8].copy_from_slice(&keysym.to_be_bytes());
-
-                            let mut stream_w = stream_write_arc.lock();
-                            let _ = stream_w.write_all(&ke);
-                            let _ = stream_w.flush();
-                        }
-                    }
-                    _ => {}
-                }
+    loop {
+        tokio::select! {
+            _ = &mut ws_send_handle => {
+                break;
             }
-            Message::Text(txt) => {
-                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
-                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
-                        match msg_type {
-                            "clipboard_push" => {
-                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
-                                    let content_bytes = content.as_bytes();
-                                    let mut cut_msg = Vec::with_capacity(8 + content_bytes.len());
-                                    cut_msg.push(6); // ClientCutText
-                                    cut_msg.extend_from_slice(&[0, 0, 0]); // 3 bytes padding
-                                    cut_msg.extend_from_slice(&(content_bytes.len() as u32).to_be_bytes());
-                                    cut_msg.extend_from_slice(content_bytes);
+            msg_opt = ws_stream.next() => {
+                match msg_opt {
+                    Some(Ok(msg)) => {
+                        match msg {
+                            Message::Binary(bin) => {
+                                if bin.is_empty() {
+                                    continue;
+                                }
+                                match bin[0] {
+                                    0x02 => {
+                                        // Pointer Event: [0x02, mask: u8, x: u16, y: u16]
+                                        if bin.len() >= 6 {
+                                            let mask = bin[1];
+                                            let x = u16::from_be_bytes([bin[2], bin[3]]);
+                                            let y = u16::from_be_bytes([bin[4], bin[5]]);
 
-                                    let mut stream_w = stream_write_arc.lock();
-                                    let _ = stream_w.write_all(&cut_msg);
-                                    let _ = stream_w.flush();
+                                            let mut pe = [0u8; 6];
+                                            pe[0] = 5; // PointerEvent
+                                            pe[1] = mask;
+                                            pe[2..4].copy_from_slice(&x.to_be_bytes());
+                                            pe[4..6].copy_from_slice(&y.to_be_bytes());
+
+                                            let mut stream_w = stream_write_arc.lock();
+                                            let _ = stream_w.write_all(&pe);
+                                            let _ = stream_w.flush();
+                                        }
+                                    }
+                                    0x04 => {
+                                        // Key Event: [0x04, down_flag: u8, keysym: u32]
+                                        if bin.len() >= 6 {
+                                            let down = bin[1];
+                                            let keysym = u32::from_be_bytes([bin[2], bin[3], bin[4], bin[5]]);
+
+                                            let mut ke = [0u8; 8];
+                                            ke[0] = 4; // KeyEvent
+                                            ke[1] = down;
+                                            ke[4..8].copy_from_slice(&keysym.to_be_bytes());
+
+                                            let mut stream_w = stream_write_arc.lock();
+                                            let _ = stream_w.write_all(&ke);
+                                            let _ = stream_w.flush();
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            "refresh" => {
-                                let mut fbur = [0u8; 10];
-                                fbur[0] = 3;
-                                fbur[1] = 0; // Incremental = 0
-                                fbur[2..4].copy_from_slice(&0u16.to_be_bytes());
-                                fbur[4..6].copy_from_slice(&0u16.to_be_bytes());
-                                fbur[6..8].copy_from_slice(&info.width.to_be_bytes());
-                                fbur[8..10].copy_from_slice(&info.height.to_be_bytes());
+                            Message::Text(txt) => {
+                                if let Ok(val) = serde_json::from_str::<Value>(&txt) {
+                                    if let Some(msg_type) = val.get("type").and_then(|t| t.as_str()) {
+                                        match msg_type {
+                                            "clipboard_push" => {
+                                                if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
+                                                    let content_bytes = content.as_bytes();
+                                                    let mut cut_msg = Vec::with_capacity(8 + content_bytes.len());
+                                                    cut_msg.push(6); // ClientCutText
+                                                    cut_msg.extend_from_slice(&[0, 0, 0]); // 3 bytes padding
+                                                    cut_msg.extend_from_slice(&(content_bytes.len() as u32).to_be_bytes());
+                                                    cut_msg.extend_from_slice(content_bytes);
 
-                                let mut stream_w = stream_write_arc.lock();
-                                let _ = stream_w.write_all(&fbur);
-                                let _ = stream_w.flush();
+                                                    let mut stream_w = stream_write_arc.lock();
+                                                    let _ = stream_w.write_all(&cut_msg);
+                                                    let _ = stream_w.flush();
+                                                }
+                                            }
+                                            "refresh" => {
+                                                let mut fbur = [0u8; 10];
+                                                fbur[0] = 3;
+                                                fbur[1] = 0; // Incremental = 0
+                                                fbur[2..4].copy_from_slice(&0u16.to_be_bytes());
+                                                fbur[4..6].copy_from_slice(&0u16.to_be_bytes());
+                                                fbur[6..8].copy_from_slice(&info.width.to_be_bytes());
+                                                fbur[8..10].copy_from_slice(&info.height.to_be_bytes());
+
+                                                let mut stream_w = stream_write_arc.lock();
+                                                let _ = stream_w.write_all(&fbur);
+                                                let _ = stream_w.flush();
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
                             }
+                            Message::Close(_) => break,
                             _ => {}
                         }
                     }
+                    _ => break,
                 }
             }
-            Message::Close(_) => break,
-            _ => {}
         }
     }
 
