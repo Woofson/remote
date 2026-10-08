@@ -327,11 +327,7 @@ function onAuthenticated() {
   }
   updateHeaderProfile();
   loadConnections();
-  if (sessionStorage.getItem('remote_session_locked') === 'true') {
-    lockSession();
-  } else {
-    showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
-  }
+  showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
 }
 
 function showLoginModal() {
@@ -444,101 +440,6 @@ document.addEventListener('click', (e) => {
     }
   }
 });
-
-// ================= Dedicated Session Lock Screen =================
-function lockSession() {
-  if (!state.currentUser) return;
-  const menu = document.getElementById('profile-dropdown-menu');
-  if (menu) { menu.classList.remove('active'); menu.style.display = 'none'; }
-  
-  // Close open side drawers
-  const clipDrawer = document.getElementById('clipboard-drawer');
-  if (clipDrawer) clipDrawer.style.display = 'none';
-  const transDrawer = document.getElementById('transfer-drawer');
-  if (transDrawer) transDrawer.style.display = 'none';
-
-  sessionStorage.setItem('remote_session_locked', 'true');
-  
-  const lockScreen = document.getElementById('session-lock-screen');
-  if (lockScreen) {
-    lockScreen.classList.add('active');
-    lockScreen.style.display = 'flex';
-  }
-
-  const nameEl = document.getElementById('lock-screen-name');
-  if (nameEl) nameEl.textContent = state.currentUser.display_name || state.currentUser.username || 'User';
-
-  const avatarEl = document.getElementById('lock-screen-avatar');
-  const initial = (state.currentUser.username?.[0] || 'A').toUpperCase();
-  if (avatarEl) renderAvatarElement(avatarEl, state.currentUser.avatar_data, initial);
-
-  const pwdInput = document.getElementById('lock-password');
-  if (pwdInput) {
-    pwdInput.value = '';
-    setTimeout(() => pwdInput.focus(), 150);
-  }
-  const errEl = document.getElementById('lock-error');
-  if (errEl) errEl.style.display = 'none';
-}
-
-async function submitUnlockSession() {
-  const pwdInput = document.getElementById('lock-password');
-  const password = pwdInput ? pwdInput.value : '';
-  const errEl = document.getElementById('lock-error');
-  if (errEl) errEl.style.display = 'none';
-
-  if (!password) {
-    if (errEl) {
-      errEl.textContent = 'Please enter your password to unlock.';
-      errEl.style.display = 'block';
-    }
-    return;
-  }
-
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: state.currentUser?.username || '',
-        password: password,
-      }),
-    });
-
-    if (res.ok) {
-      sessionStorage.removeItem('remote_session_locked');
-      const lockScreen = document.getElementById('session-lock-screen');
-      if (lockScreen) {
-        lockScreen.classList.remove('active');
-        lockScreen.style.display = 'none';
-      }
-      if (pwdInput) pwdInput.value = '';
-      showToast('🔓 Session unlocked!', 'success');
-      
-      // Restore focus to active pane
-      const p = state.panes[state.activePaneIndex];
-      if (p) {
-        if (p.terminal) p.terminal.focus();
-        else if (p.canvas) p.canvas.focus();
-      }
-    } else {
-      const data = await res.json();
-      if (errEl) {
-        errEl.textContent = data.error || 'Incorrect password.';
-        errEl.style.display = 'block';
-      }
-      if (pwdInput) {
-        pwdInput.focus();
-        pwdInput.select();
-      }
-    }
-  } catch (err) {
-    if (errEl) {
-      errEl.textContent = 'Failed to verify password with server.';
-      errEl.style.display = 'block';
-    }
-  }
-}
 
 // ================= Full Window & Fullscreen Toggle System =================
 function toggleFullWindow(paneIndex) {
@@ -2326,9 +2227,7 @@ function closeAuditModal() {
 // ================= Keyboard Shortcuts =================
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
-    // If session is locked or login modal is visible, don't trigger global navigation shortcuts
-    const lockScreen = document.getElementById('session-lock-screen');
-    if (lockScreen && (lockScreen.classList.contains('active') || lockScreen.style.display === 'flex')) return;
+    // If login modal is visible, don't trigger global navigation shortcuts
     const loginModal = document.getElementById('login-modal');
     if (loginModal && (loginModal.classList.contains('active') || loginModal.style.display === 'flex')) return;
 

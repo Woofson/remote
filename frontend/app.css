@@ -329,15 +329,14 @@ body, html {
 }
 
 .profile-dropdown-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  display: flex;
   padding: 8px 10px;
   background: rgba(0, 0, 0, 0.25);
   border-top: 1px solid var(--woofson-border, #3f3f46);
 }
 
 .profile-action-btn {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1507,32 +1506,6 @@ body, html {
   object-fit: none;
   max-width: none;
   max-height: none;
-}
-
-/* ==========================================================================
-   SESSION LOCK SCREEN OVERLAY
-   ========================================================================== */
-#session-lock-screen.login-screen-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 99998;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background-color: #121214;
-  background-image: 
-    radial-gradient(ellipse 70% 55% at 15% 15%, rgba(245, 158, 11, 0.16) 0%, transparent 70%),
-    radial-gradient(ellipse 65% 50% at 85% 85%, rgba(217, 119, 6, 0.13) 0%, transparent 65%),
-    radial-gradient(circle 500px at 50% 50%, rgba(120, 53, 15, 0.08) 0%, transparent 100%),
-    linear-gradient(140deg, #0e0e11 0%, #15151a 45%, #181512 100%);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  overflow: hidden;
-}
-
-#session-lock-screen.login-screen-overlay.active {
-  display: flex !important;
 }
 
 
