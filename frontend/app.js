@@ -313,6 +313,11 @@ function updateHeaderProfile(user) {
   const menuAvatar = document.getElementById('menu-avatar-large');
   if (menuAvatar) renderAvatarElement(menuAvatar, avatar, initial);
 
+  const lockName = document.getElementById('lock-screen-name');
+  if (lockName) lockName.textContent = uname;
+  const lockAvatar = document.getElementById('lock-screen-avatar');
+  if (lockAvatar) renderAvatarElement(lockAvatar, avatar, initial);
+
   const adminItem = document.getElementById('admin-nav-item');
   if (adminItem) {
     adminItem.style.display = user.role === 'admin' ? 'flex' : 'none';
@@ -327,7 +332,11 @@ function onAuthenticated() {
   }
   updateHeaderProfile();
   loadConnections();
-  showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
+  if (sessionStorage.getItem('remote_session_locked') === 'true') {
+    lockSession();
+  } else {
+    showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
+  }
 }
 
 function showLoginModal() {
@@ -414,6 +423,96 @@ function logout() {
   document.cookie = 'remote_token=; path=/; max-age=0; SameSite=Lax';
   document.cookie = 'remotedog_token=; path=/; max-age=0; SameSite=Lax';
   window.location.reload();
+}
+
+function lockSession() {
+  const menu = document.getElementById('profile-dropdown-menu');
+  if (menu) {
+    menu.classList.remove('active');
+    menu.style.display = 'none';
+  }
+  const lockScreen = document.getElementById('session-lock-screen');
+  if (lockScreen) {
+    sessionStorage.setItem('remote_session_locked', 'true');
+    const user = state.currentUser;
+    const uname = user?.display_name || user?.username || 'admin';
+    const initial = (user?.username?.[0] || 'A').toUpperCase();
+    const avatar = user?.avatar_data || '';
+
+    const nameEl = document.getElementById('lock-screen-name');
+    const avatarEl = document.getElementById('lock-screen-avatar');
+    if (nameEl) nameEl.textContent = uname;
+    if (avatarEl) renderAvatarElement(avatarEl, avatar, initial);
+
+    lockScreen.classList.add('active');
+    lockScreen.style.display = 'flex';
+    const pwdInput = document.getElementById('lock-password');
+    if (pwdInput) {
+      pwdInput.value = '';
+      setTimeout(() => pwdInput.focus(), 50);
+    }
+  }
+  const errEl = document.getElementById('lock-error');
+  if (errEl) errEl.style.display = 'none';
+}
+
+async function submitUnlockSession() {
+  const pwdInput = document.getElementById('lock-password');
+  const password = pwdInput ? pwdInput.value : '';
+  const errEl = document.getElementById('lock-error');
+  if (errEl) errEl.style.display = 'none';
+
+  if (!password) {
+    if (errEl) {
+      errEl.textContent = 'Please enter your password to unlock.';
+      errEl.style.display = 'block';
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: state.currentUser?.username || '',
+        password: password,
+      }),
+    });
+
+    if (res.ok) {
+      sessionStorage.removeItem('remote_session_locked');
+      const lockScreen = document.getElementById('session-lock-screen');
+      if (lockScreen) {
+        lockScreen.classList.remove('active');
+        lockScreen.style.display = 'none';
+      }
+      if (pwdInput) pwdInput.value = '';
+      showToast('🔓 Session unlocked!', 'success');
+      
+      // Restore focus to active pane
+      const p = state.panes[state.activePaneIndex];
+      if (p) {
+        if (p.terminal) p.terminal.focus();
+        else if (p.canvas) p.canvas.focus();
+      }
+    } else {
+      const data = await res.json();
+      if (errEl) {
+        errEl.textContent = data.error || 'Incorrect password.';
+        errEl.style.display = 'block';
+      }
+      if (pwdInput) {
+        pwdInput.focus();
+        pwdInput.select();
+      }
+    }
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = 'Failed to verify password with server.';
+      errEl.style.display = 'block';
+    }
+  }
 }
 
 function toggleProfileMenu(e) {
@@ -2227,7 +2326,9 @@ function closeAuditModal() {
 // ================= Keyboard Shortcuts =================
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
-    // If login modal is visible, don't trigger global navigation shortcuts
+    // If session is locked or login modal is visible, don't trigger global navigation shortcuts
+    const lockScreen = document.getElementById('session-lock-screen');
+    if (lockScreen && (lockScreen.classList.contains('active') || lockScreen.style.display === 'flex')) return;
     const loginModal = document.getElementById('login-modal');
     if (loginModal && (loginModal.classList.contains('active') || loginModal.style.display === 'flex')) return;
 
