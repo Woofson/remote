@@ -2,6 +2,7 @@ use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
 use ironrdp_client::config::{ConfigBuilder, Destination};
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
+use ironrdp_connector::ConnectorErrorKind;
 use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
@@ -31,6 +32,52 @@ pub struct RdpConnectionParams {
     pub staging_dir: Option<String>,
     pub enable_drive_redirection: bool,
     pub keyboard_layout: Option<String>,
+}
+
+/// Format IronRDP ConnectorError with detailed inner SSPI / CredSSP / Negotiation causes
+fn format_connector_error(err: &ironrdp_connector::ConnectorError, username: &str) -> String {
+    let mut details = Vec::new();
+
+    match err.kind() {
+        ConnectorErrorKind::Credssp(sspi_err) => {
+            let mut sspi_msg = format!("CredSSP Authentication Failed ({:?}): {}", sspi_err.error_type, sspi_err.description);
+            if let Some(status) = sspi_err.nstatus {
+                sspi_msg.push_str(&format!(" [NTSTATUS: {:?}]", status));
+            }
+            if username.contains('@') {
+                sspi_msg.push_str(" — Tip for Windows 11: If this is a Microsoft Account, Windows RDP requires using your local account name (e.g. 'terje' or '.\\terje') instead of the email address, or disabling 'Only allow Windows Hello sign-in' in Windows Settings > Accounts > Sign-in options.");
+            }
+            details.push(sspi_msg);
+        }
+        ConnectorErrorKind::Negotiation(neg_err) => {
+            details.push(format!("Protocol Negotiation Failure: {:?}", neg_err));
+        }
+        ConnectorErrorKind::AccessDenied => {
+            details.push("Access Denied: Remote host rejected connection. Ensure account is in 'Remote Desktop Users' or 'Administrators' group".to_string());
+        }
+        ConnectorErrorKind::Reason(r) => {
+            details.push(format!("Server Reason: {}", r));
+        }
+        ConnectorErrorKind::Encode(e) => {
+            details.push(format!("PDU Encode Error: {}", e));
+        }
+        ConnectorErrorKind::Decode(e) => {
+            details.push(format!("PDU Decode Error: {}", e));
+        }
+        _ => {}
+    }
+
+    let mut curr: Option<&dyn std::error::Error> = std::error::Error::source(err);
+    while let Some(src) = curr {
+        details.push(format!("Caused by: {}", src));
+        curr = src.source();
+    }
+
+    if details.is_empty() {
+        format!("{}", err)
+    } else {
+        details.join("; ")
+    }
 }
 
 /// Map incoming browser mouse events (bitmask + coordinates) to IronRDP FastPath mouse events
@@ -267,7 +314,12 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
     );
 
     let destination = Destination::from_parts(params.host.clone(), params.port);
-    let username = params.username.as_deref().unwrap_or("").trim();
+    let raw_username = params.username.as_deref().unwrap_or("").trim();
+    let (parsed_domain, parsed_user) = if let Some((dom, user)) = raw_username.split_once('\\') {
+        (Some(dom.to_string()), user)
+    } else {
+        (params.domain.clone(), raw_username)
+    };
     let password = params.password.as_deref().unwrap_or("");
 
     let mut config_builder = ConfigBuilder::new()
@@ -284,10 +336,10 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_client_dir("C:\\Windows\\System32")
         .with_client_name("Remote")
         .with_platform(MajorPlatformType::WINDOWS)
-        .with_username(username)
+        .with_username(parsed_user)
         .with_password(password);
 
-    if let Some(dom) = &params.domain {
+    if let Some(dom) = &parsed_domain {
         if !dom.trim().is_empty() {
             config_builder = config_builder.with_domain(dom.trim());
         }
@@ -661,12 +713,13 @@ async fn process_and_send_frame(
                     }
                 }
                 RdpOutputEvent::ConnectionFailure(err) => {
-                    error!("RDP Gateway: Connection failure: {}", err);
+                    let detailed_err = format_connector_error(&err, raw_username);
+                    error!("RDP Gateway: Connection failure: {}", detailed_err);
                     let _ = ws_out_tx_events
                         .send(Message::Text(
                             json!({
                                 "type": "error",
-                                "message": format!("RDP Connection Failed: {}", err)
+                                "message": format!("RDP Connection Failed: {}", detailed_err)
                             })
                             .to_string(),
                         ))
@@ -679,12 +732,19 @@ async fn process_and_send_frame(
                             info!("RDP Gateway: Session disconnected gracefully: {:?}", graceful);
                         }
                         Err(err) => {
-                            warn!("RDP Gateway: Session terminated with error: {}", err);
+                            let mut session_details = vec![format!("{}", err)];
+                            let mut curr: Option<&dyn std::error::Error> = std::error::Error::source(&err);
+                            while let Some(src) = curr {
+                                session_details.push(format!("Caused by: {}", src));
+                                curr = src.source();
+                            }
+                            let detailed_term_err = session_details.join("; ");
+                            warn!("RDP Gateway: Session terminated with error: {}", detailed_term_err);
                             let _ = ws_out_tx_events
                                 .send(Message::Text(
                                     json!({
                                         "type": "error",
-                                        "message": format!("RDP Session Terminated: {}", err)
+                                        "message": format!("RDP Session Terminated: {}", detailed_term_err)
                                     })
                                     .to_string(),
                                 ))
