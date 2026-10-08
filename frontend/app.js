@@ -327,7 +327,11 @@ function onAuthenticated() {
   }
   updateHeaderProfile();
   loadConnections();
-  showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
+  if (sessionStorage.getItem('remote_session_locked') === 'true') {
+    lockSession();
+  } else {
+    showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
+  }
 }
 
 function showLoginModal() {
@@ -408,6 +412,7 @@ function logout() {
   }
   state.jwtToken = '';
   state.currentUser = null;
+  sessionStorage.removeItem('remote_session_locked');
   localStorage.removeItem('remote_token');
   localStorage.removeItem('remotedog_token');
   document.cookie = 'remote_token=; path=/; max-age=0; SameSite=Lax';
@@ -440,6 +445,227 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// ================= Dedicated Session Lock Screen =================
+function lockSession() {
+  if (!state.currentUser) return;
+  const menu = document.getElementById('profile-dropdown-menu');
+  if (menu) { menu.classList.remove('active'); menu.style.display = 'none'; }
+  
+  // Close open side drawers
+  const clipDrawer = document.getElementById('clipboard-drawer');
+  if (clipDrawer) clipDrawer.style.display = 'none';
+  const transDrawer = document.getElementById('transfer-drawer');
+  if (transDrawer) transDrawer.style.display = 'none';
+
+  sessionStorage.setItem('remote_session_locked', 'true');
+  
+  const lockScreen = document.getElementById('session-lock-screen');
+  if (lockScreen) {
+    lockScreen.classList.add('active');
+    lockScreen.style.display = 'flex';
+  }
+
+  const nameEl = document.getElementById('lock-screen-name');
+  if (nameEl) nameEl.textContent = state.currentUser.display_name || state.currentUser.username || 'User';
+
+  const avatarEl = document.getElementById('lock-screen-avatar');
+  const initial = (state.currentUser.username?.[0] || 'A').toUpperCase();
+  if (avatarEl) renderAvatarElement(avatarEl, state.currentUser.avatar_data, initial);
+
+  const pwdInput = document.getElementById('lock-password');
+  if (pwdInput) {
+    pwdInput.value = '';
+    setTimeout(() => pwdInput.focus(), 150);
+  }
+  const errEl = document.getElementById('lock-error');
+  if (errEl) errEl.style.display = 'none';
+}
+
+async function submitUnlockSession() {
+  const pwdInput = document.getElementById('lock-password');
+  const password = pwdInput ? pwdInput.value : '';
+  const errEl = document.getElementById('lock-error');
+  if (errEl) errEl.style.display = 'none';
+
+  if (!password) {
+    if (errEl) {
+      errEl.textContent = 'Please enter your password to unlock.';
+      errEl.style.display = 'block';
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: state.currentUser?.username || '',
+        password: password,
+      }),
+    });
+
+    if (res.ok) {
+      sessionStorage.removeItem('remote_session_locked');
+      const lockScreen = document.getElementById('session-lock-screen');
+      if (lockScreen) {
+        lockScreen.classList.remove('active');
+        lockScreen.style.display = 'none';
+      }
+      if (pwdInput) pwdInput.value = '';
+      showToast('🔓 Session unlocked!', 'success');
+      
+      // Restore focus to active pane
+      const p = state.panes[state.activePaneIndex];
+      if (p) {
+        if (p.terminal) p.terminal.focus();
+        else if (p.canvas) p.canvas.focus();
+      }
+    } else {
+      const data = await res.json();
+      if (errEl) {
+        errEl.textContent = data.error || 'Incorrect password.';
+        errEl.style.display = 'block';
+      }
+      if (pwdInput) {
+        pwdInput.focus();
+        pwdInput.select();
+      }
+    }
+  } catch (err) {
+    if (errEl) {
+      errEl.textContent = 'Failed to verify password with server.';
+      errEl.style.display = 'block';
+    }
+  }
+}
+
+// ================= Full Window & Fullscreen Toggle System =================
+function toggleFullWindow(paneIndex) {
+  const app = document.getElementById('app');
+  if (!app) return;
+
+  if (paneIndex) {
+    const pane = document.getElementById(`pane-${paneIndex}`);
+    if (!pane) return;
+    const isMax = pane.classList.contains('maximized-pane');
+    // Clear maximized on all panes first
+    for (let i = 1; i <= 4; i++) {
+      document.getElementById(`pane-${i}`)?.classList.remove('maximized-pane');
+    }
+    if (isMax) {
+      app.classList.remove('full-window-mode');
+      showToast('Restored standard layout');
+    } else {
+      activatePane(paneIndex);
+      pane.classList.add('maximized-pane');
+      app.classList.add('full-window-mode');
+      showToast(`Pane ${paneIndex} Full Window (F10 / Alt+W to restore)`);
+    }
+  } else {
+    // Global Full Window toggle
+    const isFull = app.classList.contains('full-window-mode');
+    if (isFull) {
+      app.classList.remove('full-window-mode');
+      for (let i = 1; i <= 4; i++) {
+        document.getElementById(`pane-${i}`)?.classList.remove('maximized-pane');
+      }
+      showToast('Exited Full Window mode');
+    } else {
+      app.classList.add('full-window-mode');
+      showToast('Full Window mode active (F10 / Alt+W to exit)');
+    }
+  }
+
+  const btnHeader = document.getElementById('btn-header-fullwindow');
+  if (btnHeader) {
+    btnHeader.classList.toggle('active', app.classList.contains('full-window-mode'));
+  }
+
+  // Trigger resize on visible terminals and canvases
+  setTimeout(() => {
+    window.dispatchEvent(new Event('resize'));
+    for (let i = 1; i <= 4; i++) {
+      const p = state.panes[i];
+      if (p && p.fitAddon && p.terminal) {
+        try { p.fitAddon.fit(); } catch (e) {}
+      }
+    }
+  }, 100);
+}
+
+function togglePaneFullWindow(paneIndex) {
+  toggleFullWindow(paneIndex);
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {
+      toggleFullWindow();
+    });
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+function togglePaneFullscreen(paneIndex) {
+  activatePane(paneIndex);
+  const pane = document.getElementById(`pane-${paneIndex}`);
+  if (!document.fullscreenElement) {
+    if (pane && pane.requestFullscreen) {
+      pane.requestFullscreen().catch(() => {
+        document.documentElement.requestFullscreen().catch(() => {
+          toggleFullWindow(paneIndex);
+        });
+      });
+    } else {
+      toggleFullscreen();
+    }
+  } else {
+    document.exitFullscreen().catch(() => {});
+  }
+}
+
+document.addEventListener('fullscreenchange', () => {
+  const app = document.getElementById('app');
+  const btnFullscreen = document.getElementById('btn-header-fullscreen');
+  const isFs = !!document.fullscreenElement;
+  if (app) {
+    app.classList.toggle('fullscreen-mode', isFs);
+  }
+  if (btnFullscreen) {
+    btnFullscreen.classList.toggle('active', isFs);
+  }
+  setTimeout(() => {
+    window.dispatchEvent(new Event('resize'));
+    for (let i = 1; i <= 4; i++) {
+      const p = state.panes[i];
+      if (p && p.fitAddon && p.terminal) {
+        try { p.fitAddon.fit(); } catch (e) {}
+      }
+    }
+  }, 100);
+});
+
+function togglePaneScaling(paneIndex) {
+  const pane = state.panes[paneIndex];
+  if (!pane || !pane.canvas) {
+    showToast('Display scaling applies to active graphics sessions (RDP/VNC)');
+    return;
+  }
+  const canvas = pane.canvas;
+  const isOriginal = canvas.classList.contains('original-size');
+  if (isOriginal) {
+    canvas.classList.remove('original-size');
+    canvas.classList.add('scaled-fit');
+    showToast(`Pane ${paneIndex}: Scaled to fit window`);
+  } else {
+    canvas.classList.remove('scaled-fit');
+    canvas.classList.add('original-size');
+    showToast(`Pane ${paneIndex}: Native 1:1 resolution (No scaling)`);
+  }
+}
+
 // ================= Multi-Pane Layout Controls =================
 function setPaneLayout(layout) {
   state.paneLayout = layout;
@@ -456,11 +682,29 @@ function setPaneLayout(layout) {
 
   const maxPanes = (layout === 1) ? 1 : (layout === 2 || layout === '2v' || layout === '2h') ? 2 : (layout === 3) ? 3 : 4;
 
-  // Show/Hide Panes
+  // Show/Hide Panes WITHOUT disconnecting background sessions
   for (let i = 1; i <= 4; i++) {
     const paneEl = document.getElementById(`pane-${i}`);
     if (paneEl) {
-      paneEl.style.display = i <= maxPanes ? 'flex' : 'none';
+      const shouldShow = i <= maxPanes;
+      paneEl.style.display = shouldShow ? 'flex' : 'none';
+      if (shouldShow) {
+        const pane = state.panes[i];
+        if (pane && pane.fitAddon && pane.terminal) {
+          setTimeout(() => {
+            try {
+              pane.fitAddon.fit();
+              if (pane.socket && pane.socket.readyState === WebSocket.OPEN) {
+                pane.socket.send(JSON.stringify({
+                  type: 'resize',
+                  cols: pane.terminal.cols,
+                  rows: pane.terminal.rows,
+                }));
+              }
+            } catch (e) {}
+          }, 60);
+        }
+      }
     }
   }
 
@@ -597,13 +841,15 @@ function activatePane(index) {
     const p = document.getElementById(`pane-${i}`);
     if (p) p.classList.toggle('active', i === index);
   }
-  document.getElementById('active-pane-info').textContent = `Active Pane: [ ${index} ]`;
+  const activeInfo = document.getElementById('active-pane-info');
+  if (activeInfo) {
+    activeInfo.textContent = `Active Pane: [ ${index} ]`;
+  }
 
   const activePane = state.panes[index];
-  if (activePane && activePane.conn && activePane.conn.protocol === 'ssh') {
-    document.getElementById('sftp-explorer-section').style.display = 'block';
-  } else {
-    document.getElementById('sftp-explorer-section').style.display = 'none';
+  const sftpSection = document.getElementById('sftp-explorer-section');
+  if (sftpSection) {
+    sftpSection.style.display = (activePane && activePane.conn && activePane.conn.protocol === 'ssh') ? 'block' : 'none';
   }
 }
 
@@ -1212,10 +1458,14 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
 
   // ResizeObserver for dynamic terminal resizing
   let resizeDebounceTimer = null;
-  const resizeObserver = new ResizeObserver(() => {
+  const resizeObserver = new ResizeObserver((entries) => {
     clearTimeout(resizeDebounceTimer);
     resizeDebounceTimer = setTimeout(() => {
       if (fitAddon && term.element && term.element.parentElement) {
+        if (entries && entries.length > 0) {
+          const cr = entries[0].contentRect;
+          if (cr.width < 50 || cr.height < 50) return;
+        }
         try {
           fitAddon.fit();
           sendTerminalResize(term.cols, term.rows);
@@ -1259,7 +1509,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
 
     for (const entry of entries) {
       const cr = entry.contentRect;
-      if (cr.width < 200 || cr.height < 200) continue;
+      // Guard against collapsed / background panes (less than 50px)
+      if (cr.width < 50 || cr.height < 50) continue;
 
       const newW = Math.min(3840, Math.max(640, Math.round(cr.width)));
       const newH = Math.min(2160, Math.max(480, Math.round(cr.height)));
@@ -2075,15 +2326,67 @@ function closeAuditModal() {
 // ================= Keyboard Shortcuts =================
 function setupKeyboardShortcuts() {
   document.addEventListener('keydown', (e) => {
+    // If session is locked or login modal is visible, don't trigger global navigation shortcuts
+    const lockScreen = document.getElementById('session-lock-screen');
+    if (lockScreen && (lockScreen.classList.contains('active') || lockScreen.style.display === 'flex')) return;
+    const loginModal = document.getElementById('login-modal');
+    if (loginModal && (loginModal.classList.contains('active') || loginModal.style.display === 'flex')) return;
+
+    // F10 or Alt+W -> Full Window Toggle
+    if (e.key === 'F10' || (e.altKey && (e.key === 'w' || e.key === 'W'))) {
+      e.preventDefault();
+      toggleFullWindow();
+      return;
+    }
+
+    // F11 -> Fullscreen Toggle
+    if (e.key === 'F11') {
+      e.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+
+    // Escape -> Exit Full Window / Fullscreen or Close open modals
+    if (e.key === 'Escape') {
+      const app = document.getElementById('app');
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+        return;
+      }
+      if (app && app.classList.contains('full-window-mode')) {
+        toggleFullWindow();
+        return;
+      }
+      // Close open modals / menus
+      document.getElementById('profile-dropdown-menu')?.classList.remove('active');
+      const pm = document.getElementById('profile-dropdown-menu');
+      if (pm) pm.style.display = 'none';
+      closeHelpModal();
+      closeAboutModal();
+      closeUserProfileModal();
+      closeConnectionsModal();
+      closeConnectionEditModal();
+      closeSettingsModal();
+      closeAuditModal();
+      closeUsersModal();
+      closeUserEditModal();
+      document.getElementById('pane-settings-popup')?.remove();
+      document.getElementById('pane-kbd-dropdown')?.remove();
+      return;
+    }
+
     // Alt+1 to Alt+4 -> Multi-Pane Switching
     if (e.altKey && e.key >= '1' && e.key <= '4') {
       setPaneLayout(parseInt(e.key, 10));
       e.preventDefault();
+      return;
     }
+
     // Ctrl+Shift+V -> Clipboard Drawer
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'v') {
       toggleClipboardDrawer();
       e.preventDefault();
+      return;
     }
   });
 }
@@ -2245,6 +2548,13 @@ function applyPaneStyle(paneIndex) {
   }
 
   paneEl.style.borderWidth = bw;
+  if (bw === '0px') {
+    paneEl.classList.add('borderless-pane');
+    paneEl.style.borderRadius = '0px';
+  } else {
+    paneEl.classList.remove('borderless-pane');
+    paneEl.style.borderRadius = '';
+  }
 
   const dot = document.getElementById(`pane-dot-${paneIndex}`);
   if (dot) {
@@ -2351,9 +2661,9 @@ function openPaneSettingsMenu(e, paneIndex) {
       <!-- 3. Border Width & Ring Settings -->
       <div style="border-top: 1px solid var(--woofson-border); padding-top: 10px;">
         <div style="font-size: 10px; color: var(--woofson-text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Border Width (Pane ${paneIndex})</div>
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px;">
-          ${['1px', '2px', '3px', '4px'].map(bw => `
-            <button type="button" class="btn btn-sm ${curBorderWidth === bw ? 'active' : ''}" style="padding: 2px 4px; font-size: 10px; justify-content: center;" onclick="applyBorderSettings('${bw}', null, ${paneIndex}); openPaneSettingsMenu(null, ${paneIndex});">${bw}</button>
+        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px;">
+          ${['0px', '1px', '2px', '3px', '4px'].map(bw => `
+            <button type="button" class="btn btn-sm ${curBorderWidth === bw ? 'active' : ''}" style="padding: 2px 2px; font-size: 9.5px; justify-content: center;" onclick="applyBorderSettings('${bw}', null, ${paneIndex}); openPaneSettingsMenu(null, ${paneIndex});">${bw === '0px' ? '0px (None)' : bw}</button>
           `).join('')}
         </div>
 

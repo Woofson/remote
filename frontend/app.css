@@ -730,7 +730,7 @@ body, html {
   position: fixed;
   top: 44px;
   right: 0;
-  bottom: 24px;
+  bottom: 0;
   width: 360px;
   background: var(--woofson-bg-panel);
   border-left: 1px solid var(--woofson-border);
@@ -1404,4 +1404,135 @@ body, html {
 .login-submit-btn:active {
   transform: translateY(0);
 }
+
+/* ==========================================================================
+   FULL WINDOW & FULLSCREEN TOGGLE SYSTEM (ISSUE #1)
+   ========================================================================== */
+
+/* Full Window Mode: Hides top app-header and expands viewport to full window bounds */
+.full-window-mode .app-header {
+  display: none !important;
+}
+
+.full-window-mode .viewport-grid,
+.fullscreen-mode .viewport-grid {
+  padding: 0 !important;
+  gap: 0 !important;
+  height: 100vh !important;
+  width: 100vw !important;
+}
+
+.full-window-mode .remote-pane,
+.fullscreen-mode .remote-pane,
+.remote-pane.maximized-pane {
+  border-radius: 0 !important;
+}
+
+.full-window-mode .side-drawer,
+.fullscreen-mode .side-drawer {
+  top: 0 !important;
+  bottom: 0 !important;
+}
+
+/* Individual Pane Maximized (Fills Entire Viewport) */
+.remote-pane.maximized-pane {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 850 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+}
+
+/* ==========================================================================
+   FLOATING GLASS "POCKET" TOOLBAR (ISSUE #1)
+   ========================================================================== */
+.full-window-mode .pane-header,
+.fullscreen-mode .pane-header,
+.remote-pane.maximized-pane .pane-header {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 20px;
+  background: rgba(18, 18, 20, 0.85);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), 0 0 16px rgba(245, 158, 11, 0.12);
+  opacity: 0.35;
+  transition: opacity 0.2s ease, transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.full-window-mode .pane-header:hover,
+.full-window-mode .pane-header:focus-within,
+.fullscreen-mode .pane-header:hover,
+.fullscreen-mode .pane-header:focus-within,
+.remote-pane.maximized-pane .pane-header:hover,
+.remote-pane.maximized-pane .pane-header:focus-within {
+  opacity: 1;
+  transform: translateX(-50%) translateY(2px);
+  background: rgba(24, 24, 28, 0.95);
+  border-color: rgba(245, 158, 11, 0.55);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8), 0 0 22px rgba(245, 158, 11, 0.22);
+}
+
+/* ==========================================================================
+   BORDERLESS PANES (0PX BORDERS)
+   ========================================================================== */
+.borderless-panes .remote-pane,
+.remote-pane.borderless-pane,
+.remote-pane[style*="--pane-border-width: 0px"],
+.remote-pane[style*="border-width: 0px"] {
+  border-width: 0px !important;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+}
+
+/* ==========================================================================
+   CANVAS DISPLAY SCALING MODES
+   ========================================================================== */
+.pane-canvas.scaled-fit {
+  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.pane-canvas.original-size {
+  object-fit: none;
+  max-width: none;
+  max-height: none;
+}
+
+/* ==========================================================================
+   SESSION LOCK SCREEN OVERLAY
+   ========================================================================== */
+#session-lock-screen.login-screen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background-color: #121214;
+  background-image: 
+    radial-gradient(ellipse 70% 55% at 15% 15%, rgba(245, 158, 11, 0.16) 0%, transparent 70%),
+    radial-gradient(ellipse 65% 50% at 85% 85%, rgba(217, 119, 6, 0.13) 0%, transparent 65%),
+    radial-gradient(circle 500px at 50% 50%, rgba(120, 53, 15, 0.08) 0%, transparent 100%),
+    linear-gradient(140deg, #0e0e11 0%, #15151a 45%, #181512 100%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  overflow: hidden;
+}
+
+#session-lock-screen.login-screen-overlay.active {
+  display: flex !important;
+}
+
 
