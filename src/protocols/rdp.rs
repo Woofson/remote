@@ -499,6 +499,28 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                             let _ = ws_out_tx_reader
                                 .send(Message::Text(json!({"type": "pong"}).to_string()))
                                 .await;
+                        } else if msg_type == Some("clipboard_push") {
+                            if let Some(content) = val.get("text").and_then(|v| v.as_str()) {
+                                info!("RDP Gateway: Forwarding clipboard text to remote host ({} chars)", content.chars().count());
+                                let mut events = smallvec::SmallVec::new();
+                                for ch in content.chars() {
+                                    if ch == '\n' {
+                                        // Send Enter key: scancode 0x1c
+                                        events.push(FastPathInputEvent::KeyboardEvent(KeyboardFlags::empty(), 0x1c));
+                                        events.push(FastPathInputEvent::KeyboardEvent(KeyboardFlags::RELEASE, 0x1c));
+                                    } else if ch == '\r' {
+                                        // Carriage return handled with newline
+                                        continue;
+                                    } else {
+                                        let unicode = ch as u16;
+                                        events.push(FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::empty(), unicode));
+                                        events.push(FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::RELEASE, unicode));
+                                    }
+                                }
+                                if !events.is_empty() {
+                                    let _ = input_sender_rx.send(RdpInputEvent::FastPath(events));
+                                }
+                            }
                         } else if msg_type == Some("resize") {
                             if let (Some(w), Some(h)) = (
                                 val.get("width").and_then(|v| v.as_u64()),

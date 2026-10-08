@@ -1428,6 +1428,23 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
     }
   });
 
+  // Native paste event on canvas: captures Ctrl+V and forwards to remote session
+  canvas.addEventListener('paste', (e) => {
+    e.preventDefault();
+    if (pane.conn && (pane.conn.view_only || pane.conn.allow_clipboard === 'disabled' || pane.conn.allow_clipboard === 'remote_to_host')) {
+      showToast('Clipboard paste blocked by connection policy', 'warning');
+      return;
+    }
+    const text = (e.clipboardData || window.clipboardData)?.getData('text');
+    if (text && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'clipboard_push',
+        text: text,
+      }));
+      showToast(`📋 Pasted into remote session (${text.length} chars)`);
+    }
+  });
+
   canvas.focus();
 }
 
@@ -1486,15 +1503,18 @@ function toggleClipboardDrawer() {
 }
 
 function onRemoteClipboardSync(text) {
-  document.getElementById('clipboard-buffer').value = text;
-  const autoClip = document.getElementById('chk-auto-clip').checked;
+  const bufEl = document.getElementById('clipboard-buffer');
+  if (bufEl) bufEl.value = text;
+  const autoClip = document.getElementById('chk-auto-clip')?.checked;
 
   if (autoClip && navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
       showToast('📋 Remote clipboard copied to your device!');
-    }).catch(() => {});
+    }).catch(() => {
+      showToast('📋 Remote clipboard received in Live Drawer');
+    });
   } else {
-    showToast('📋 Remote clipboard updated in drawer');
+    showToast('📋 Remote clipboard updated in Live Drawer');
   }
 }
 
@@ -1512,27 +1532,53 @@ function pushClipboardToRemote() {
     text: text,
   }));
 
-  showToast('Clipboard sent to remote host!');
+  showToast(`📋 Sent ${text.length} characters to remote host!`);
 }
 
 async function copyLocalClipboardToBuffer() {
   try {
-    const text = await navigator.clipboard.readText();
-    document.getElementById('clipboard-buffer').value = text;
-    showToast('Pasted from local device clipboard!');
-  } catch (err) {
-    showToast('Could not read clipboard. Please paste manually.', 'danger');
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const text = await navigator.clipboard.readText();
+      document.getElementById('clipboard-buffer').value = text;
+      showToast('📋 Pasted from local device clipboard!');
+      return;
+    }
+  } catch (err) {}
+
+  // Fallback for non-secure HTTP contexts where readText() is blocked
+  const textarea = document.getElementById('clipboard-buffer');
+  if (textarea) {
+    textarea.focus();
+    textarea.select();
   }
+  showToast('In HTTP mode: press Ctrl+V into the drawer, then click "Send to Remote Host"', 'info');
 }
 
 async function copyBufferToLocalDevice() {
   const text = document.getElementById('clipboard-buffer').value;
   try {
-    await navigator.clipboard.writeText(text);
-    showToast('Copied buffer to your device clipboard!');
-  } catch (err) {
-    showToast('Failed to copy to clipboard', 'danger');
-  }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      showToast('📋 Copied buffer to your device clipboard!');
+      return;
+    }
+  } catch (err) {}
+
+  // Fallback using textarea selection and document.execCommand('copy')
+  try {
+    const textarea = document.getElementById('clipboard-buffer');
+    if (textarea) {
+      textarea.focus();
+      textarea.select();
+      const successful = document.execCommand('copy');
+      if (successful) {
+        showToast('📋 Copied buffer to your device clipboard!');
+        return;
+      }
+    }
+  } catch (e) {}
+
+  showToast('Press Ctrl+C in the drawer buffer to copy text', 'warning');
 }
 
 // ================= File Dropbox & SFTP Transfers =================
