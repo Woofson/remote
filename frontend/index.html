@@ -100,6 +100,10 @@
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
               <span>Settings</span>
             </div>
+            <div class="dropdown-item" onclick="openHelpModal()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+              <span>Help & Browser Setup</span>
+            </div>
             <div class="dropdown-item" onclick="openAboutModal()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
               <span>About Remote</span>
@@ -787,6 +791,88 @@
             </thead>
             <tbody id="audit-table-body"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Help & Browser Setup Guide Modal -->
+    <div class="modal-overlay" id="help-modal" style="display: none;">
+      <div class="modal-box" style="width: 680px; max-height: 88vh; display: flex; flex-direction: column;">
+        <div class="modal-header">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            <span style="font-weight: 700; font-size: 14px;">Help & Browser Configuration Guide</span>
+          </div>
+          <button class="btn btn-icon" onclick="closeHelpModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        </div>
+        <div class="modal-body" style="padding: 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+          
+          <!-- Section 1: HTTP Clipboard Access -->
+          <div class="card" style="background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px); padding: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+              <h4 style="margin: 0; font-size: 13px; font-weight: 700; color: var(--woofson-text-main, #f4f4f5);">Enabling Browser Clipboard Access Over HTTP</h4>
+            </div>
+            <p style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px; line-height: 1.5;">
+              Modern browsers restrict <code>navigator.clipboard</code> on non-HTTPS origins. To enable automatic copy/paste over HTTP without SSL certificates:
+            </p>
+            
+            <div style="display: flex; flex-direction: column; gap: 10px;">
+              <!-- Chromium instructions -->
+              <div style="background: var(--woofson-bg-card, #18181b); border: 1px solid var(--woofson-border, #27272a); border-radius: 4px; padding: 10px;">
+                <div style="font-weight: 700; font-size: 11px; color: #38bdf8; margin-bottom: 4px;">Google Chrome, Brave, Microsoft Edge, Opera</div>
+                <ol style="margin: 0 0 6px 18px; padding: 0; font-size: 11px; color: var(--woofson-text, #f4f4f5); line-height: 1.6;">
+                  <li>Navigate to: <code style="background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono); color: var(--woofson-accent);">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code></li>
+                  <li>Add this server's origin into the box: <code id="help-origin-tag" style="background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono); color: #10b981;">http://...</code> 
+                    <button class="btn btn-secondary" onclick="copyCurrentOriginToClipboard()" style="font-size: 10px; padding: 1px 6px; margin-left: 6px;">Copy URL</button>
+                  </li>
+                  <li>Set the dropdown to <strong>Enabled</strong> and click <strong>Relaunch</strong>.</li>
+                </ol>
+              </div>
+
+              <!-- Firefox instructions -->
+              <div style="background: var(--woofson-bg-card, #18181b); border: 1px solid var(--woofson-border, #27272a); border-radius: 4px; padding: 10px;">
+                <div style="font-weight: 700; font-size: 11px; color: #f97316; margin-bottom: 4px;">Mozilla Firefox</div>
+                <ol style="margin: 0 0 4px 18px; padding: 0; font-size: 11px; color: var(--woofson-text, #f4f4f5); line-height: 1.6;">
+                  <li>Navigate to: <code style="background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono); color: var(--woofson-accent);">about:config</code> and accept the risk prompt.</li>
+                  <li>Search for <code style="background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono);">dom.events.asyncClipboard.clipboardItem</code> and toggle to <strong>true</strong>.</li>
+                  <li>Search for <code style="background: rgba(0,0,0,0.4); padding: 1px 4px; border-radius: 3px; font-family: var(--font-mono);">dom.events.testing.asyncClipboard</code> and toggle to <strong>true</strong>.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Windows 11 RDP Authentication Guide -->
+          <div class="card" style="background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px); padding: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+              <h4 style="margin: 0; font-size: 13px; font-weight: 700; color: var(--woofson-text-main, #f4f4f5);">Windows 11 RDP & Account Authentication Tips</h4>
+            </div>
+            <ul style="margin: 0 0 0 18px; padding: 0; font-size: 11px; color: var(--woofson-text, #f4f4f5); line-height: 1.6;">
+              <li><strong>Local Account Name vs Email:</strong> Use your local Windows username (e.g. <code>terje</code> or <code>.\terje</code>) rather than your Microsoft account email. You can find your exact username by running <code>whoami</code> in PowerShell.</li>
+              <li><strong>Disable Windows Hello Sign-in Requirement:</strong> On the Windows 11 host, open <em>Settings &gt; Accounts &gt; Sign-in options</em> and turn <strong>OFF</strong> <em>"Only allow Windows Hello sign-in for Microsoft accounts on this device"</em>.</li>
+              <li><strong>Password vs PIN:</strong> RDP NLA requires the actual account password (not the 4 or 6-digit Windows Hello PIN).</li>
+              <li><strong>Remote Desktop Users:</strong> Ensure the user is in the <em>Remote Desktop Users</em> or <em>Administrators</em> group in Windows Settings.</li>
+            </ul>
+          </div>
+
+          <!-- Section 3: Essential Shortcuts -->
+          <div class="card" style="background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px); padding: 14px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg>
+              <h4 style="margin: 0; font-size: 13px; font-weight: 700; color: var(--woofson-text-main, #f4f4f5);">Keyboard & Navigation Shortcuts</h4>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 11px;">
+              <div><kbd style="background: var(--woofson-border, #3f3f46); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono);">Ctrl+V</kbd> Paste into active RDP/VNC/Terminal</div>
+              <div><kbd style="background: var(--woofson-border, #3f3f46); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono);">Ctrl+D</kbd> Shell logout & clean disconnect</div>
+              <div><kbd style="background: var(--woofson-border, #3f3f46); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono);">Alt+1 / Alt+2 / Alt+4</kbd> Switch Viewport Layout</div>
+              <div><kbd style="background: var(--woofson-border, #3f3f46); padding: 1px 5px; border-radius: 3px; font-family: var(--font-mono);">Ctrl+Shift+V</kbd> Direct Terminal Paste</div>
+            </div>
+          </div>
+
+        </div>
+        <div class="modal-footer" style="padding: 12px 20px;">
+          <button class="btn btn-accent" onclick="closeHelpModal()">Close</button>
         </div>
       </div>
     </div>

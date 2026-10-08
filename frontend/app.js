@@ -469,7 +469,36 @@ function setPaneLayout(layout) {
   }
 }
 
-// ================= About & Profile Modals =================
+// ================= Help, About & Profile Modals =================
+function openHelpModal() {
+  const menu = document.getElementById('profile-dropdown-menu');
+  if (menu) { menu.classList.remove('active'); menu.style.display = 'none'; }
+  const originTag = document.getElementById('help-origin-tag');
+  if (originTag) {
+    originTag.textContent = window.location.origin;
+  }
+  const m = document.getElementById('help-modal');
+  if (m) { m.classList.add('active'); m.style.display = 'flex'; }
+}
+
+function closeHelpModal() {
+  const m = document.getElementById('help-modal');
+  if (m) { m.classList.remove('active'); m.style.display = 'none'; }
+}
+
+function copyCurrentOriginToClipboard() {
+  const origin = window.location.origin;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(origin).then(() => {
+      showToast(`Copied ${origin} to clipboard!`);
+    }).catch(() => {
+      prompt('Copy this origin URL for chrome://flags:', origin);
+    });
+  } else {
+    prompt('Copy this origin URL for chrome://flags:', origin);
+  }
+}
+
 function openAboutModal() {
   const menu = document.getElementById('profile-dropdown-menu');
   if (menu) { menu.classList.remove('active'); menu.style.display = 'none'; }
