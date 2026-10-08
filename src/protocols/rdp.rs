@@ -1,7 +1,13 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use ironrdp_client::config::{ConfigBuilder, Destination};
+use ironrdp_client::config::{ClipboardType, ConfigBuilder, Destination};
 use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
+use ironrdp_cliprdr::backend::{ClipboardMessage, CliprdrBackend};
+use ironrdp_cliprdr::pdu::{
+    ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsRequest,
+    FileContentsResponse, FormatDataRequest, FormatDataResponse, LockDataId,
+    OwnedFormatDataResponse,
+};
 use ironrdp_connector::ConnectorErrorKind;
 use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
@@ -32,6 +38,148 @@ pub struct RdpConnectionParams {
     pub staging_dir: Option<String>,
     pub enable_drive_redirection: bool,
     pub keyboard_layout: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WebCliprdrBackend {
+    ws_tx: mpsc::Sender<Message>,
+    input_tx: Arc<parking_lot::Mutex<Option<mpsc::UnboundedSender<RdpInputEvent>>>>,
+    local_clipboard: Arc<parking_lot::Mutex<Option<String>>>,
+    last_remote_clipboard: Arc<parking_lot::Mutex<Option<String>>>,
+}
+
+ironrdp_core::impl_as_any!(WebCliprdrBackend);
+
+impl CliprdrBackend for WebCliprdrBackend {
+    fn temporary_directory(&self) -> &str {
+        "/tmp"
+    }
+
+    fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
+        ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
+    }
+
+    fn on_ready(&mut self) {
+        info!("RDP Gateway: CLIPRDR virtual channel is active and ready");
+        let has_local = self.local_clipboard.lock().is_some();
+        if has_local {
+            if let Some(tx) = self.input_tx.lock().as_ref() {
+                let _ = tx.send(RdpInputEvent::Clipboard(
+                    ClipboardMessage::SendInitiateCopy(vec![ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)])
+                ));
+            }
+        }
+    }
+
+    fn on_request_format_list(&mut self) {
+        let has_local = self.local_clipboard.lock().is_some();
+        if has_local {
+            if let Some(tx) = self.input_tx.lock().as_ref() {
+                let _ = tx.send(RdpInputEvent::Clipboard(
+                    ClipboardMessage::SendInitiateCopy(vec![ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)])
+                ));
+            }
+        }
+    }
+
+    fn on_process_negotiated_capabilities(&mut self, _capabilities: ClipboardGeneralCapabilityFlags) {}
+
+    fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
+        let mut target_format = None;
+        for f in available_formats {
+            if f.id() == ClipboardFormatId::CF_UNICODETEXT {
+                target_format = Some(ClipboardFormatId::CF_UNICODETEXT);
+                break;
+            } else if f.id() == ClipboardFormatId::CF_TEXT && target_format.is_none() {
+                target_format = Some(ClipboardFormatId::CF_TEXT);
+            }
+        }
+        if let Some(fmt_id) = target_format {
+            info!("RDP Gateway: Remote clipboard copy event detected ({:?}), requesting text data...", fmt_id);
+            if let Some(tx) = self.input_tx.lock().as_ref() {
+                let _ = tx.send(RdpInputEvent::Clipboard(
+                    ClipboardMessage::SendInitiatePaste(fmt_id)
+                ));
+            }
+        }
+    }
+
+    fn on_format_data_request(&mut self, request: FormatDataRequest) {
+        let text_opt = self.local_clipboard.lock().clone();
+        if let Some(text) = text_opt {
+            if request.format == ClipboardFormatId::CF_UNICODETEXT {
+                let mut utf16_bytes = Vec::with_capacity((text.len() + 1) * 2);
+                for u in text.encode_utf16() {
+                    utf16_bytes.extend_from_slice(&u.to_le_bytes());
+                }
+                utf16_bytes.extend_from_slice(&[0, 0]); // null terminator
+                let response = OwnedFormatDataResponse::new_data(utf16_bytes);
+                if let Some(tx) = self.input_tx.lock().as_ref() {
+                    let _ = tx.send(RdpInputEvent::Clipboard(
+                        ClipboardMessage::SendFormatData(response)
+                    ));
+                }
+                return;
+            } else if request.format == ClipboardFormatId::CF_TEXT {
+                let mut ascii_bytes = text.into_bytes();
+                ascii_bytes.push(0);
+                let response = OwnedFormatDataResponse::new_data(ascii_bytes);
+                if let Some(tx) = self.input_tx.lock().as_ref() {
+                    let _ = tx.send(RdpInputEvent::Clipboard(
+                        ClipboardMessage::SendFormatData(response)
+                    ));
+                }
+                return;
+            }
+        }
+        if let Some(tx) = self.input_tx.lock().as_ref() {
+            let _ = tx.send(RdpInputEvent::Clipboard(
+                ClipboardMessage::SendFormatData(OwnedFormatDataResponse::new_error())
+            ));
+        }
+    }
+
+    fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
+        if response.is_error() {
+            warn!("RDP Gateway: Remote host responded with clipboard format error");
+            return;
+        }
+        let data = response.data();
+        if data.is_empty() {
+            return;
+        }
+        let u16_slice: Vec<u16> = data
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .take_while(|&c| c != 0)
+            .collect();
+        let text = if !u16_slice.is_empty() {
+            String::from_utf16_lossy(&u16_slice)
+        } else {
+            String::from_utf8_lossy(data).trim_end_matches('\0').to_string()
+        };
+
+        if !text.is_empty() {
+            let is_dup = self.last_remote_clipboard.lock().as_ref() == Some(&text);
+            if !is_dup {
+                *self.last_remote_clipboard.lock() = Some(text.clone());
+                info!("RDP Gateway: Synchronizing remote clipboard to browser client ({} chars)", text.chars().count());
+                let ws_tx = self.ws_tx.clone();
+                tokio::spawn(async move {
+                    let msg = serde_json::json!({
+                        "type": "clipboard_sync",
+                        "text": text
+                    });
+                    let _ = ws_tx.send(Message::Text(msg.to_string())).await;
+                });
+            }
+        }
+    }
+
+    fn on_file_contents_request(&mut self, _request: FileContentsRequest) {}
+    fn on_file_contents_response(&mut self, _response: FileContentsResponse<'_>) {}
+    fn on_lock(&mut self, _data_id: LockDataId) {}
+    fn on_unlock(&mut self, _data_id: LockDataId) {}
 }
 
 /// Format IronRDP ConnectorError with detailed inner SSPI / CredSSP / Negotiation causes
@@ -313,6 +461,20 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         target_display, params.username, params.domain, params.width, params.height
     );
 
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let (ws_out_tx, mut ws_out_rx) = mpsc::channel::<Message>(512);
+
+    let shared_input_tx = Arc::new(parking_lot::Mutex::new(None::<mpsc::UnboundedSender<RdpInputEvent>>));
+    let shared_local_clipboard = Arc::new(parking_lot::Mutex::new(None::<String>));
+    let shared_remote_clipboard = Arc::new(parking_lot::Mutex::new(None::<String>));
+
+    let backend = WebCliprdrBackend {
+        ws_tx: ws_out_tx.clone(),
+        input_tx: Arc::clone(&shared_input_tx),
+        local_clipboard: Arc::clone(&shared_local_clipboard),
+        last_remote_clipboard: Arc::clone(&shared_remote_clipboard),
+    };
+
     let destination = Destination::from_parts(params.host.clone(), params.port);
     let raw_username = params.username.as_deref().unwrap_or("").trim();
     let (parsed_domain, parsed_user) = if let Some((dom, user)) = raw_username.split_once('\\') {
@@ -322,6 +484,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
     };
     let password = params.password.as_deref().unwrap_or("");
 
+    let backend_for_factory = backend.clone();
     let mut config_builder = ConfigBuilder::new()
         .with_destination(destination)
         .with_desktop_width(params.width.max(640))
@@ -329,7 +492,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_color_depth(if params.color_depth == 16 { 16 } else { 32 })
         .with_credssp(true)
         .with_tls(true)
-        .with_pointer_software_rendering(false)
+        .with_pointer_software_rendering(true)
         .with_compression(true)
         .with_compression_level(2)
         .with_client_build(2600)
@@ -337,7 +500,11 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_client_name("Remote")
         .with_platform(MajorPlatformType::WINDOWS)
         .with_username(parsed_user)
-        .with_password(password);
+        .with_password(password)
+        .with_clipboard(ClipboardType::Disable)
+        .with_static_channel(move |_props| {
+            Some(ironrdp_cliprdr::Cliprdr::new(Box::new(backend_for_factory.clone())))
+        });
 
     if let Some(dom) = &parsed_domain {
         if !dom.trim().is_empty() {
@@ -345,13 +512,11 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         }
     }
 
-
     let config = match config_builder.build() {
         Ok(c) => c,
         Err(e) => {
             error!("RDP Gateway: Invalid configuration: {:#}", e);
-            let mut s = socket;
-            let _ = s
+            let _ = ws_tx
                 .send(Message::Text(
                     json!({
                         "type": "error",
@@ -367,6 +532,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
     let (output_tx, mut output_rx) = mpsc::channel::<RdpOutputEvent>(64);
     let client = RdpClient::new(config, output_tx);
     let input_sender = client.input_sender();
+    *shared_input_tx.lock() = Some(input_sender.clone());
 
     // Spawn IronRDP client on a dedicated thread with a current_thread tokio runtime
     let thread_target = target_display.clone();
@@ -388,9 +554,6 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                 client.run().await;
             });
         });
-
-    let (mut ws_tx, mut ws_rx) = socket.split();
-    let (ws_out_tx, mut ws_out_rx) = mpsc::channel::<Message>(512);
 
     let is_running = Arc::new(AtomicBool::new(true));
     let is_running_ws_writer = Arc::clone(&is_running);
@@ -424,6 +587,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
     let input_sender_rx = input_sender.clone();
     let is_running_reader = Arc::clone(&is_running);
     let ws_out_tx_reader = ws_out_tx.clone();
+    let shared_local_clipboard_reader = Arc::clone(&shared_local_clipboard);
 
     // Browser Inbound Input Task
     let ws_reader_task = tokio::spawn(async move {
@@ -501,15 +665,20 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                                 .await;
                         } else if msg_type == Some("clipboard_push") {
                             if let Some(content) = val.get("text").and_then(|v| v.as_str()) {
-                                info!("RDP Gateway: Forwarding clipboard text to remote host ({} chars)", content.chars().count());
-                                let mut events = smallvec::SmallVec::new();
+                                info!("RDP Gateway: Synchronizing local clipboard to remote host ({} chars)", content.chars().count());
+                                *shared_local_clipboard_reader.lock() = Some(content.to_string());
+                                // 1. Notify Windows via CLIPRDR virtual channel that new clipboard format is available
+                                let _ = input_sender_rx.send(RdpInputEvent::Clipboard(
+                                    ClipboardMessage::SendInitiateCopy(vec![ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)])
+                                ));
+                                // 2. Also inject FastPath Unicode events (in batches <= 64) for instant text insertion in active controls
+                                let mut events = Vec::new();
                                 for ch in content.chars() {
                                     if ch == '\n' {
                                         // Send Enter key: scancode 0x1c
                                         events.push(FastPathInputEvent::KeyboardEvent(KeyboardFlags::empty(), 0x1c));
                                         events.push(FastPathInputEvent::KeyboardEvent(KeyboardFlags::RELEASE, 0x1c));
                                     } else if ch == '\r' {
-                                        // Carriage return handled with newline
                                         continue;
                                     } else {
                                         let unicode = ch as u16;
@@ -517,8 +686,8 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                                         events.push(FastPathInputEvent::UnicodeKeyboardEvent(KeyboardFlags::RELEASE, unicode));
                                     }
                                 }
-                                if !events.is_empty() {
-                                    let _ = input_sender_rx.send(RdpInputEvent::FastPath(events));
+                                for chunk in events.chunks(64) {
+                                    let _ = input_sender_rx.send(RdpInputEvent::FastPath(smallvec::SmallVec::from_slice(chunk)));
                                 }
                             }
                         } else if msg_type == Some("resize") {
