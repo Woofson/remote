@@ -1454,28 +1454,38 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
     ws.send(buf);
   }
 
+  let lastPasteTimestamp = 0;
+  function pushPastedText(text) {
+    if (!text) return;
+    const now = Date.now();
+    if (now - lastPasteTimestamp < 350) return; // Deduplicate paste events within 350ms
+    lastPasteTimestamp = now;
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'clipboard_push',
+        text: text,
+      }));
+      showToast(`📋 Pasted into remote session (${text.length} chars)`);
+    }
+  }
+
   canvas.addEventListener('keydown', (e) => {
     // If user presses Ctrl+V / Cmd+V (Paste from local device to remote session)
     if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V' || e.code === 'KeyV')) {
+      e.preventDefault();
+      e.stopPropagation();
       if (pane.conn && (pane.conn.view_only || pane.conn.allow_clipboard === 'disabled' || pane.conn.allow_clipboard === 'remote_to_host')) {
         showToast('Clipboard paste blocked by connection policy', 'warning');
-        e.preventDefault();
         return;
       }
       if (navigator.clipboard && navigator.clipboard.readText) {
         navigator.clipboard.readText().then(text => {
-          if (text && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-              type: 'clipboard_push',
-              text: text,
-            }));
-            showToast(`📋 Pasted into remote session (${text.length} chars)`);
-          }
+          pushPastedText(text);
         }).catch(() => {
           // If readText() is blocked on HTTP, let native paste event fire below
         });
       }
-      return; // Do not call sendKey or preventDefault so native 'paste' event fires
+      return;
     }
 
     sendKey(true, e);
@@ -1487,6 +1497,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
 
   canvas.addEventListener('keyup', (e) => {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V' || e.code === 'KeyV')) {
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
     sendKey(false, e);
@@ -1495,25 +1507,21 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
     }
   });
 
-  // Native paste event on canvas & body: captures Ctrl+V and forwards to remote session
+  // Native paste event on canvas: captures Ctrl+V and forwards to remote session
   function handleCanvasPaste(e) {
+    e.preventDefault();
+    e.stopPropagation();
     if (pane.conn && (pane.conn.view_only || pane.conn.allow_clipboard === 'disabled' || pane.conn.allow_clipboard === 'remote_to_host')) {
       showToast('Clipboard paste blocked by connection policy', 'warning');
       return;
     }
     const text = (e.clipboardData || window.clipboardData)?.getData('text');
-    if (text && ws.readyState === WebSocket.OPEN) {
-      e.preventDefault();
-      ws.send(JSON.stringify({
-        type: 'clipboard_push',
-        text: text,
-      }));
-      showToast(`📋 Pasted into remote session (${text.length} chars)`);
+    if (text) {
+      pushPastedText(text);
     }
   }
 
   canvas.addEventListener('paste', handleCanvasPaste);
-  bodyEl.addEventListener('paste', handleCanvasPaste);
 
   canvas.focus();
 }

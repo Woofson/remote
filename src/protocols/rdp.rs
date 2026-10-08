@@ -594,6 +594,8 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         let mut prev_mouse_mask = 0u8;
         let mut prev_x = 0u16;
         let mut prev_y = 0u16;
+        let mut last_clipboard_push_time = std::time::Instant::now() - std::time::Duration::from_secs(10);
+        let mut last_clipboard_push_text = String::new();
 
         while let Some(Ok(msg)) = ws_rx.next().await {
             if !is_running_reader.load(Ordering::Relaxed) {
@@ -665,6 +667,15 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                                 .await;
                         } else if msg_type == Some("clipboard_push") {
                             if let Some(content) = val.get("text").and_then(|v| v.as_str()) {
+                                let now = std::time::Instant::now();
+                                if now.duration_since(last_clipboard_push_time) < std::time::Duration::from_millis(300)
+                                    && last_clipboard_push_text == content
+                                {
+                                    continue;
+                                }
+                                last_clipboard_push_time = now;
+                                last_clipboard_push_text = content.to_string();
+
                                 info!("RDP Gateway: Synchronizing local clipboard to remote host ({} chars)", content.chars().count());
                                 *shared_local_clipboard_reader.lock() = Some(content.to_string());
                                 // 1. Notify Windows via CLIPRDR virtual channel that new clipboard format is available
