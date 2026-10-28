@@ -1416,6 +1416,7 @@ pub async fn ws_tunnel_handler(
                 let params = VncConnectionParams {
                     host: conn_rec.host,
                     port: conn_rec.port,
+                    username: conn_rec.username,
                     password,
                 };
                 handle_vnc_session(socket, params).await;

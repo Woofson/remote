@@ -263,4 +263,89 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&loaded.settings_json).expect("valid json");
         assert_eq!(parsed["ssh_certificate"], cert_str);
     }
+
+    #[test]
+    fn test_vnc_des_auth_and_rfb_handshake() {
+        use protocols::vnc::{
+            connect_and_handshake_vnc, des_ecb_encrypt_block, map_browser_key_to_keysym,
+            vnc_des_encrypt, VncConnectionParams,
+        };
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        // 1. Verify standard NIST FIPS 46-3 DES-ECB test vector
+        let key = [0x13, 0x34, 0x57, 0x79, 0x9b, 0xbc, 0xdf, 0xf1];
+        let plain = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+        let cipher = des_ecb_encrypt_block(&key, &plain);
+        assert_eq!(cipher, [0x85, 0xe8, 0x13, 0x54, 0x0f, 0x0a, 0xb4, 0x05]);
+
+        // 2. Verify X11 keysym mapping for VNC keyboard input
+        assert_eq!(map_browser_key_to_keysym(0x1C, 0, 0), Some(0xff0d)); // Enter
+        assert_eq!(map_browser_key_to_keysym(0x0E, 0, 0), Some(0xff08)); // BackSpace
+        assert_eq!(map_browser_key_to_keysym(0x48, 1, 0), Some(0xff52)); // ArrowUp
+        assert_eq!(map_browser_key_to_keysym(0x1E, 0, b'a' as u16), Some(0x0061)); // 'a'
+        assert_eq!(map_browser_key_to_keysym(0x27, 0, 'ø' as u16), Some(0x00f8)); // 'ø'
+
+        // 3. Spin up mock RFB 3.8 server requiring VNC Authentication (type 2)
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock vnc");
+        let port = listener.local_addr().unwrap().port();
+        let challenge: [u8; 16] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let expected_resp = vnc_des_encrypt(&challenge, "secret123");
+
+        let server_thread = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept client");
+            sock.write_all(b"RFB 003.008\n").unwrap();
+            let mut c_ver = [0u8; 12];
+            sock.read_exact(&mut c_ver).unwrap();
+            assert_eq!(&c_ver, b"RFB 003.008\n");
+
+            // Offer security types [1, 2]
+            sock.write_all(&[2, 1, 2]).unwrap();
+            let mut chosen = [0u8; 1];
+            sock.read_exact(&mut chosen).unwrap();
+            assert_eq!(chosen[0], 2); // Client selects VNC Auth (2) because password is provided
+
+            sock.write_all(&challenge).unwrap();
+            let mut resp = [0u8; 16];
+            sock.read_exact(&mut resp).unwrap();
+            assert_eq!(resp, expected_resp);
+
+            // SecurityResult = 0 (OK)
+            sock.write_all(&0u32.to_be_bytes()).unwrap();
+
+            // Read ClientInit (shared = 1)
+            let mut client_init = [0u8; 1];
+            sock.read_exact(&mut client_init).unwrap();
+            assert_eq!(client_init[0], 1);
+
+            // Send ServerInit (1920x1080, name = "Worktop VNC")
+            let mut srv_init = [0u8; 24];
+            srv_init[0..2].copy_from_slice(&1920u16.to_be_bytes());
+            srv_init[2..4].copy_from_slice(&1080u16.to_be_bytes());
+            let name = b"Worktop VNC";
+            srv_init[20..24].copy_from_slice(&(name.len() as u32).to_be_bytes());
+            sock.write_all(&srv_init).unwrap();
+            sock.write_all(name).unwrap();
+
+            // Read SetPixelFormat (20 bytes), SetEncodings (4 + 9*4 = 40 bytes), and FramebufferUpdateRequest (10 bytes)
+            let mut post_init = [0u8; 70];
+            sock.read_exact(&mut post_init).unwrap();
+            assert_eq!(post_init[0], 0); // SetPixelFormat
+            assert_eq!(post_init[20], 2); // SetEncodings
+            assert_eq!(post_init[60], 3); // FramebufferUpdateRequest
+        });
+
+        let params = VncConnectionParams {
+            host: "127.0.0.1".into(),
+            port,
+            username: None,
+            password: Some("secret123".into()),
+        };
+
+        let (_stream, info) = connect_and_handshake_vnc(&params).expect("vnc handshake ok");
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+        assert_eq!(info.name, "Worktop VNC");
+        server_thread.join().unwrap();
+    }
 }

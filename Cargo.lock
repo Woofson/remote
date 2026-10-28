@@ -1030,6 +1030,7 @@ dependencies = [
  "crc32fast",
  "libz-sys",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -3048,6 +3049,7 @@ dependencies = [
  "bytes",
  "chrono",
  "dirs",
+ "flate2",
  "futures-util",
  "getrandom 0.2.17",
  "hex",
@@ -5111,6 +5113,12 @@ dependencies = [
  "quote",
  "syn 3.0.4",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

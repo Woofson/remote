@@ -1252,6 +1252,7 @@ function connectToTarget(connectionId) {
   bodyEl.innerHTML = '';
   pane.conn = conn;
   pane.type = conn.protocol;
+  pane.lastError = null;
 
   const rect = bodyEl.getBoundingClientRect();
   const initW = Math.min(3840, Math.max(640, Math.round(rect.width) || 1920));
@@ -1306,15 +1307,20 @@ function connectToTarget(connectionId) {
     }
     pane.socket = null;
 
+    const errBanner = pane.lastError
+      ? `<div style="max-width: 480px; margin-top: 6px; padding: 8px 12px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; color: #fca5a5; font-size: 11px; line-height: 1.4; font-family: var(--font-mono, monospace); word-break: break-word;">${escapeHtml(pane.lastError)}</div>`
+      : '';
+
     // Display a clean Reconnect banner
     bodyEl.innerHTML = `
       <div class="pane-empty-state" style="padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%;">
         <div class="empty-icon" style="opacity: 0.8;">
           <img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" style="filter: grayscale(30%); width: 44px; height: 44px;" />
         </div>
-        <div>
+        <div style="display: flex; flex-direction: column; align-items: center;">
           <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: var(--woofson-text);">Session Disconnected</h3>
           <p style="margin: 0; font-size: 11px; color: var(--woofson-text-muted);">Disconnected from <strong style="color: var(--woofson-accent);">${escapeHtml(conn.name)}</strong> (${escapeHtml(conn.host)}:${conn.port})</p>
+          ${errBanner}
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px;">
           <button class="btn btn-primary" onclick="connectToTarget('${conn.id}')" style="display: flex; align-items: center; gap: 6px; font-weight: 600; padding: 6px 14px; font-size: 12px;">
@@ -1505,7 +1511,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   let resizeDebounceTimer = null;
   const resizeObserver = new ResizeObserver((entries) => {
     if (ws.readyState !== WebSocket.OPEN) return;
-    if (pane.conn && pane.conn.protocol !== 'rdp') return;
+    if (pane.conn && pane.conn.protocol !== 'rdp' && pane.conn.protocol !== 'vnc') return;
 
     for (const entry of entries) {
       const cr = entry.contentRect;
@@ -1553,7 +1559,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
             onRemoteClipboardSync(msg.text);
           }
         } else if (msg.type === 'error') {
-          showToast(`RFB Error: ${msg.message}`, 'danger');
+          pane.lastError = msg.message;
+          showToast(msg.message, 'danger');
         }
       } catch (err) {}
     } else {
