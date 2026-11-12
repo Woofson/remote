@@ -2,7 +2,7 @@
 
 A browser-based remote access gateway for RDP, VNC, SSH, Telnet and local shells. One Rust binary with the web interface built in. No Java, Tomcat or `guacd`.
 
-By Bolt J Woofson @ Woofsons Lab.
+By Bolt J Woofson @ Woofsons Lab. Free and open source; if it is useful to you, you can [support development on Ko-fi](https://ko-fi.com/J7P327BXTR).
 
 ---
 
@@ -87,4 +87,4 @@ Release history: [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-MIT. Copyright (c) 2026 Bolt J Woofson.
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Bolt J Woofson.
