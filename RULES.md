@@ -9,7 +9,8 @@ All agents and pair-programming sessions working on **Remote** must strictly adh
 * **Remote is a 2026 take on Apache Guacamole**: a browser-based remote access gateway for RDP, VNC, SSH, Telnet and local shells.
 * **Three non-negotiables**: **lightweight**, **fast**, and **secure**. Every feature is weighed against memory footprint, latency, and attack surface.
 * **Workspace model**: many terminals and remote desktops open at once, arranged in one main pane, split across several panes, in tabs, or as floating windows.
-* **Out of scope**: native-client orchestration (launching `xfreerdp3` and similar), mesh discovery, and other "client-first launcher" ideas. Remote is the web gateway.
+* **VDI direction**: Remote grows into a small-scale VDI for around 10 users. Each user has one or more Proxmox VMs, which Remote can power on and off. Whole desktops come first, then individual apps from different platforms in one place. Windows licensing is handled per VM by the owner. Tracked in issues #9 to #11.
+* **Out of scope**: native-client orchestration (launching `xfreerdp3` and similar), mesh discovery, and other "client-first launcher" ideas. Remote is the web gateway; VM power management through Proxmox happens on the gateway side and is in scope.
 
 ---
 

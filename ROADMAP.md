@@ -2,6 +2,8 @@
 
 Remote aims to be a modern replacement for Apache Guacamole: lightweight, fast and secure. Many terminals and remote desktops can be open at once, arranged in panes, in tabs, or as floating windows.
 
+Longer term, Remote grows into a small-scale VDI for around 10 users: each user gets one or more Proxmox VMs, first as whole desktops, later as individual apps from different platforms in one place.
+
 Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/issues). This page gives the overall direction. Items below without an issue number become issues when work on them starts.
 
 ---
@@ -35,6 +37,14 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 - Optional header-based login behind Authentik/Authelia.
 - Example configs for Nginx, Caddy, Traefik, Cloudflare Tunnel and HAProxy.
 - Health check endpoints.
+
+## Then: VDI
+
+1. **Proxmox VM integration**: assign one or more VMs per user, show power state, start on connect, optional shutdown when idle ([#9](https://github.com/Woofson/remote/issues/9)).
+2. **Launcher page**: desktops and apps as tiles, following existing permissions ([#10](https://github.com/Woofson/remote/issues/10)).
+3. **Individual apps**: Windows apps first (one app per session), Linux apps next, seamless Windows RemoteApp windows later ([#11](https://github.com/Woofson/remote/issues/11)).
+
+Builds on tabs (#7) and floating windows (#8).
 
 ## Later
 
