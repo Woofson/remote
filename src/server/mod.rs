@@ -957,21 +957,32 @@ pub struct TestConnectionPayload {
     pub port: u16,
 }
 
+/// Check whether a host and port accept TCP connections. Operator or Admin only,
+/// so the gateway cannot be used to probe the internal network anonymously.
 pub async fn api_test_connection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
     Json(payload): Json<TestConnectionPayload>,
-) -> Json<Value> {
-    let addr = format!("{}:{}", payload.host, payload.port);
-    let reachable = tokio::task::spawn_blocking(move || {
-        std::net::TcpStream::connect_timeout(
-            &addr.parse().unwrap_or_else(|_| "127.0.0.1:0".parse().unwrap()),
-            std::time::Duration::from_secs(4),
-        )
-        .is_ok()
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().clone();
+    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    if claims.role != "admin" && claims.role != "operator" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Operator or Admin role required" }))));
+    }
+
+    let (host, port) = (payload.host.clone(), payload.port);
+    let result = tokio::task::spawn_blocking(move || {
+        crate::protocols::net::connect_tcp(&host, port, std::time::Duration::from_secs(4)).map(|_| ())
     })
     .await
-    .unwrap_or(false);
+    .unwrap_or_else(|e| Err(e.to_string()));
 
-    Json(json!({ "reachable": reachable, "host": payload.host, "port": payload.port }))
+    Ok(Json(json!({
+        "reachable": result.is_ok(),
+        "error": result.err(),
+        "host": payload.host,
+        "port": payload.port,
+    })))
 }
 
 // ================= Connection Authorization =================

@@ -1,4 +1,5 @@
 pub mod local_pty;
+pub mod net;
 pub mod ssh;
 pub mod telnet;
 pub mod vnc;

@@ -3,7 +3,7 @@ use flate2::{Decompress, FlushDecompress};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::TcpStream;
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -404,15 +404,8 @@ fn upgrade_stream_to_tls(
 pub fn connect_and_handshake_vnc(
     params: &VncConnectionParams,
 ) -> Result<(VncStream, VncServerInfo), String> {
-    let addr_str = format!("{}:{}", params.host.trim(), params.port);
-    let sock_addr = addr_str
-        .to_socket_addrs()
-        .map_err(|e| format!("Unable to resolve VNC host '{}': {}", addr_str, e))?
-        .next()
-        .ok_or_else(|| format!("No IP addresses found for VNC host '{}'", addr_str))?;
-
-    let mut tcp_stream = TcpStream::connect_timeout(&sock_addr, Duration::from_secs(10))
-        .map_err(|e| format!("Failed to connect to VNC server at {}: {}", addr_str, e))?;
+    let mut tcp_stream = super::net::connect_tcp(&params.host, params.port, Duration::from_secs(10))
+        .map_err(|e| format!("VNC: {}", e))?;
 
     let _ = tcp_stream.set_nodelay(true);
     tcp_stream

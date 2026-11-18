@@ -36,7 +36,7 @@ pub async fn handle_telnet_session(
     initial_cols: u16,
     initial_rows: u16,
 ) {
-    let addr = format!("{}:{}", params.host, if params.port == 0 { 23 } else { params.port });
+    let addr = super::net::host_port(&params.host, if params.port == 0 { 23 } else { params.port });
     info!("Connecting to Telnet endpoint at {}", addr);
 
     let stream = match tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(&addr)).await {

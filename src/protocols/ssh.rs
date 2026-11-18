@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ssh2::{Session, Sftp};
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -40,14 +39,8 @@ enum SshChannelCommand {
 }
 
 pub fn create_ssh_session(params: &SshConnectionParams) -> Result<Session, String> {
-    let addr = format!("{}:{}", params.host, params.port);
-    let tcp = TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .map_err(|e| format!("Invalid host address {}: {}", addr, e))?,
-        Duration::from_secs(10),
-    )
-    .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+    let addr = super::net::host_port(&params.host, params.port);
+    let tcp = super::net::connect_tcp(&params.host, params.port, Duration::from_secs(10))?;
 
     let mut sess = Session::new().map_err(|e| format!("SSH session init failed: {}", e))?;
     sess.set_tcp_stream(tcp);
