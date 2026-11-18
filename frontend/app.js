@@ -1287,7 +1287,7 @@ function connectToTarget(connectionId) {
     statsEl.textContent = `${latency} ms`;
     showToast(`Connected to ${conn.name} [Pane ${paneIndex}]`);
 
-    if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled') {
+    if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled' && !(conn.user_permissions && !conn.user_permissions.can_transfer)) {
       if (conn.has_password || conn.has_private_key) {
         loadSftpDirectory(paneIndex, '.');
       } else {
@@ -2063,7 +2063,7 @@ function renderFiles(entries) {
   }
 
   const pane = state.panes[state.activePaneIndex];
-  const sshPane = pane && pane.conn && pane.conn.protocol === 'ssh';
+  const sshPane = canSendToSsh(pane && pane.conn);
 
   listEl.innerHTML = entries
     .map((f) => {
@@ -2096,6 +2096,15 @@ function renderFiles(entries) {
         </div>`;
     })
     .join('');
+}
+
+/** Mirrors the server's rules for "Send to SSH host" so the button only shows when allowed. */
+function canSendToSsh(conn) {
+  if (!conn || conn.protocol !== 'ssh' || conn.view_only) return false;
+  if (!['full', 'upload_only'].includes(conn.allow_transfer)) return false;
+  if (conn.user_permissions && !conn.user_permissions.can_transfer) return false;
+  const role = state.currentUser && state.currentUser.role;
+  return role === 'admin' || role === 'operator';
 }
 
 function onFilesListClick(e) {
@@ -2149,7 +2158,7 @@ async function uploadFiles(files) {
 
     // If the active pane is SSH, offer to push the first file to the remote host
     const pane = state.panes[state.activePaneIndex];
-    if (pane && pane.conn && pane.conn.protocol === 'ssh' && data.files.length > 0) {
+    if (pane && canSendToSsh(pane.conn) && data.files.length > 0) {
       const first = data.files[0].path;
       const name = first.split('/').pop();
       if (await uiConfirm(`Push uploaded file "${name}" directly to the remote SSH host?`, { title: 'Send to SSH host', okText: 'Send' })) {

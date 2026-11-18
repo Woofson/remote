@@ -651,24 +651,34 @@ impl Database {
                      WHERE cp.connection_id = ?1 AND (cp.user_id = ?2 OR ug.user_id = ?2)",
                 )?;
                 let mut p_rows = p_stmt.query(params![id, user.id])?;
+                // Explicit grants decide; any grant allowing a capability allows it.
+                // A global connection without grants is connectable by everyone.
                 let mut user_perms = ConnectionUserPerms {
-                    can_connect: true,
+                    can_connect: false,
                     can_edit: false,
-                    can_clipboard: can_clipboard_val,
-                    can_transfer: can_transfer_val,
+                    can_clipboard: false,
+                    can_transfer: false,
                 };
                 let mut found = false;
                 while let Some(p_row) = p_rows.next()? {
                     found = true;
                     if p_row.get::<_, i64>(0)? != 0 { user_perms.can_connect = true; }
                     if p_row.get::<_, i64>(1)? != 0 { user_perms.can_edit = true; }
-                    if p_row.get::<_, i64>(2)? == 0 { user_perms.can_clipboard = false; }
-                    if p_row.get::<_, i64>(3)? == 0 { user_perms.can_transfer = false; }
+                    if p_row.get::<_, i64>(2)? != 0 { user_perms.can_clipboard = true; }
+                    if p_row.get::<_, i64>(3)? != 0 { user_perms.can_transfer = true; }
                 }
 
-                if !found && !is_global {
-                    continue;
+                if !found {
+                    if !is_global {
+                        continue;
+                    }
+                    user_perms.can_connect = true;
+                    user_perms.can_clipboard = true;
+                    user_perms.can_transfer = true;
                 }
+                // Connection-wide settings still apply on top of grants.
+                user_perms.can_clipboard &= can_clipboard_val;
+                user_perms.can_transfer &= can_transfer_val;
                 user_perms
             };
 
@@ -731,6 +741,33 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    /// Grant a user or a group access to a connection.
+    pub fn add_connection_permission(
+        &self,
+        connection_id: &str,
+        user_id: Option<&str>,
+        group_id: Option<&str>,
+        perms: &ConnectionUserPerms,
+    ) -> SqlResult<String> {
+        let id = Uuid::new_v4().to_string();
+        self.conn.lock().execute(
+            "INSERT INTO connection_permissions
+                (id, connection_id, user_id, group_id, can_connect, can_edit, can_clipboard, can_transfer)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                connection_id,
+                user_id,
+                group_id,
+                perms.can_connect as i64,
+                perms.can_edit as i64,
+                perms.can_clipboard as i64,
+                perms.can_transfer as i64
+            ],
+        )?;
+        Ok(id)
     }
 
     /// Re-encrypt saved connection passwords and keys in one transaction.

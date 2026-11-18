@@ -3,7 +3,7 @@ use crate::auth::{
     Claims, OidcService,
 };
 use crate::config::AppConfig;
-use crate::db::{ConnectionRecord, ConnectionSafe, Database, Group, User, UserSafe};
+use crate::db::{ConnectionRecord, ConnectionSafe, ConnectionUserPerms, Database, Group, User, UserSafe};
 use crate::protocols::local_pty::handle_local_pty_session;
 use crate::protocols::rdp::{handle_rdp_session, RdpConnectionParams};
 use crate::protocols::ssh::{
@@ -974,6 +974,83 @@ pub async fn api_test_connection(
     Json(json!({ "reachable": reachable, "host": payload.host, "port": payload.port }))
 }
 
+// ================= Connection Authorization =================
+
+/// A connection the caller may use, with their effective permissions.
+pub struct AuthorizedConnection {
+    pub user: User,
+    pub conn: ConnectionRecord,
+    pub perms: ConnectionUserPerms,
+}
+
+/// The single permission check for using a connection (sessions and SFTP):
+/// active account, existing connection, and admin / owner / grant / global access.
+fn authorize_connection(
+    state: &AppState,
+    claims: &Claims,
+    connection_id: &str,
+    action: &str,
+) -> Result<AuthorizedConnection, (StatusCode, Json<Value>)> {
+    let internal = |e: rusqlite::Error| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+
+    let user = state
+        .db
+        .get_user_by_id(&claims.sub)
+        .map_err(internal)?
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(json!({ "error": "User not found" }))))?;
+    if !user.is_active {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Account is disabled" }))));
+    }
+
+    let conn = state
+        .db
+        .get_connection_raw(connection_id)
+        .map_err(internal)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": "Connection not found" }))))?;
+
+    let perms = state
+        .db
+        .list_connections_for_user(&user)
+        .map_err(internal)?
+        .into_iter()
+        .find(|c| c.id == conn.id)
+        .map(|c| c.user_permissions)
+        .filter(|p| p.can_connect);
+
+    match perms {
+        Some(perms) => Ok(AuthorizedConnection { user, conn, perms }),
+        None => {
+            state.db.log_audit(
+                Some(&user.id),
+                &user.username,
+                "ACCESS_DENIED",
+                Some(&conn.id),
+                Some(&conn.name),
+                Some(action),
+                None,
+            );
+            Err((
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "Access denied: you do not have permission to use this connection." })),
+            ))
+        }
+    }
+}
+
+/// Refuse an SFTP action, recording it in the audit log.
+fn deny_sftp(state: &AppState, a: &AuthorizedConnection, action: &str, reason: &str) -> (StatusCode, Json<Value>) {
+    state.db.log_audit(
+        Some(&a.user.id),
+        &a.user.username,
+        "ACCESS_DENIED",
+        Some(&a.conn.id),
+        Some(&a.conn.name),
+        Some(&format!("{}: {}", action, reason)),
+        None,
+    );
+    (StatusCode::FORBIDDEN, Json(json!({ "error": format!("Access denied: {}", reason) })))
+}
+
 // ================= Files API =================
 
 #[derive(Deserialize)]
@@ -1186,30 +1263,19 @@ pub async fn api_sftp_list(
     Json(payload): Json<SftpListPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
-    let _ = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let authz = authorize_connection(&state, &claims, &connection_id, "SFTP list")?;
 
-    let conn_rec = state
-        .db
-        .get_connection_raw(&connection_id)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Connection not found" })),
-            )
-        })?;
-
-    if conn_rec.protocol != "ssh" {
+    if authz.conn.protocol != "ssh" {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "SFTP only available for SSH connections" })),
         ));
     }
+    if !authz.perms.can_transfer {
+        return Err(deny_sftp(&state, &authz, "SFTP list", "file transfer is disabled for this connection"));
+    }
+    let conn_rec = authz.conn;
 
     let password = conn_rec
         .password_enc
@@ -1273,6 +1339,24 @@ pub async fn api_sftp_upload_staged(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
     let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let authz = authorize_connection(&state, &claims, &connection_id, "SFTP upload")?;
+
+    let reason = if authz.conn.protocol != "ssh" {
+        Some("SFTP is only available for SSH connections")
+    } else if claims.role != "admin" && claims.role != "operator" {
+        Some("sending files needs the Operator or Admin role")
+    } else if authz.conn.view_only {
+        Some("this connection is view-only")
+    } else if !authz.perms.can_transfer
+        || !matches!(authz.conn.allow_transfer.as_str(), "full" | "upload_only")
+    {
+        Some("uploads are not allowed for this connection")
+    } else {
+        None
+    };
+    if let Some(reason) = reason {
+        return Err(deny_sftp(&state, &authz, "SFTP upload", reason));
+    }
 
     let local_path = state
         .transfer_mgr
@@ -1280,21 +1364,7 @@ pub async fn api_sftp_upload_staged(
         .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?
         .abs;
 
-    let conn_rec = state
-        .db
-        .get_connection_raw(&connection_id)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Connection not found" })),
-            )
-        })?;
+    let conn_rec = authz.conn;
 
     let password = conn_rec
         .password_enc
@@ -1436,61 +1506,8 @@ pub async fn ws_tunnel_handler(
         extract_claims(&headers, &cfg.server.jwt_secret)?
     };
 
-    let user = state
-        .db
-        .get_user_by_id(&claims.sub)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::UNAUTHORIZED,
-                Json(json!({ "error": "User not found" })),
-            )
-        })?;
-
-    if !user.is_active {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Account is disabled" })),
-        ));
-    }
-
-    let conn_rec = state
-        .db
-        .get_connection_raw(&connection_id)
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Connection not found" })),
-            )
-        })?;
-
-    let is_admin = claims.role == "admin";
-    let is_owner = conn_rec.created_by.as_deref() == Some(&user.id);
-    if !is_admin && !is_owner && !conn_rec.is_global {
-        let user_conns = state.db.list_connections_for_user(&user).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": e.to_string() })),
-            )
-        })?;
-        if !user_conns.iter().any(|c| c.id == conn_rec.id && c.user_permissions.can_connect) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(json!({ "error": "Access denied: you do not have permission to connect to this resource." })),
-            ));
-        }
-    }
+    let authz = authorize_connection(&state, &claims, &connection_id, "Connect")?;
+    let (user, conn_rec) = (authz.user, authz.conn);
 
     state.db.log_audit(
         Some(&user.id),

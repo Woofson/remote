@@ -17,6 +17,91 @@ mod tests {
     use db::{Database, ConnectionRecord, User};
     use uuid::Uuid;
 
+    fn test_user(name: &str, role: &str) -> User {
+        User {
+            id: Uuid::new_v4().to_string(),
+            username: name.into(),
+            password_hash: "hash".into(),
+            email: None,
+            display_name: None,
+            role: role.into(),
+            is_active: true,
+            auth_provider: "local".into(),
+            oidc_sub: None,
+            created_at: "2026-11-18T00:00:00Z".into(),
+            last_login: None,
+            avatar_data: None,
+        }
+    }
+
+    fn test_conn(name: &str, is_global: bool) -> ConnectionRecord {
+        ConnectionRecord {
+            id: Uuid::new_v4().to_string(),
+            name: name.into(),
+            protocol: "ssh".into(),
+            host: "10.0.0.9".into(),
+            port: 22,
+            username: Some("u".into()),
+            password_enc: None,
+            private_key_enc: None,
+            settings_json: "{}".into(),
+            icon: None,
+            tags: None,
+            is_global,
+            allow_clipboard: "bidirectional".into(),
+            allow_transfer: "full".into(),
+            view_only: false,
+            created_by: None,
+            created_at: "2026-11-18T00:00:00Z".into(),
+            updated_at: "2026-11-18T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn test_explicit_grants_decide_access() {
+        use db::ConnectionUserPerms;
+        let db = Database::new_in_memory().unwrap();
+        let carol = test_user("carol", "operator");
+        db.create_user(&carol).unwrap();
+
+        let deny = ConnectionUserPerms { can_connect: false, can_edit: false, can_clipboard: true, can_transfer: true };
+        let allow = ConnectionUserPerms { can_connect: true, can_edit: false, can_clipboard: false, can_transfer: false };
+
+        // Private connection with an explicit "may not connect" grant.
+        let denied = test_conn("denied", false);
+        db.save_connection(&denied).unwrap();
+        db.add_connection_permission(&denied.id, Some(&carol.id), None, &deny).unwrap();
+
+        // Private connection with one allowing grant: connect yes, transfer no.
+        let allowed = test_conn("allowed", false);
+        db.save_connection(&allowed).unwrap();
+        db.add_connection_permission(&allowed.id, Some(&carol.id), None, &allow).unwrap();
+
+        // Global connection without grants: open to everyone.
+        let open = test_conn("open", true);
+        db.save_connection(&open).unwrap();
+
+        // Private connection without any grant: invisible.
+        let hidden = test_conn("hidden", false);
+        db.save_connection(&hidden).unwrap();
+
+        let list = db.list_connections_for_user(&carol).unwrap();
+        let get = |id: &str| list.iter().find(|c| c.id == id).map(|c| c.user_permissions.clone());
+
+        assert!(!get(&denied.id).expect("listed").can_connect, "explicit deny must win");
+        let a = get(&allowed.id).expect("listed");
+        assert!(a.can_connect && !a.can_transfer && !a.can_clipboard);
+        let o = get(&open.id).expect("listed");
+        assert!(o.can_connect && o.can_transfer);
+        assert!(get(&hidden.id).is_none());
+
+        // A second grant that allows transfer adds to the first.
+        db.add_connection_permission(&allowed.id, Some(&carol.id), None, &deny).unwrap();
+        let list = db.list_connections_for_user(&carol).unwrap();
+        let a = list.iter().find(|c| c.id == allowed.id).unwrap().user_permissions.clone();
+        assert!(a.can_connect && a.can_transfer);
+    }
+
     #[test]
     fn test_granular_connection_rbac_and_isolation() {
         let db = Database::new_in_memory().expect("failed to create in-memory db");
