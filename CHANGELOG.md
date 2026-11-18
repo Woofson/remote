@@ -4,6 +4,19 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.8.1] - 2026-11-18
+
+### Docker
+- Official Alpine Linux container image: `ghcr.io/woofson/remote` (tags `latest`, `alpine`, `0.8.1`, `0.8`), linux/amd64. On arm64, build it yourself with `docker build -t remote .`.
+- Built from source in a multi-stage `Dockerfile`; runs as `PUID`:`PGID` (default 1000:1000) instead of root, with a health check.
+- One volume, `/remote`, holds `config.toml` (created on first start), `data/` and optional `themes/`. Example `docker-compose.yml` included; see the README's Docker section.
+- Published automatically when a release tag is pushed.
+
+### Maintenance
+- Updated `crypto-bigint` (used by the RDP library) from a withdrawn version to 0.7.11.
+
+---
+
 ## [0.8.0] - 2026-11-18
 
 Covers everything since 0.2.0 (versions 0.3.0 to 0.7.0 were pushed to git without a release).

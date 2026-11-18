@@ -44,6 +44,21 @@ Open `http://localhost:8088` and log in as `admin`. On first start Remote genera
 
 Lost the admin password? On the Remote machine run `remoted reset-admin-password` (or `cargo run --release -- reset-admin-password`): it prints a new password and saves it to the same file.
 
+### Docker (Alpine)
+
+```bash
+docker run -d --name remote --restart unless-stopped \
+  -p 8088:8088 -e PUID=$(id -u) -e PGID=$(id -g) \
+  -v ./remote:/remote ghcr.io/woofson/remote:latest
+```
+
+Or use the included [`docker-compose.yml`](docker-compose.yml). The `./remote` folder holds everything Remote keeps: `config.toml` (created on first start), `data/` (database, `secret.key`, Files, icons) and an optional `themes/` folder, so back up that one folder. The first admin password is shown by `docker logs remote` and saved in `remote/data/initial_admin_credentials.txt`. Lost it: `docker exec remote remoted reset-admin-password`.
+
+- Remote runs as the user `PUID`:`PGID` (default 1000:1000), not root.
+- Images are built for **linux/amd64**. On arm64, build it yourself with `docker build -t remote .`.
+- The built-in *Local Host Terminal* opens a shell inside the container, not on the Docker host; delete it or make it private if you do not need it.
+- The machines you connect to must be reachable from the container (normal Docker networking is enough when the Docker host can reach them).
+
 ---
 
 ## Configuration

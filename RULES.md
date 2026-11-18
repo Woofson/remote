@@ -56,7 +56,8 @@ At the end of every response after making changes, clearly state whether:
 * **Command: `"push and release"`**: commit, tag, push, then publish to:
   1. **GitHub Release & Tags**.
   2. **Crates.io** (`cargo publish`, crate `remoted`).
-  * Further channels (Docker/GHCR, AUR, Windows) are added here only once they exist.
+  3. **Docker / GHCR** (`ghcr.io/woofson/remote`, Alpine, linux/amd64): published automatically by `.github/workflows/docker-publish.yml` when the release tag is pushed; check that the workflow succeeded.
+  * Further channels (AUR, Windows) are added here only once they exist. arm64 images only if demand requires it.
 * Never commit, push, tag, or release without one of the commands above or an explicit request.
 
 ---

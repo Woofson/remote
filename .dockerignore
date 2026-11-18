@@ -1,0 +1,11 @@
+# Keep the build context small and free of local data and secrets
+target/
+data/
+config.toml
+*.db
+*.db-shm
+*.db-wal
+*.log
+.git/
+.github/
+assets/RemoteIcon.png

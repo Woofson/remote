@@ -1,0 +1,23 @@
+services:
+  remote:
+    image: ghcr.io/woofson/remote:latest
+    container_name: remote
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    environment:
+      - TZ=UTC
+      - PUID=1000                 # owner of ./remote on the host (run `id`)
+      - PGID=1000
+    volumes:
+      # config.toml, data/ (database, secret.key, Files, icons) and optional themes/.
+      # Back up this one folder.
+      - ./remote:/remote
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8088/api/version || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
