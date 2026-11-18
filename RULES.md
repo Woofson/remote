@@ -32,7 +32,7 @@ All agents and pair-programming sessions working on **Remote** must strictly adh
   * **Major (`X.0.0`)**: breaking changes or architectural overhauls.
   * **Local Scratch Iteration**: local test builds may use letter postfixes (`0.2.1a`–`0.2.1z`); these are never committed or published.
 * **Single Source of Truth**: the version is defined only in `Cargo.toml` (`[package] version`). The backend should embed it with `env!("CARGO_PKG_VERSION")` and the frontend should read it from the API.
-  * **Known gap**: the login page still shows a hardcoded version badge in `frontend/index.html`. Until that is wired up, flag it rather than editing version strings across files.
+  * The frontend gets the version from `GET /api/version`; asset links in HTML use the `__REMOTE_VERSION__` placeholder, which the server fills in. Never hardcode a version string in the frontend.
 
 ---
 

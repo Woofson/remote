@@ -59,6 +59,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/logout", post(api_logout))
         .route("/api/auth/me", get(api_me))
         .route("/api/auth/providers", get(api_auth_providers))
+        .route("/api/version", get(api_version))
         .route("/api/auth/oidc/login", get(api_oidc_login))
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
         // Users & Groups API
@@ -253,6 +254,11 @@ pub async fn api_me(
 
     let safe_user: UserSafe = user.into();
     Ok(Json(json!(safe_user)))
+}
+
+/// Public: the running version, from Cargo.toml (single source of truth).
+pub async fn api_version() -> Json<Value> {
+    Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
 }
 
 pub async fn api_auth_providers(State(state): State<AppState>) -> Json<Value> {
@@ -1639,6 +1645,16 @@ pub async fn ws_tunnel_handler(
 
 // ================= Static File Handler =================
 
+/// HTML pages get `__REMOTE_VERSION__` replaced with the running version (asset cache-busting).
+fn page_body(path: &str, data: std::borrow::Cow<'static, [u8]>) -> Body {
+    if path.ends_with(".html") {
+        let html = String::from_utf8_lossy(&data).replace("__REMOTE_VERSION__", env!("CARGO_PKG_VERSION"));
+        Body::from(html)
+    } else {
+        Body::from(data)
+    }
+}
+
 pub async fn static_file_handler(uri: axum::http::Uri) -> Response {
     let mut path = uri.path().trim_start_matches('/').to_string();
     if path.is_empty() {
@@ -1657,14 +1673,14 @@ pub async fn static_file_handler(uri: axum::http::Uri) -> Response {
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime.as_ref())
             .header(header::CACHE_CONTROL, cache_control)
-            .body(Body::from(file.data))
+            .body(page_body(&path, file.data))
             .unwrap()
     } else if let Some(index) = FrontendAssets::get("index.html") {
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
             .header(header::CACHE_CONTROL, "no-cache, must-revalidate")
-            .body(Body::from(index.data))
+            .body(page_body("index.html", index.data))
             .unwrap()
     } else {
         Response::builder()

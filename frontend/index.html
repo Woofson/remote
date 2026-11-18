@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Remote — High-Performance Remote Gateway</title>
-  <link rel="stylesheet" href="app.css?v=0.2.0" />
+  <link rel="stylesheet" href="app.css?v=__REMOTE_VERSION__" />
   <link rel="icon" type="image/png" href="assets/Remoteiconsmall.png" />
   <!-- Bundled Nerd Fonts Preload -->
   <link rel="preload" href="assets/fonts/JetBrainsMonoNerdFont-Regular.ttf" as="font" type="font/ttf" crossorigin>
@@ -438,7 +438,7 @@
 
       <!-- Lower-Right Version Badge -->
       <div class="login-corner-version">
-        <span class="login-version-badge">v0.2.0</span>
+        <span class="login-version-badge app-version"></span>
       </div>
 
       <!-- Login Card -->
@@ -989,7 +989,7 @@
             <div style="font-size: 18px; font-weight: 800; color: var(--woofson-accent, #f59e0b); letter-spacing: 0.5px;">Remote</div>
             <div style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px;">Ultra-Low-Resource Remote Gateway — By Woofson</div>
             <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap;">
-              <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: var(--woofson-accent, #f59e0b); border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700; padding: 2px 8px; border-radius: 4px;">v0.2.0 (Single Binary)</span>
+              <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: var(--woofson-accent, #f59e0b); border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700; padding: 2px 8px; border-radius: 4px;"><span class="app-version"></span> (Single Binary)</span>
               <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); padding: 2px 8px; border-radius: 4px;">Rust + Axum + Tokio</span>
               <span class="badge" style="background: rgba(34, 197, 94, 0.15); color: #10b981; border: 1px solid rgba(34, 197, 94, 0.3); padding: 2px 8px; border-radius: 4px;">MIT Open Source</span>
             </div>
@@ -1096,6 +1096,6 @@
 
   </div>
 
-  <script src="app.js?v=0.2.0"></script>
+  <script src="app.js?v=__REMOTE_VERSION__"></script>
 </body>
 </html>

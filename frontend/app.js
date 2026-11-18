@@ -199,12 +199,25 @@ async function apiFetch(url, options = {}) {
 
 // ================= Initialization & Lifecycle =================
 document.addEventListener('DOMContentLoaded', async () => {
+  loadAppVersion();
   setupKeyboardShortcuts();
   setupGlobalDragAndDrop();
   initPaneStyles();
   initAllPaneKbdBadges();
   await checkAuth();
 });
+
+// Version badges read the version from the server (Cargo.toml is the single source of truth).
+async function loadAppVersion() {
+  try {
+    const res = await fetch('/api/version');
+    if (!res.ok) return;
+    const { version } = await res.json();
+    document.querySelectorAll('.app-version').forEach((el) => {
+      el.textContent = `v${version}`;
+    });
+  } catch (e) {}
+}
 
 // ================= Authentication =================
 async function checkAuth() {
