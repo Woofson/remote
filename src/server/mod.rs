@@ -1228,6 +1228,7 @@ pub async fn api_sftp_list(
         None
     };
 
+    let conn_label = conn_rec.name.clone();
     let params = SshConnectionParams {
         host: conn_rec.host,
         port: conn_rec.port,
@@ -1249,7 +1250,10 @@ pub async fn api_sftp_list(
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
-    .map_err(|e| (StatusCode::BAD_GATEWAY, Json(json!({ "error": e }))))?;
+    .map_err(|e| {
+        tracing::warn!("SFTP for '{}' failed: {}", conn_label, e);
+        (StatusCode::BAD_GATEWAY, Json(json!({ "error": e })))
+    })?;
 
     Ok(Json(json!({ "entries": list })))
 }
@@ -1309,6 +1313,7 @@ pub async fn api_sftp_upload_staged(
         None
     };
 
+    let conn_label = conn_rec.name.clone();
     let params = SshConnectionParams {
         host: conn_rec.host,
         port: conn_rec.port,
@@ -1329,7 +1334,10 @@ pub async fn api_sftp_upload_staged(
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
-    .map_err(|e| (StatusCode::BAD_GATEWAY, Json(json!({ "error": e }))))?;
+    .map_err(|e| {
+        tracing::warn!("SFTP for '{}' failed: {}", conn_label, e);
+        (StatusCode::BAD_GATEWAY, Json(json!({ "error": e })))
+    })?;
 
     state.db.log_transfer(
         Some(&connection_id),

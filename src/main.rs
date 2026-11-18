@@ -22,6 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     remoted::init_crypto_provider();
 
     println!("\n{}\n", include_str!("../assets/banner.txt").trim_end());
+    info!("Remote v{} starting", env!("CARGO_PKG_VERSION"));
 
     let config_path = "config.toml";
     let config = AppConfig::load_or_create(config_path)?;

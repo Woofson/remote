@@ -1288,7 +1288,11 @@ function connectToTarget(connectionId) {
     showToast(`Connected to ${conn.name} [Pane ${paneIndex}]`);
 
     if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled') {
-      loadSftpDirectory(paneIndex, '.');
+      if (conn.has_password || conn.has_private_key) {
+        loadSftpDirectory(paneIndex, '.');
+      } else {
+        showSftpNote('File browsing needs a saved password or key for this connection.');
+      }
     }
   };
 
@@ -1298,6 +1302,10 @@ function connectToTarget(connectionId) {
   };
 
   ws.onclose = () => {
+    if (pane.authPending) {
+      pane.authPending = false;
+      closeUiDialog(null);
+    }
     statsEl.textContent = 'Disconnected';
     statsEl.style.color = 'var(--woofson-danger, #ef4444)';
     showToast(`Disconnected from ${conn.name}`);
@@ -1420,7 +1428,11 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'error') {
+          pane.lastError = msg.message;
           term.write(`\r\n\x1b[31m[Remote Error]: ${msg.message}\x1b[0m\r\n`);
+          return;
+        } else if (msg.type === 'auth_required') {
+          askSessionPassword(pane, ws, msg);
           return;
         } else if (msg.type === 'clipboard_sync') {
           if (!pane.conn || (pane.conn.allow_clipboard !== 'disabled' && pane.conn.allow_clipboard !== 'host_to_remote')) {
@@ -2206,9 +2218,35 @@ async function loadSftpDirectory(paneIndex, path) {
       const data = await res.json();
       document.getElementById('sftp-current-path').textContent = path;
       renderSftpFiles(paneIndex, data.entries, path);
+    } else {
+      showSftpNote(`File browsing unavailable: ${await readError(res, 'unknown error')}`);
     }
   } catch (err) {
-    console.error('SFTP load error:', err);
+    showSftpNote('File browsing unavailable');
+  }
+}
+
+function showSftpNote(text) {
+  const listEl = document.getElementById('sftp-files-list');
+  if (listEl) listEl.innerHTML = `<div class="text-muted text-sm p-2 text-center">${escapeHtml(text)}</div>`;
+}
+
+/** Ask for an SSH password when the server reports that login needs one. */
+async function askSessionPassword(pane, ws, msg) {
+  pane.authPending = true;
+  const who = msg.username ? `${msg.username}@${msg.host}` : msg.host;
+  const password = await uiPassword(msg.reason || '', {
+    title: `Password for ${who}`,
+    okText: 'Connect',
+  });
+  if (!pane.authPending) return; // session closed meanwhile
+  pane.authPending = false;
+  if (ws.readyState !== WebSocket.OPEN) return;
+  if (password === null) {
+    ws.send(JSON.stringify({ type: 'auth_cancel' }));
+  } else {
+    ws.send(JSON.stringify({ type: 'auth', password }));
+    if (pane.terminal) pane.terminal.focus();
   }
 }
 
@@ -2598,6 +2636,14 @@ function setupUiDialog() {
     }
   });
 
+  // While open, keep focus inside the dialog (terminals and canvases try to grab it).
+  document.addEventListener('focusin', (e) => {
+    if (overlay.style.display !== 'none' && !overlay.contains(e.target)) {
+      e.stopPropagation();
+      focusUiDialog();
+    }
+  }, true);
+
   // Whole header is a drag handle.
   let drag = null;
   header.addEventListener('mousedown', (e) => {
@@ -2630,7 +2676,9 @@ function openUiDialog({ title, message = '', mode = 'confirm', value = '', place
     document.getElementById('ui-dialog-message').textContent = message;
     document.getElementById('ui-dialog-box').style.transform = '';
 
-    const hasInput = mode === 'prompt' || mode === 'copy';
+    const hasInput = mode === 'prompt' || mode === 'copy' || mode === 'password';
+    input.type = mode === 'password' ? 'password' : 'text';
+    input.autocomplete = mode === 'password' ? 'current-password' : 'off';
     input.style.display = hasInput ? '' : 'none';
     input.value = hasInput ? value : '';
     input.placeholder = placeholder;
@@ -2641,21 +2689,26 @@ function openUiDialog({ title, message = '', mode = 'confirm', value = '', place
     cancel.textContent = cancelText;
 
     overlay.style.display = 'flex';
-    setTimeout(() => {
-      if (hasInput) {
-        input.focus();
-        input.select();
-      } else {
-        ok.focus();
-      }
-    }, 0);
+    setTimeout(focusUiDialog, 0);
   });
+}
+
+function focusUiDialog() {
+  const input = document.getElementById('ui-dialog-input');
+  if (input.style.display !== 'none') {
+    input.focus();
+    if (input.readOnly) input.select();
+  } else {
+    document.getElementById('ui-dialog-ok').focus();
+  }
 }
 
 function uiDialogAccept() {
   const input = document.getElementById('ui-dialog-input');
-  if (uiDialogMode === 'prompt') {
-    closeUiDialog(input.value);
+  if (uiDialogMode === 'prompt' || uiDialogMode === 'password') {
+    const value = input.value;
+    input.value = '';
+    closeUiDialog(value);
   } else if (uiDialogMode === 'copy') {
     copyTextToClipboard(uiDialogCopyValue, input);
     closeUiDialog(true);
@@ -2667,6 +2720,8 @@ function uiDialogAccept() {
 function closeUiDialog(result) {
   const overlay = document.getElementById('ui-dialog');
   if (overlay) overlay.style.display = 'none';
+  const input = document.getElementById('ui-dialog-input');
+  if (input && input.type === 'password') input.value = '';
   const resolve = uiDialogResolve;
   uiDialogResolve = null;
   if (resolve) resolve(result);
@@ -2680,6 +2735,12 @@ async function uiConfirm(message, { title = 'Confirm', okText = 'OK', danger = f
 /** In-app replacement for prompt(). Resolves to the text, or null when cancelled. */
 async function uiPrompt(message, { title = 'Enter a value', value = '', placeholder = '', okText = 'OK' } = {}) {
   const r = await openUiDialog({ title, message, mode: 'prompt', value, placeholder, okText });
+  return typeof r === 'string' ? r : null;
+}
+
+/** Masked password entry. Resolves to the password, or null when cancelled. */
+async function uiPassword(message, { title = 'Password', okText = 'OK' } = {}) {
+  const r = await openUiDialog({ title, message, mode: 'password', placeholder: 'Password', okText });
   return typeof r === 'string' ? r : null;
 }
 

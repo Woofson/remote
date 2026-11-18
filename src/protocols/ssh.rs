@@ -23,6 +23,7 @@ pub struct SftpFileInfo {
     pub permissions: u32,
 }
 
+#[derive(Clone)]
 pub struct SshConnectionParams {
     pub host: String,
     pub port: u16,
@@ -91,42 +92,127 @@ pub fn create_ssh_session(params: &SshConnectionParams) -> Result<Session, Strin
         return Ok(sess);
     }
 
-    Err("No valid authentication method provided for SSH".into())
+    Err(NO_AUTH_METHOD.into())
+}
+
+const NO_AUTH_METHOD: &str = "No saved password or key for this connection";
+
+/// Whether an error from [`create_ssh_session`] means the login itself was refused
+/// (so asking the user for a password makes sense), as opposed to a network problem.
+fn is_auth_error(e: &str) -> bool {
+    e == NO_AUTH_METHOD
+        || e.starts_with("SSH password authentication failed")
+        || e.starts_with("SSH private key / certificate authentication failed")
+}
+
+/// Max password prompts per session before giving up.
+const MAX_PASSWORD_PROMPTS: u32 = 3;
+
+/// Wait for the browser to answer an `auth_required` message.
+/// Returns the typed password, or `None` if the user cancelled, closed the session or timed out.
+/// Terminal resizes that arrive meanwhile are applied to `cols`/`rows`.
+async fn wait_for_password(socket: &mut WebSocket, cols: &mut u16, rows: &mut u16) -> Option<String> {
+    let deadline = tokio::time::sleep(Duration::from_secs(120));
+    tokio::pin!(deadline);
+    loop {
+        tokio::select! {
+            _ = &mut deadline => return None,
+            msg = socket.recv() => match msg {
+                Some(Ok(Message::Text(text))) => {
+                    let Ok(v) = serde_json::from_str::<Value>(&text) else { continue };
+                    match v.get("type").and_then(|t| t.as_str()) {
+                        Some("auth") => {
+                            return v.get("password").and_then(|p| p.as_str()).map(str::to_string);
+                        }
+                        Some("auth_cancel") => return None,
+                        Some("resize") => {
+                            if let (Some(c), Some(r)) = (
+                                v.get("cols").and_then(|x| x.as_u64()),
+                                v.get("rows").and_then(|x| x.as_u64()),
+                            ) {
+                                *cols = c.min(u16::MAX as u64) as u16;
+                                *rows = r.min(u16::MAX as u64) as u16;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return None,
+                _ => {}
+            }
+        }
+    }
 }
 
 pub async fn handle_ssh_session(
     mut socket: WebSocket,
     params: SshConnectionParams,
-    initial_cols: u16,
-    initial_rows: u16,
+    mut initial_cols: u16,
+    mut initial_rows: u16,
 ) {
-    let sess = match tokio::task::spawn_blocking(move || create_ssh_session(&params)).await {
-        Ok(Ok(s)) => s,
-        Ok(Err(e)) => {
+    let mut params = params;
+    let target = format!("{}@{}:{}", params.username, params.host, params.port);
+    let mut prompts = 0;
+
+    let sess = loop {
+        let attempt = params.clone();
+        let error = match tokio::task::spawn_blocking(move || create_ssh_session(&attempt)).await {
+            Ok(Ok(s)) => break s,
+            Ok(Err(e)) => e,
+            Err(e) => format!("Internal SSH connection task error: {}", e),
+        };
+
+        if is_auth_error(&error) && prompts < MAX_PASSWORD_PROMPTS {
+            if prompts > 0 {
+                warn!("SSH Gateway: login to {} rejected: {}", target, error);
+            }
+            prompts += 1;
+            let reason = if prompts == 1 && error == NO_AUTH_METHOD {
+                String::new()
+            } else {
+                "Password rejected, try again.".to_string()
+            };
             let _ = socket
                 .send(Message::Text(
                     serde_json::json!({
-                        "type": "error",
-                        "message": e
+                        "type": "auth_required",
+                        "username": params.username,
+                        "host": params.host,
+                        "reason": reason,
                     })
                     .to_string(),
                 ))
                 .await;
-            return;
+
+            match wait_for_password(&mut socket, &mut initial_cols, &mut initial_rows).await {
+                Some(pw) => {
+                    // A typed password replaces any saved key so it is actually tried.
+                    params.password = Some(pw);
+                    params.private_key = None;
+                    params.certificate = None;
+                    continue;
+                }
+                None => {
+                    info!("SSH Gateway: login to {} cancelled", target);
+                    let _ = socket
+                        .send(Message::Text(
+                            serde_json::json!({ "type": "error", "message": "Login cancelled" }).to_string(),
+                        ))
+                        .await;
+                    return;
+                }
+            }
         }
-        Err(e) => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "message": format!("Internal SSH connection task error: {}", e)
-                    })
-                    .to_string(),
-                ))
-                .await;
-            return;
-        }
+
+        warn!("SSH Gateway: connection to {} failed: {}", target, error);
+        let _ = socket
+            .send(Message::Text(
+                serde_json::json!({ "type": "error", "message": error }).to_string(),
+            ))
+            .await;
+        return;
     };
+    info!("SSH Gateway: connected to {}", target);
 
     let cols = if initial_cols == 0 { 80 } else { initial_cols };
     let rows = if initial_rows == 0 { 24 } else { initial_rows };
