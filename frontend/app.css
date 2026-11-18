@@ -772,6 +772,16 @@ body, html {
   background: var(--woofson-bg-active);
 }
 
+/* Pane close button: subtle by default, red on hover; style chosen in Settings > Sessions. */
+.pane-close-btn { opacity: 0.7; }
+.pane-close-btn:hover {
+  opacity: 1;
+  color: var(--woofson-danger, #ef4444);
+  background: rgba(239, 68, 68, 0.2);
+}
+body.close-btn-red .pane-close-btn { color: var(--woofson-danger, #ef4444); opacity: 1; }
+body.close-btn-hidden .pane-close-btn { display: none; }
+
 .pane-fps-pill {
   font-size: 10px;
   font-family: var(--font-mono);

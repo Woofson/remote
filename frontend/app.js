@@ -1994,6 +1994,46 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   canvas.focus();
 }
 
+// Session preferences (Settings > Sessions), saved per user on the server.
+const SESSION_PREF_DEFAULTS = { confirmClose: true, closeButton: 'subtle' };
+let sessionPrefs = { ...SESSION_PREF_DEFAULTS };
+
+function applySessionPrefs(p) {
+  sessionPrefs = { ...SESSION_PREF_DEFAULTS, ...(p || {}) };
+  if (!['subtle', 'red', 'hidden'].includes(sessionPrefs.closeButton)) sessionPrefs.closeButton = 'subtle';
+  document.body.classList.toggle('close-btn-red', sessionPrefs.closeButton === 'red');
+  document.body.classList.toggle('close-btn-hidden', sessionPrefs.closeButton === 'hidden');
+  const confirmBox = document.getElementById('pref-confirm-close');
+  if (confirmBox) confirmBox.checked = !!sessionPrefs.confirmClose;
+  const closeSel = document.getElementById('pref-close-button');
+  if (closeSel) closeSel.value = sessionPrefs.closeButton;
+}
+
+function saveSessionPrefs() {
+  apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ sessions: sessionPrefs }) }).catch(() => {});
+}
+
+document.addEventListener('change', (e) => {
+  if (!e.target) return;
+  if (e.target.id === 'pref-confirm-close') {
+    applySessionPrefs({ ...sessionPrefs, confirmClose: e.target.checked });
+    saveSessionPrefs();
+  } else if (e.target.id === 'pref-close-button') {
+    applySessionPrefs({ ...sessionPrefs, closeButton: e.target.value });
+    saveSessionPrefs();
+  }
+});
+
+/** Pane close button: ask first (if enabled) when a live session would be closed. */
+async function requestClosePane(paneIndex) {
+  const pane = state.panes[paneIndex];
+  if (pane && pane.conn && sessionPrefs.confirmClose) {
+    const ok = await uiConfirm(`Disconnect from ${pane.conn.name}?`, { title: 'Close session', okText: 'Disconnect', danger: true });
+    if (!ok) return;
+  }
+  disconnectPane(paneIndex);
+}
+
 function disconnectPane(paneIndex) {
   const pane = state.panes[paneIndex];
   const prevConn = pane.conn;
@@ -3063,14 +3103,17 @@ function browserThemeId() {
 async function loadUserTheme() {
   if (!state.themes.length) await loadThemes();
   let pref = null;
+  let sessions = null;
   try {
     const res = await apiFetch('/api/me/preferences');
     if (res.ok) {
       const prefs = await res.json();
       pref = prefs.theme || null;
+      sessions = prefs.sessions || null;
       if (prefs.panes) applyServerPanePrefs(prefs.panes);
     }
   } catch (e) {}
+  applySessionPrefs(sessions);
   state.themePref = pref;
   const id = pref || browserThemeId();
   applyThemeDef(state.themes.find((t) => t.id === id) || state.themes.find((t) => t.id === state.defaultTheme));

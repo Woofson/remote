@@ -163,7 +163,7 @@
             <button class="pane-btn" title="Fullscreen Pane (F11)" onclick="togglePaneFullscreen(1)">
               <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
             </button>
-            <button class="pane-btn text-danger" title="Disconnect" onclick="disconnectPane(1)">
+            <button class="pane-btn pane-close-btn" title="Disconnect" onclick="requestClosePane(1)">
               <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
             </button>
           </div>
@@ -206,7 +206,7 @@
             <button class="pane-btn" title="Toggle Scaling" onclick="togglePaneScaling(2)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg></button>
             <button class="pane-btn" title="Full Window / Maximize Pane (F10)" onclick="togglePaneFullWindow(2)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
             <button class="pane-btn" title="Fullscreen Pane (F11)" onclick="togglePaneFullscreen(2)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
-            <button class="pane-btn text-danger" title="Disconnect" onclick="disconnectPane(2)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+            <button class="pane-btn pane-close-btn" title="Disconnect" onclick="requestClosePane(2)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
           </div>
         </div>
         <div class="pane-body" id="pane-2-body">
@@ -236,7 +236,7 @@
             <button class="pane-btn" title="Toggle Scaling" onclick="togglePaneScaling(3)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg></button>
             <button class="pane-btn" title="Full Window / Maximize Pane (F10)" onclick="togglePaneFullWindow(3)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
             <button class="pane-btn" title="Fullscreen Pane (F11)" onclick="togglePaneFullscreen(3)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
-            <button class="pane-btn text-danger" title="Disconnect" onclick="disconnectPane(3)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+            <button class="pane-btn pane-close-btn" title="Disconnect" onclick="requestClosePane(3)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
           </div>
         </div>
         <div class="pane-body" id="pane-3-body">
@@ -266,7 +266,7 @@
             <button class="pane-btn" title="Toggle Scaling" onclick="togglePaneScaling(4)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/></svg></button>
             <button class="pane-btn" title="Full Window / Maximize Pane (F10)" onclick="togglePaneFullWindow(4)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg></button>
             <button class="pane-btn" title="Fullscreen Pane (F11)" onclick="togglePaneFullscreen(4)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg></button>
-            <button class="pane-btn text-danger" title="Disconnect" onclick="disconnectPane(4)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
+            <button class="pane-btn pane-close-btn" title="Disconnect" onclick="requestClosePane(4)"><svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg></button>
           </div>
         </div>
         <div class="pane-body" id="pane-4-body">
@@ -1021,6 +1021,7 @@
           <nav class="panel-nav" id="settings-panel-nav">
             <button type="button" class="panel-nav-btn active" data-panel-page="account" data-keywords="account profile photo avatar name email password change">Account</button>
             <button type="button" class="panel-nav-btn" data-panel-page="appearance" data-keywords="appearance theme colours colors dark light">Appearance</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="sessions" data-keywords="sessions close disconnect confirm button pane">Sessions</button>
             <button type="button" class="panel-nav-btn" data-panel-page="shortcuts" data-keywords="shortcuts keyboard keys hotkeys">Shortcuts</button>
           </nav>
           <div class="panel-content">
@@ -1101,6 +1102,18 @@
               <div class="panel-page-header"><h3>Appearance</h3></div>
               <label class="pw-check"><input type="checkbox" id="theme-follow-browser" /> <span>Follow the browser's light/dark setting</span></label>
               <div id="theme-grid" class="theme-grid"></div>
+            </section>
+            <section class="panel-page" data-page="sessions">
+              <div class="panel-page-header"><h3>Sessions</h3></div>
+              <label class="pw-check"><input type="checkbox" id="pref-confirm-close" /> <span>Ask before closing a session</span></label>
+              <div class="form-group" style="margin-top: 12px; max-width: 320px;">
+                <label for="pref-close-button" style="font-size: 11px; font-weight: 600;">Close button on panes</label>
+                <select id="pref-close-button" class="form-input">
+                  <option value="subtle">Subtle (red only on hover)</option>
+                  <option value="red">Red</option>
+                  <option value="hidden">Hidden</option>
+                </select>
+              </div>
             </section>
             <section class="panel-page" data-page="shortcuts">
               <div class="panel-page-header"><h3>Keyboard shortcuts</h3></div>
