@@ -1,14 +1,18 @@
-# Remote Configuration File
+# Remote example configuration
+# Copy to config.toml and adjust. config.toml is ignored by git; never commit it.
+# Without a config.toml, Remote creates one with defaults on first start.
 # Unified High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Woofson UI
 
 [server]
 bind_address = "0.0.0.0:8088"
 data_dir = "./data"
-jwt_secret = "remote-super-secret-jwt-key-woofson-2026"
+# jwt_secret: leave unset. Remote generates a random secret in <data_dir>/secret.key
+# on first start. Back that file up with the database: it unlocks saved connection
+# passwords. Only set jwt_secret here to supply your own private value.
 token_expiry_hours = 24
 
 [storage]
-# Staging directory for file transfers and dropboxes
+# Files folder: shared with RDP sessions as \\tsclient\Files and browsable in the web UI
 staging_dir = "./data/staging"
 max_upload_size_mb = 2048
 auto_cleanup_hours = 24
@@ -19,7 +23,7 @@ allow_local_login = true
 # Allow Linux PAM logins (if compiled with pam support)
 allow_pam_login = true
 # Default role for newly registered or auto-provisioned users ("admin", "operator", "viewer")
-default_role = "admin"
+default_role = "viewer"
 
 [oidc]
 # OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)

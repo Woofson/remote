@@ -22,6 +22,8 @@ pub struct AppConfig {
 pub struct ServerConfig {
     pub bind_address: String,
     pub data_dir: String,
+    /// Optional private secret. Leave unset to use the generated `data/secret.key`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub jwt_secret: String,
     pub token_expiry_hours: i64,
 }
@@ -31,7 +33,7 @@ impl Default for ServerConfig {
         Self {
             bind_address: "0.0.0.0:8088".to_string(),
             data_dir: "./data".to_string(),
-            jwt_secret: "remote-secret-key-woofson-2026".to_string(),
+            jwt_secret: String::new(),
             token_expiry_hours: 24,
         }
     }
@@ -66,7 +68,7 @@ impl Default for AuthConfig {
         Self {
             allow_local_login: true,
             allow_pam_login: false,
-            default_role: "operator".to_string(),
+            default_role: "viewer".to_string(),
         }
     }
 }

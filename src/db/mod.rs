@@ -162,6 +162,16 @@ pub struct Database {
     conn: Arc<Mutex<SqliteConnection>>,
 }
 
+/// Outcome for one saved credential in [`Database::reencrypt_connection_secrets`].
+pub enum Reencrypt {
+    /// Already readable with the current secret.
+    Keep,
+    /// Replace with this newly encrypted value.
+    Replace(String),
+    /// Cannot be unlocked with any known secret.
+    Unreadable,
+}
+
 impl Database {
     pub fn new<P: AsRef<Path>>(path: P) -> SqlResult<Self> {
         let path = path.as_ref();
@@ -721,6 +731,41 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    /// Re-encrypt saved connection passwords and keys in one transaction.
+    /// Returns (converted, unreadable).
+    pub fn reencrypt_connection_secrets<F>(&self, convert: F) -> SqlResult<(usize, usize)>
+    where
+        F: Fn(&str) -> Reencrypt,
+    {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let rows: Vec<(String, Option<String>, Option<String>)> = {
+            let mut stmt = tx.prepare("SELECT id, password_enc, private_key_enc FROM connections")?;
+            let mapped = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            mapped.collect::<SqlResult<_>>()?
+        };
+
+        let (mut converted, mut unreadable) = (0, 0);
+        for (id, pw, key) in rows {
+            for (column, value) in [("password_enc", pw), ("private_key_enc", key)] {
+                let Some(enc) = value.filter(|v| !v.is_empty()) else { continue };
+                match convert(&enc) {
+                    Reencrypt::Keep => {}
+                    Reencrypt::Replace(new_enc) => {
+                        tx.execute(
+                            &format!("UPDATE connections SET {} = ?1 WHERE id = ?2", column),
+                            params![new_enc, id],
+                        )?;
+                        converted += 1;
+                    }
+                    Reencrypt::Unreadable => unreadable += 1,
+                }
+            }
+        }
+        tx.commit()?;
+        Ok((converted, unreadable))
     }
 
     pub fn save_connection(&self, record: &ConnectionRecord) -> SqlResult<()> {

@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Remote v{} starting", env!("CARGO_PKG_VERSION"));
 
     let config_path = "config.toml";
-    let config = AppConfig::load_or_create(config_path)?;
+    let mut config = AppConfig::load_or_create(config_path)?;
     info!("Configuration active: binding to {}", config.server.bind_address);
 
     let db_dir = Path::new(&config.server.data_dir);
@@ -39,6 +39,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let db = Database::new(&db_path)?;
     info!("Database connected at {}", db_path.display());
+
+    config.server.jwt_secret =
+        remoted::secrets::resolve_master_secret(&config.server.jwt_secret, db_dir, &db)?;
 
     // Seed initial admin user if no users exist
     let default_admin_pw = "remote";

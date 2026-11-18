@@ -44,18 +44,24 @@ Open `http://localhost:8088` and log in with `admin` / `remote`. This account is
 
 ## Configuration
 
-Settings live in `config.toml` in the working directory.
+Settings live in `config.toml` in the working directory. Start from `config.example.toml`; if there is no `config.toml`, Remote creates one with defaults. `config.toml` is ignored by git.
 
 | Section | Key settings |
 | :--- | :--- |
-| `[server]` | `bind_address` (default `0.0.0.0:8088`), `data_dir`, `jwt_secret`, `token_expiry_hours` |
+| `[server]` | `bind_address` (default `0.0.0.0:8088`), `data_dir`, `token_expiry_hours`, optional `jwt_secret` |
 | `[storage]` | `staging_dir`, `max_upload_size_mb`, `auto_cleanup_hours` |
-| `[auth]` | `allow_local_login`, `default_role` |
+| `[auth]` | `allow_local_login`, `default_role` (default `viewer`) |
 | `[oidc]` | `enabled`, `issuer_url`, `client_id`, `client_secret`, `redirect_uri`, `scopes`, `auto_provision_users`, `admin_group`, `operator_group` |
 | `[clipboard]` | `default_mode` (`bidirectional`, `server_to_client`, `client_to_server`, `disabled`), `max_text_size_bytes` |
 | `[logging]` | `level` |
 
-Before exposing Remote to a network, set your own `jwt_secret` and review `default_role`.
+### Secret key and backups
+
+On first start Remote generates a random secret in `data/secret.key` (readable only by its owner). It signs login sessions and encrypts saved connection passwords and keys. Back it up together with `data/remote.db`: without it, saved connection credentials cannot be unlocked and must be re-entered. To use your own secret instead, set a private `jwt_secret` in `config.toml`.
+
+Older installations that still used the published default secret are switched to `data/secret.key` automatically; saved credentials are re-encrypted and everyone is logged out once.
+
+Before exposing Remote to a network, change the `admin` password and review `default_role`.
 
 ---
 
