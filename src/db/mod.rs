@@ -322,6 +322,14 @@ impl Database {
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_transfer TEXT NOT NULL DEFAULT 'full';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN view_only INTEGER NOT NULL DEFAULT 0;", []);
 
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                prefs TEXT NOT NULL DEFAULT '{}'
+            )",
+            [],
+        )?;
+
         // Per-user login security, kept apart from `users` (same approach as Brum):
         // a newer session_generation ends older logins; must_change_password gates the account.
         conn.execute(
@@ -417,6 +425,33 @@ impl Database {
             params![user_id, must_change as i64, Utc::now().to_rfc3339()],
         )?;
         tx.commit()
+    }
+
+    /// A user's saved interface preferences (JSON object text).
+    pub fn get_user_preferences(&self, user_id: &str) -> SqlResult<String> {
+        let prefs = self
+            .conn
+            .lock()
+            .query_row("SELECT prefs FROM user_preferences WHERE user_id = ?1", params![user_id], |r| r.get(0))
+            .optional()?;
+        Ok(prefs.unwrap_or_else(|| "{}".to_string()))
+    }
+
+    pub fn set_user_preferences(&self, user_id: &str, prefs: &str) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "INSERT INTO user_preferences (user_id, prefs) VALUES (?1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET prefs = ?2",
+            params![user_id, prefs],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_connection_global(&self, id: &str, is_global: bool) -> SqlResult<bool> {
+        let n = self.conn.lock().execute(
+            "UPDATE connections SET is_global = ?1, updated_at = ?2 WHERE id = ?3",
+            params![is_global as i64, Utc::now().to_rfc3339(), id],
+        )?;
+        Ok(n > 0)
     }
 
     pub fn count_users(&self) -> SqlResult<i64> {

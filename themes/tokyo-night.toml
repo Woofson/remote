@@ -1,0 +1,43 @@
+# Tokyo Night Color Scheme for Brum
+
+[[themes]]
+id = "tokyo-night"
+name = "Tokyo Night"
+bg_dark = "#16161e"
+bg_panel = "#1a1b26"
+bg_active = "#24283b"
+accent = "#7aa2f7"
+accent_hover = "#7dcfff"
+text_main = "#c0caf5"
+text_muted = "#9aa5ce"
+border = "#3b4261"
+folder_color = "#7aa2f7"
+radius = "6px"
+
+[[themes]]
+id = "tokyo-night-storm"
+name = "Tokyo Night Storm"
+bg_dark = "#1f2335"
+bg_panel = "#24283b"
+bg_active = "#2f3549"
+accent = "#bb9af7"
+accent_hover = "#7dcfff"
+text_main = "#c0caf5"
+text_muted = "#a9b1d6"
+border = "#414868"
+folder_color = "#bb9af7"
+radius = "6px"
+
+[[themes]]
+id = "tokyo-night-light"
+name = "Tokyo Night Light"
+bg_dark = "#d5d6db"
+bg_panel = "#e1e2e7"
+bg_active = "#cbccd1"
+accent = "#34548a"
+accent_hover = "#2e7de9"
+text_main = "#343b58"
+text_muted = "#565f89"
+border = "#b4b5b9"
+folder_color = "#34548a"
+radius = "6px"

@@ -207,6 +207,9 @@ async function apiFetch(url, options = {}) {
 
 // ================= Initialization & Lifecycle =================
 document.addEventListener('DOMContentLoaded', async () => {
+  applyCachedTheme();
+  loadThemes();
+  setupPanels();
   loadAppVersion();
   loadPasswordPolicy();
   setupPasswordDialogs();
@@ -352,6 +355,7 @@ function updateHeaderProfile(user) {
 }
 
 function onAuthenticated() {
+  loadUserTheme();
   const modal = document.getElementById('login-modal');
   if (modal) {
     modal.classList.remove('active');
@@ -819,13 +823,11 @@ function openUserProfileModal() {
     const msgEl = document.getElementById('profile-modal-msg');
     if (msgEl) msgEl.style.display = 'none';
   }
-  const m = document.getElementById('user-profile-modal');
-  if (m) { m.classList.add('active'); m.style.display = 'flex'; }
+  showPanel('settings-panel', 'account');
 }
 
 function closeUserProfileModal() {
-  const m = document.getElementById('user-profile-modal');
-  if (m) { m.classList.remove('active'); m.style.display = 'none'; }
+  closePersonalSettings();
 }
 
 async function handleUpdateProfile(e) {
@@ -932,14 +934,35 @@ function closeConnectionsModal() {
   document.getElementById('connections-modal').style.display = 'none';
 }
 
+const PROTOCOL_ICONS = {
+  rdp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  vnc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M7 21h10"/><circle cx="12" cy="10" r="2"/></svg>',
+  ssh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  telnet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><polyline points="7 10 10 13 7 16"/></svg>',
+  local_pty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>',
+};
+const PROTOCOL_LABELS = { rdp: 'RDP', vnc: 'VNC', ssh: 'SSH', telnet: 'Telnet', local_pty: 'Local shell' };
+
+/** URL for a stored icon reference, or null for the protocol default. */
+function iconUrl(ref) {
+  if (!ref) return null;
+  const [kind, val] = ref.split(':');
+  if (kind === 'selfhst' && /^[a-z0-9-]+$/.test(val || '')) return `/api/icons/selfhst/${val}.png`;
+  if (kind === 'upload' && /^[0-9a-f]{64}$/.test(val || '')) return `/api/icons/upload/${val}.png`;
+  return null;
+}
+
+function connIconHtml(iconRef, protocol, size = '') {
+  const url = iconUrl(iconRef);
+  const inner = url
+    ? `<img src="${url}" alt="" loading="lazy" onerror="this.replaceWith(document.createRange().createContextualFragment(PROTOCOL_ICONS['${protocol in PROTOCOL_ICONS ? protocol : 'ssh'}']))">`
+    : (PROTOCOL_ICONS[protocol] || PROTOCOL_ICONS.ssh);
+  return `<span class="conn-icon ${size}">${inner}</span>`;
+}
+
 function filterConnectionList(filter) {
-  state.connectionFilter = filter;
-  ['all', 'global', 'personal'].forEach(f => {
-    const btn = document.getElementById(`filter-conn-${f}`);
-    if (btn) {
-      btn.className = (f === filter) ? 'btn btn-sm active' : 'btn btn-sm btn-secondary';
-    }
-  });
+  const el = document.getElementById('dir-filter-scope');
+  if (el) el.value = filter;
   renderConnectionsTable();
 }
 
@@ -948,84 +971,126 @@ function onSearchConnections(query) {
   renderConnectionsTable();
 }
 
-function renderConnectionsTable() {
-  const tbody = document.getElementById('connections-table-body');
-  if (!tbody) return;
+function connTags(c) {
+  return (c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
+}
 
-  const currentFilter = state.connectionFilter || 'all';
-  const query = state.connectionSearch || '';
-
-  const filtered = state.connections.filter(c => {
-    if (currentFilter === 'global' && !c.is_global) return false;
-    if (currentFilter === 'personal' && c.is_global) return false;
-    if (query) {
-      const matchName = c.name && c.name.toLowerCase().includes(query);
-      const matchHost = c.host && c.host.toLowerCase().includes(query);
-      const matchTags = c.tags && c.tags.toLowerCase().includes(query);
-      const matchProto = c.protocol && c.protocol.toLowerCase().includes(query);
-      if (!matchName && !matchHost && !matchTags && !matchProto) return false;
-    }
-    return true;
+function setupDirectory() {
+  ['dir-filter-protocol', 'dir-filter-tag', 'dir-filter-scope', 'dir-sort'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('change', renderConnectionsTable);
   });
+  const list = document.getElementById('connections-list');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      const tag = e.target.closest('[data-dir-tag]');
+      if (tag) {
+        document.getElementById('dir-filter-tag').value = tag.dataset.dirTag;
+        renderConnectionsTable();
+        return;
+      }
+      const btn = e.target.closest('[data-dir-action]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (btn.dataset.dirAction === 'connect') connectToTarget(id);
+      if (btn.dataset.dirAction === 'edit') openEditConnectionModal(id);
+      if (btn.dataset.dirAction === 'delete') deleteConnection(id);
+    });
+    list.addEventListener('dblclick', (e) => {
+      const row = e.target.closest('.dir-row');
+      if (row && !e.target.closest('button')) connectToTarget(row.dataset.id);
+    });
+  }
+  makeDraggable(document.getElementById('connections-box'), document.getElementById('connections-header'));
+}
 
-  if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-muted p-3">No matching connections found.</td></tr>`;
+function renderConnectionsTable() {
+  const listEl = document.getElementById('connections-list');
+  if (!listEl) return;
+  const conns = state.connections || [];
+
+  // Tag filter options from the current list
+  const tagSel = document.getElementById('dir-filter-tag');
+  const curTag = tagSel.value;
+  const allTags = [...new Set(conns.flatMap(connTags))].sort((a, b) => a.localeCompare(b));
+  tagSel.innerHTML = '<option value="">All tags</option>' + allTags.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  tagSel.value = allTags.includes(curTag) ? curTag : '';
+
+  const proto = document.getElementById('dir-filter-protocol').value;
+  const tag = tagSel.value;
+  const scope = document.getElementById('dir-filter-scope').value;
+  const sort = document.getElementById('dir-sort').value;
+  const q = state.connectionSearch || '';
+
+  const rows = conns
+    .filter((c) => !proto || c.protocol === proto)
+    .filter((c) => !tag || connTags(c).includes(tag))
+    .filter((c) => scope === 'all' || (scope === 'global' ? c.is_global : !c.is_global))
+    .filter((c) => !q || `${c.name} ${c.host} ${c.tags || ''} ${c.protocol}`.toLowerCase().includes(q))
+    .sort((a, b) => {
+      if (sort === 'protocol') return a.protocol.localeCompare(b.protocol) || a.name.localeCompare(b.name);
+      if (sort === 'host') return (a.host || '').localeCompare(b.host || '') || a.name.localeCompare(b.name);
+      if (sort === 'updated') return (b.updated_at || '').localeCompare(a.updated_at || '');
+      return a.name.localeCompare(b.name);
+    });
+
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="dir-empty">${conns.length ? 'No connections match the filters.' : 'No connections yet. Use “+ New Connection” to add one.'}</div>`;
     return;
   }
 
-  tbody.innerHTML = filtered
-    .map(c => {
-      const scopeBadge = c.is_global
-        ? `<span style="color: #f59e0b; background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.3); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">🌐 GLOBAL</span>`
-        : `<span style="color: #38bdf8; background: rgba(56,189,248,0.15); border: 1px solid rgba(56,189,248,0.3); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">🔒 PERSONAL</span>`;
-
-      const modeBadge = c.view_only
-        ? `<span style="color: #f59e0b; font-size: 10px; font-weight: 600; margin-right: 6px;" title="View-Only / Observer Mode">👁️ View</span>`
-        : `<span style="color: #10b981; font-size: 10px; font-weight: 600; margin-right: 6px;" title="Full Interactive Mode">⚡ Active</span>`;
-
-      const clipBadge = c.allow_clipboard === 'disabled'
-        ? `<span style="color: #ef4444; font-size: 10px; margin-right: 6px;" title="Clipboard Blocked">🚫 Clip</span>`
-        : c.allow_clipboard === 'host_to_remote'
-        ? `<span style="color: #38bdf8; font-size: 10px; margin-right: 6px;" title="Paste Only">📥 Paste</span>`
-        : `<span style="color: #a1a1aa; font-size: 10px; margin-right: 6px;" title="Bidirectional Clipboard">📋 Clip</span>`;
-
-      const transBadge = c.allow_transfer === 'disabled'
-        ? `<span style="color: #ef4444; font-size: 10px;" title="Transfers Blocked">🚫 Files</span>`
-        : `<span style="color: #a1a1aa; font-size: 10px;" title="File Transfers Allowed">📁 Files</span>`;
-
+  const pane = state.activePaneIndex;
+  listEl.innerHTML = rows
+    .map((c) => {
+      const perms = c.user_permissions || {};
+      const target = c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`;
+      const policies = [
+        c.view_only ? '<span class="dir-policy" title="View-only">View only</span>' : '',
+        c.allow_clipboard === 'disabled' || perms.can_clipboard === false ? '<span class="dir-policy off" title="Clipboard blocked">No clipboard</span>' : '',
+        c.allow_transfer === 'disabled' || perms.can_transfer === false ? '<span class="dir-policy off" title="File transfer blocked">No files</span>' : '',
+      ].join('');
+      const canEdit = perms.can_edit;
       return `
-        <tr>
-          <td>${scopeBadge}</td>
-          <td>
-            <strong>${escapeHtml(c.name)}</strong>
-            ${c.tags ? `<span class="badge-count" style="margin-left: 6px;">${escapeHtml(c.tags)}</span>` : ''}
-            ${connectionAccessLine(c)}
-          </td>
-          <td><span class="pane-protocol-badge">${c.protocol.toUpperCase()}</span></td>
-          <td><code>${c.protocol === 'local_pty' ? 'Local System' : `${escapeHtml(c.host)}:${c.port}`}</code></td>
-          <td>
-            <div style="display: flex; align-items: center;">
-              ${modeBadge}
-              ${clipBadge}
-              ${transBadge}
-            </div>
-          </td>
-          <td>
-            <div style="display:flex;gap:4px;">
-              <button class="btn btn-primary btn-sm" onclick="connectToTarget('${c.id}')">Connect [ ${state.activePaneIndex} ]</button>
-              ${c.user_permissions && c.user_permissions.can_edit ? `
-                <button class="btn btn-secondary btn-sm" onclick="openEditConnectionModal('${c.id}')">Edit</button>
-                <button class="btn btn-secondary btn-sm text-danger" onclick="deleteConnection('${c.id}')">Delete</button>
-              ` : ''}
-            </div>
-          </td>
-        </tr>
-      `;
+        <div class="dir-row" data-id="${escapeHtml(c.id)}">
+          ${connIconHtml(c.icon, c.protocol)}
+          <div class="dir-main">
+            <div class="dir-name">${escapeHtml(c.name)} ${connTags(c).map((t) => `<span class="dir-tag" data-dir-tag="${escapeHtml(t)}">${escapeHtml(t)}</span>`).join('')}</div>
+            <div class="dir-sub"><span class="pane-protocol-badge">${PROTOCOL_LABELS[c.protocol] || c.protocol}</span><code>${target}</code>${connectionAccessLine(c).replace('conn-access-line', 'dir-access')}</div>
+          </div>
+          <div class="dir-policies">${policies}</div>
+          <div class="dir-actions">
+            <button class="btn btn-accent btn-sm" data-dir-action="connect" data-id="${escapeHtml(c.id)}" title="Connect in pane ${pane}" ${perms.can_connect === false ? 'disabled' : ''}>Connect</button>
+            ${canEdit ? `<button class="dir-icon-btn" data-dir-action="edit" data-id="${escapeHtml(c.id)}" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>` : ''}
+            ${canEdit ? `<button class="dir-icon-btn danger" data-dir-action="delete" data-id="${escapeHtml(c.id)}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
+          </div>
+        </div>`;
     })
     .join('');
 }
 
+function switchConnTab(tab) {
+  document.querySelectorAll('.conn-tab').forEach((b) => b.classList.toggle('active', b.dataset.connTab === tab));
+  document.querySelectorAll('.conn-section').forEach((s) => s.classList.toggle('active', s.dataset.connSection === tab));
+}
+
+function resetConnEditor() {
+  switchConnTab('general');
+  document.querySelectorAll('.conn-tab').forEach((b) => b.classList.remove('has-error'));
+  document.querySelectorAll('#connection-edit-form .invalid').forEach((el) => el.classList.remove('invalid'));
+  document.getElementById('conn-edit-error').textContent = '';
+  document.getElementById('conn-test-result').textContent = '';
+  document.getElementById('conn-edit-box').style.transform = '';
+}
+
+function setConnIcon(ref) {
+  document.getElementById('conn-icon').value = ref || '';
+  const preview = document.getElementById('conn-icon-preview');
+  const proto = document.getElementById('conn-protocol').value;
+  preview.outerHTML = connIconHtml(ref, proto, 'conn-icon-lg').replace('class="conn-icon', 'id="conn-icon-preview" class="conn-icon');
+}
+
 function openAddConnectionModal() {
+  resetConnEditor();
   document.getElementById('connection-edit-title').textContent = 'New Connection Target';
   document.getElementById('conn-id').value = '';
   document.getElementById('conn-name').value = '';
@@ -1052,6 +1117,7 @@ function openAddConnectionModal() {
 
   document.getElementById('conn-allow-clipboard').value = 'bidirectional';
   document.getElementById('conn-allow-transfer').value = 'full';
+  setTimeout(() => setConnIcon(''), 0);
   document.getElementById('conn-view-only').value = 'false';
 
   const ignoreCertEl = document.getElementById('conn-rdp-ignore-cert');
@@ -1074,6 +1140,8 @@ function openAddConnectionModal() {
 function openEditConnectionModal(id) {
   const c = state.connections.find(item => item.id === id);
   if (!c) return;
+  resetConnEditor();
+  setTimeout(() => setConnIcon(c.icon || ''), 0);
 
   document.getElementById('connection-edit-title').textContent = `Edit Target — ${c.name}`;
   document.getElementById('conn-id').value = c.id;
@@ -1195,6 +1263,14 @@ function onProtocolChanged() {
 
   const rdpGroup = document.getElementById('group-rdp-settings');
   if (rdpGroup) rdpGroup.style.display = isRdp ? 'flex' : 'none';
+  const displayNote = document.getElementById('conn-display-note');
+  if (displayNote) displayNote.style.display = isRdp ? 'none' : '';
+  const loginNote = document.getElementById('conn-login-note');
+  if (loginNote) loginNote.style.display = isLocal ? '' : 'none';
+  const testRow = document.getElementById('group-test');
+  if (testRow) testRow.style.display = isLocal ? 'none' : '';
+  const iconVal = document.getElementById('conn-icon');
+  if (iconVal && !iconVal.value) setConnIcon('');
 
   if (proto === 'vnc') document.getElementById('conn-port').value = '5900';
   if (proto === 'rdp') document.getElementById('conn-port').value = '3389';
@@ -1202,8 +1278,60 @@ function onProtocolChanged() {
   if (proto === 'telnet') document.getElementById('conn-port').value = '23';
 }
 
+/** Check the form before saving; marks fields and the tab holding the first problem. */
+function validateConnForm() {
+  const problems = [];
+  const mark = (id, tab, msg) => {
+    document.getElementById(id).classList.add('invalid');
+    document.querySelector(`.conn-tab[data-conn-tab="${tab}"]`).classList.add('has-error');
+    problems.push({ tab, msg, id });
+  };
+  document.querySelectorAll('#connection-edit-form .invalid').forEach((el) => el.classList.remove('invalid'));
+  document.querySelectorAll('.conn-tab').forEach((b) => b.classList.remove('has-error'));
+
+  const proto = document.getElementById('conn-protocol').value;
+  if (!document.getElementById('conn-name').value.trim()) mark('conn-name', 'general', 'Give the connection a name');
+  if (proto !== 'local_pty') {
+    const host = document.getElementById('conn-host').value.trim();
+    if (!host) mark('conn-host', 'general', 'Enter a host name or address');
+    else if (/[\s/]/.test(host)) mark('conn-host', 'general', 'The host must not contain spaces or slashes');
+    const port = Number(document.getElementById('conn-port').value);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) mark('conn-port', 'general', 'The port must be between 1 and 65535');
+  }
+  const errEl = document.getElementById('conn-edit-error');
+  if (problems.length) {
+    errEl.textContent = problems[0].msg;
+    switchConnTab(problems[0].tab);
+    document.getElementById(problems[0].id).focus();
+    return false;
+  }
+  errEl.textContent = '';
+  return true;
+}
+
+async function testConnectionTarget() {
+  const out = document.getElementById('conn-test-result');
+  const host = document.getElementById('conn-host').value.trim();
+  const port = Number(document.getElementById('conn-port').value);
+  if (!host || !port) {
+    out.innerHTML = '<span class="bad">Enter a host and port first</span>';
+    return;
+  }
+  out.textContent = 'Testing…';
+  try {
+    const res = await apiFetch('/api/connections/test', { method: 'POST', body: JSON.stringify({ host, port }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) out.innerHTML = `<span class="bad">${escapeHtml(d.error || 'Test failed')}</span>`;
+    else if (d.reachable) out.innerHTML = `<span class="ok">Reachable: ${escapeHtml(host)}:${port} answers</span>`;
+    else out.innerHTML = `<span class="bad">${escapeHtml(d.error || 'Not reachable')}</span>`;
+  } catch (e) {
+    out.innerHTML = '<span class="bad">Server connection error</span>';
+  }
+}
+
 async function handleSaveConnection(e) {
   e.preventDefault();
+  if (!validateConnForm()) return;
   const id = document.getElementById('conn-id').value;
   const isGlobalVal = document.getElementById('conn-is-global') ? document.getElementById('conn-is-global').value === 'true' : true;
 
@@ -1237,6 +1365,7 @@ async function handleSaveConnection(e) {
     allow_clipboard: document.getElementById('conn-allow-clipboard').value,
     allow_transfer: document.getElementById('conn-allow-transfer').value,
     view_only: document.getElementById('conn-view-only').value === 'true',
+    icon: document.getElementById('conn-icon').value || null,
   };
   const isAdminUser = state.currentUser && state.currentUser.role === 'admin';
   if (isAdminUser) {
@@ -1312,7 +1441,7 @@ function connectToTarget(connectionId) {
     ? ` <span style="font-size: 9px; padding: 2px 5px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); color: var(--woofson-accent); border-radius: 3px; font-weight: 700; margin-left: 6px;">VIEW-ONLY</span>`
     : '';
 
-  titleEl.innerHTML = `${escapeHtml(conn.name)}${viewOnlyTag}`;
+  titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
   protoBadge.textContent = conn.protocol.toUpperCase();
   protoBadge.style.display = 'inline-block';
   statsEl.style.display = 'inline-block';
@@ -1439,7 +1568,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     letterSpacing: 0,
     allowProposedApi: true,
     scrollback: 10000,
-    theme: TERMINAL_THEME,
+    theme: terminalThemeFor(currentThemeDef()),
     convertEol: true,
   });
 
@@ -2424,7 +2553,7 @@ async function pushFileToSftp(connectionId, filePath, remotePath) {
 
 // ================= Users & RBAC Modal =================
 async function openUsersModal() {
-  document.getElementById('users-modal').style.display = 'flex';
+  showPanel('admin-panel', 'users');
   try {
     const res = await fetch('/api/users', {
       headers: { Authorization: `Bearer ${state.jwtToken}` },
@@ -2441,7 +2570,7 @@ async function openUsersModal() {
 }
 
 function closeUsersModal() {
-  document.getElementById('users-modal').style.display = 'none';
+  closeAdminPanel();
 }
 
 function renderUsersTable(users) {
@@ -2598,61 +2727,404 @@ async function deleteUser(id) {
 }
 
 // ================= Settings & Audit Modals =================
-async function openSettingsModal() {
-  document.getElementById('settings-modal').style.display = 'flex';
-  try {
-    const res = await fetch('/api/settings');
-    if (res.ok) {
-      const data = await res.json();
-      renderSettings(data);
-    }
-  } catch (e) {}
-}
+// ================= Admin Control Panel & Settings panels =================
+const panelLoaders = {
+  'admin-panel': {
+    users: () => openUsersModal(),
+    connections: () => loadAdminConnections(),
+    activity: () => loadActivityLog(),
+    server: () => loadServerPage(),
+  },
+  'settings-panel': {
+    account: () => {},
+    appearance: () => renderThemeGrid(),
+    shortcuts: () => {},
+  },
+};
 
-function closeSettingsModal() {
-  document.getElementById('settings-modal').style.display = 'none';
-}
-
-function renderSettings(s) {
-  const oidcEl = document.getElementById('settings-oidc-details');
-  oidcEl.innerHTML = `
-    <div class="form-group"><label>OIDC SSO Status</label><input class="form-input" disabled value="${s.oidc.enabled ? 'Enabled' : 'Disabled (Configured in config.toml)'}" /></div>
-    <div class="form-group"><label>Identity Provider</label><input class="form-input" disabled value="${s.oidc.provider_name}" /></div>
-    <div class="form-group"><label>Issuer URL</label><input class="form-input" disabled value="${s.oidc.issuer_url}" /></div>
-    <div class="form-group"><label>Redirect URI</label><input class="form-input" disabled value="${s.oidc.redirect_uri}" /></div>
-  `;
-
-  const genEl = document.getElementById('settings-general-details');
-  genEl.innerHTML = `
-    <div class="form-group"><label>Default Clipboard Sync</label><input class="form-input" disabled value="${s.clipboard.default_mode}" /></div>
-    <div class="form-group"><label>Staging Directory</label><input class="form-input" disabled value="${s.storage.staging_dir}" /></div>
-  `;
-}
-
-async function openAuditModal() {
-  document.getElementById('audit-modal').style.display = 'flex';
-  try {
-    const res = await fetch('/api/audit-logs', {
-      headers: { Authorization: `Bearer ${state.jwtToken}` },
+function setupPanels() {
+  for (const id of ['admin-panel', 'settings-panel']) {
+    const overlay = document.getElementById(id);
+    if (!overlay) continue;
+    makeDraggable(document.getElementById(`${id}-box`), document.getElementById(`${id}-header`));
+    overlay.querySelectorAll('.panel-nav-btn').forEach((btn) => {
+      btn.addEventListener('click', () => showPanel(id, btn.dataset.panelPage));
     });
-    if (res.ok) {
-      const logs = await res.json();
-      const tbody = document.getElementById('audit-table-body');
-      tbody.innerHTML = logs.map(l => `
-        <tr>
-          <td class="text-muted">${new Date(l.timestamp).toLocaleString()}</td>
-          <td><strong>${escapeHtml(l.username)}</strong></td>
-          <td><span class="pane-protocol-badge">${l.action}</span></td>
-          <td>${l.connection_name ? escapeHtml(l.connection_name) : '—'}</td>
-          <td><span class="text-muted">${escapeHtml(l.details || '')}</span></td>
-        </tr>
-      `).join('');
+    const search = document.getElementById(`${id}-search`);
+    search.addEventListener('input', () => filterPanelNav(id, search.value));
+    search.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const first = overlay.querySelector('.panel-nav-btn:not(.search-miss)');
+        if (first) showPanel(id, first.dataset.panelPage);
+      }
+    });
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !document.querySelector('.ui-dialog-overlay[style*="flex"]')) {
+        e.stopPropagation();
+        overlay.style.display = 'none';
+      }
+    });
+  }
+  ['audit-filter-text', 'audit-filter-action', 'audit-filter-user'].forEach((fid) => {
+    const el = document.getElementById(fid);
+    if (el) el.addEventListener('input', renderActivityLog);
+  });
+}
+
+/** Show a panel on one page (and close the profile menu). Loads the page's data. */
+function showPanel(id, page) {
+  const menu = document.getElementById('profile-dropdown-menu');
+  if (menu) { menu.classList.remove('active'); menu.style.display = 'none'; }
+  const overlay = document.getElementById(id);
+  const wasOpen = overlay.style.display === 'flex';
+  overlay.style.display = 'flex';
+  if (!wasOpen) document.getElementById(`${id}-box`).style.transform = '';
+  overlay.querySelectorAll('.panel-nav-btn').forEach((b) => b.classList.toggle('active', b.dataset.panelPage === page));
+  overlay.querySelectorAll('.panel-page').forEach((p) => p.classList.toggle('active', p.dataset.page === page));
+  const loader = panelLoaders[id] && panelLoaders[id][page];
+  if (loader && overlay.dataset.loading !== page) {
+    overlay.dataset.loading = page;
+    Promise.resolve(loader()).finally(() => { delete overlay.dataset.loading; });
+  }
+}
+
+/** "Find a setting": hide sections whose name and keywords don't match. */
+function filterPanelNav(id, query) {
+  const q = query.trim().toLowerCase();
+  const overlay = document.getElementById(id);
+  overlay.querySelectorAll('.panel-nav-btn').forEach((btn) => {
+    const hay = `${btn.textContent} ${btn.dataset.keywords || ''}`.toLowerCase();
+    btn.classList.toggle('search-miss', !!q && !q.split(/\s+/).every((w) => hay.includes(w)));
+  });
+}
+
+function openAdminPanel(page = 'users') {
+  showPanel('admin-panel', page);
+}
+
+function closeAdminPanel() {
+  document.getElementById('admin-panel').style.display = 'none';
+}
+
+function openPersonalSettings(page = 'account') {
+  if (page === 'account') {
+    openUserProfileModal();
+  } else {
+    showPanel('settings-panel', page);
+  }
+}
+
+function closePersonalSettings() {
+  document.getElementById('settings-panel').style.display = 'none';
+}
+
+// Kept for older call sites.
+function openSettingsModal() { openAdminPanel('server'); }
+function closeSettingsModal() { closeAdminPanel(); }
+function openAuditModal() { openAdminPanel('activity'); }
+function closeAuditModal() { closeAdminPanel(); }
+
+// ---- Connections page ----
+async function loadAdminConnections() {
+  const res = await apiFetch('/api/connections');
+  if (!res.ok) return;
+  const list = await res.json();
+  const body = document.getElementById('admin-conn-body');
+  const global = list.filter((c) => c.is_global);
+  const localShell = global.find((c) => c.protocol === 'local_pty');
+  const warn = document.getElementById('admin-conn-warning');
+  warn.innerHTML = global.length
+    ? `<div class="panel-warning ${localShell ? 'danger' : ''}">
+        <div><strong>${global.length} connection${global.length === 1 ? ' is' : 's are'} global</strong>: every user sees ${global.length === 1 ? 'it' : 'them'}.
+        ${localShell ? `<br><strong>${escapeHtml(localShell.name)}</strong> opens a shell on the Remote server itself; make it private unless every user should have that.` : ''}
+        <br>Make connections private and assign them to the right users or groups.</div>
+      </div>`
+    : '';
+  body.innerHTML = list
+    .map((c) => `
+      <tr>
+        <td><span style="display:inline-flex;align-items:center;gap:8px;">${connIconHtml(c.icon, c.protocol, 'conn-icon-sm')}<strong>${escapeHtml(c.name)}</strong></span></td>
+        <td><span class="pane-protocol-badge">${c.protocol.toUpperCase()}</span> <code>${c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`}</code></td>
+        <td>${c.is_global ? '<span class="text-danger" style="font-weight:700;">Global</span>' : 'Private'}</td>
+        <td>${c.owner_name ? escapeHtml(c.owner_name) : '—'}</td>
+        <td class="text-muted text-sm">${c.assigned_to && c.assigned_to.length ? c.assigned_to.map(escapeHtml).join(', ') : '—'}</td>
+        <td style="white-space:nowrap;">
+          <button class="btn btn-secondary btn-sm" data-conn-edit="${escapeHtml(c.id)}">Edit</button>
+          <button class="btn btn-secondary btn-sm" data-conn-scope="${escapeHtml(c.id)}" data-global="${c.is_global ? '1' : ''}">${c.is_global ? 'Make private' : 'Make global'}</button>
+        </td>
+      </tr>`)
+    .join('');
+  state.connections = list;
+}
+
+document.addEventListener('click', async (e) => {
+  const edit = e.target.closest('[data-conn-edit]');
+  if (edit) {
+    openEditConnectionModal(edit.dataset.connEdit);
+    return;
+  }
+  const scope = e.target.closest('[data-conn-scope]');
+  if (scope) {
+    const makeGlobal = !scope.dataset.global;
+    if (makeGlobal && !(await uiConfirm('Every user will see this connection. Make it global?', { title: 'Make global', okText: 'Make global' }))) return;
+    const res = await apiFetch(`/api/connections/${scope.dataset.connScope}/scope`, {
+      method: 'POST',
+      body: JSON.stringify({ is_global: makeGlobal }),
+    });
+    if (!res.ok) {
+      showToast(await readError(res, 'Could not change scope'), 'danger');
+      return;
     }
+    showToast(makeGlobal ? 'Connection is now global' : 'Connection is now private', 'success');
+    loadAdminConnections();
+    if (typeof loadConnections === 'function') loadConnections();
+  }
+});
+
+// ---- Activity page ----
+let activityLogs = [];
+
+async function loadActivityLog() {
+  const res = await apiFetch('/api/audit-logs');
+  if (!res.ok) return;
+  activityLogs = await res.json();
+  const fill = (id, values, label) => {
+    const el = document.getElementById(id);
+    const current = el.value;
+    el.innerHTML = `<option value="">${label}</option>` + [...new Set(values)].sort().map((v) => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`).join('');
+    el.value = current;
+  };
+  fill('audit-filter-action', activityLogs.map((l) => l.action), 'All actions');
+  fill('audit-filter-user', activityLogs.map((l) => l.username), 'All users');
+  renderActivityLog();
+}
+
+function renderActivityLog() {
+  const text = document.getElementById('audit-filter-text').value.trim().toLowerCase();
+  const action = document.getElementById('audit-filter-action').value;
+  const user = document.getElementById('audit-filter-user').value;
+  const rows = activityLogs.filter((l) =>
+    (!action || l.action === action) &&
+    (!user || l.username === user) &&
+    (!text || `${l.username} ${l.connection_name || ''} ${l.details || ''} ${l.action}`.toLowerCase().includes(text)));
+  document.getElementById('audit-count').textContent = `${rows.length} of ${activityLogs.length} entries`;
+  document.getElementById('audit-table-body').innerHTML = rows
+    .map((l) => `
+      <tr>
+        <td class="text-muted" style="white-space:nowrap;">${new Date(l.timestamp).toLocaleString()}</td>
+        <td><strong>${escapeHtml(l.username)}</strong></td>
+        <td><span class="pane-protocol-badge" ${/DENIED|FAILED/.test(l.action) ? 'style="color:#f87171;border-color:rgba(239,68,68,0.5);"' : ''}>${escapeHtml(l.action)}</span></td>
+        <td>${l.connection_name ? escapeHtml(l.connection_name) : '—'}</td>
+        <td><span class="text-muted">${escapeHtml(l.details || '')}</span></td>
+      </tr>`)
+    .join('');
+}
+
+// ---- Server page ----
+async function loadServerPage() {
+  const res = await apiFetch('/api/settings');
+  if (!res.ok) return;
+  const s = await res.json();
+  document.getElementById('server-version').textContent = `Remote v${s.version}`;
+  const st = s.status;
+  const item = (level, html) => `<div class="status-item"><span class="status-dot ${level}"></span><div>${html}</div></div>`;
+  const items = [];
+  items.push(st.secret_source === 'file'
+    ? item('', `Secret key in <code>${escapeHtml(st.secret_file)}</code>. <strong>Back it up together with the database</strong>; without it saved connection passwords cannot be unlocked.`)
+    : item('warn', 'Using a private <code>jwt_secret</code> from config.toml. Keep config.toml out of git and backed up.'));
+  items.push(st.global_local_shell
+    ? item('bad', 'The local server shell is a <strong>global</strong> connection: every user can open a shell on the Remote server. See Connections.')
+    : st.global_connections.length
+      ? item('warn', `${st.global_connections.length} global connection(s): ${st.global_connections.map(escapeHtml).join(', ')}. See Connections.`)
+      : item('', 'No global connections; every connection is private or assigned.'));
+  if (st.admin_must_change) items.push(item('warn', 'The built-in <code>admin</code> account must still choose its own password.'));
+  if (st.admin_note_present) items.push(item('warn', 'The first-login note <code>initial_admin_credentials.txt</code> still exists in the data folder.'));
+  items.push(item(s.auth.default_role === 'admin' ? 'bad' : '', `New single sign-on users get the role <strong>${escapeHtml(s.auth.default_role)}</strong>.`));
+  document.getElementById('admin-server-status').innerHTML = items.join('');
+
+  const row = (k, v) => `<dt>${k}</dt><dd>${v === undefined || v === null || v === '' ? '—' : escapeHtml(String(v))}</dd>`;
+  document.getElementById('admin-server-settings').innerHTML = `
+    <div class="settings-section-title">Server</div>
+    <dl class="settings-grid">${row('Address', s.server.bind_address)}${row('Data folder', s.server.data_dir)}${row('Login lifetime (hours)', s.server.token_expiry_hours)}</dl>
+    <div class="settings-section-title">Files</div>
+    <dl class="settings-grid">${row('Files folder', s.storage.staging_dir)}${row('Upload limit (MB)', s.storage.max_upload_size_mb)}</dl>
+    <div class="settings-section-title">Logins</div>
+    <dl class="settings-grid">${row('Local logins', s.auth.allow_local_login ? 'on' : 'off')}${row('System (PAM) logins', s.auth.allow_pam_login ? 'on' : 'off')}${row('Minimum password length', s.auth.min_password_length)}${row('Default role (single sign-on)', s.auth.default_role)}</dl>
+    <div class="settings-section-title">Single sign-on (OpenID Connect)</div>
+    <dl class="settings-grid">${row('Status', s.oidc.enabled ? 'enabled' : 'disabled')}${row('Provider', s.oidc.provider_name)}${row('Issuer', s.oidc.issuer_url)}${row('Redirect URI', s.oidc.redirect_uri)}${row('Admin group', s.oidc.admin_group)}${row('Operator group', s.oidc.operator_group)}</dl>
+    <div class="settings-section-title">Clipboard &amp; appearance</div>
+    <dl class="settings-grid">${row('Default clipboard mode', s.clipboard.default_mode)}${row('Themes available', st.themes)}</dl>`;
+}
+
+// ================= Themes =================
+const THEME_CACHE_KEY = 'remote_theme_def';
+state.themes = [];
+state.themePref = null; // null = follow the browser
+
+function hexToRgb(hex) {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec((hex || '').trim());
+  if (!m) return null;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  return [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+}
+
+function mixHex(a, b, t) {
+  const x = hexToRgb(a), y = hexToRgb(b);
+  if (!x || !y) return a;
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
+
+function isLightTheme(def) {
+  const c = hexToRgb(def.bg_dark);
+  return c ? (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) > 150 : false;
+}
+
+/** Apply a theme definition to the page and to open terminals. */
+function applyThemeDef(def) {
+  if (!def) return;
+  const r = document.documentElement.style;
+  const light = isLightTheme(def);
+  const rgb = hexToRgb(def.accent) || [245, 158, 11];
+  r.setProperty('--woofson-bg-void', def.bg_dark);
+  r.setProperty('--woofson-bg-panel', def.bg_panel);
+  r.setProperty('--woofson-bg-header', mixHex(def.bg_panel, def.bg_active, 0.45));
+  r.setProperty('--woofson-bg-active', def.bg_active);
+  r.setProperty('--woofson-bg-selected', `rgba(${rgb.join(',')}, ${light ? 0.14 : 0.18})`);
+  r.setProperty('--woofson-accent', def.accent);
+  r.setProperty('--woofson-accent-hover', def.accent_hover);
+  r.setProperty('--woofson-accent-dark', mixHex(def.accent, light ? '#000000' : '#000000', 0.15));
+  r.setProperty('--woofson-border', def.border);
+  r.setProperty('--woofson-border-focus', def.accent);
+  r.setProperty('--woofson-text-main', def.text_main);
+  r.setProperty('--woofson-text-muted', def.text_muted);
+  r.setProperty('--woofson-text-dim', mixHex(def.text_muted, def.bg_dark, 0.35));
+  if (def.radius) r.setProperty('--radius-md', def.radius);
+  document.documentElement.dataset.theme = def.id;
+  document.documentElement.classList.toggle('theme-light', light);
+  try { localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(def)); } catch (e) {}
+
+  const termTheme = terminalThemeFor(def);
+  r.setProperty('--woofson-term-bg', termTheme.background);
+  r.setProperty('--woofson-pane-bg', light ? def.bg_dark : mixHex(def.bg_dark, '#000000', 0.5));
+  Object.values(state.panes || {}).forEach((p) => {
+    if (p && p.terminal) {
+      try { p.terminal.options.theme = termTheme; } catch (e) {}
+    }
+  });
+  document.querySelectorAll('.theme-card').forEach((c) => c.classList.toggle('active', c.dataset.themeId === def.id));
+}
+
+/** Terminal colours: the ANSI palette stays, background/text/cursor follow the theme. */
+function terminalThemeFor(def) {
+  if (!def) return TERMINAL_THEME;
+  const light = isLightTheme(def);
+  const rgb = hexToRgb(def.accent) || [245, 158, 11];
+  return Object.assign({}, TERMINAL_THEME, {
+    background: light ? def.bg_dark : mixHex(def.bg_dark, '#000000', 0.35),
+    foreground: def.text_main,
+    cursor: def.accent,
+    cursorAccent: def.bg_dark,
+    selectionBackground: `rgba(${rgb.join(',')}, 0.35)`,
+    selectionInactiveBackground: `rgba(${rgb.join(',')}, 0.20)`,
+    selectionForeground: light ? '#000000' : '#ffffff',
+    black: light ? '#3f3f46' : TERMINAL_THEME.black,
+    white: light ? '#52525b' : TERMINAL_THEME.white,
+    brightWhite: light ? '#18181b' : TERMINAL_THEME.brightWhite,
+  });
+}
+
+function currentThemeDef() {
+  try { return JSON.parse(localStorage.getItem(THEME_CACHE_KEY) || 'null'); } catch (e) { return null; }
+}
+
+/** Before login: reuse the last theme so nothing flashes. */
+function applyCachedTheme() {
+  const def = currentThemeDef();
+  if (def) applyThemeDef(def);
+}
+
+async function loadThemes() {
+  try {
+    const res = await fetch('/api/themes');
+    if (!res.ok) return;
+    const d = await res.json();
+    state.themes = d.themes || [];
+    state.defaultTheme = d.default;
   } catch (e) {}
 }
 
-function closeAuditModal() {
-  document.getElementById('audit-modal').style.display = 'none';
+function browserThemeId() {
+  const light = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  return light ? 'zink' : (state.defaultTheme || 'amber-charcoal');
+}
+
+/** After login: load the user's saved theme (or follow the browser) and apply it. */
+async function loadUserTheme() {
+  if (!state.themes.length) await loadThemes();
+  let pref = null;
+  try {
+    const res = await apiFetch('/api/me/preferences');
+    if (res.ok) {
+      const prefs = await res.json();
+      pref = prefs.theme || null;
+      if (prefs.panes) applyServerPanePrefs(prefs.panes);
+    }
+  } catch (e) {}
+  state.themePref = pref;
+  const id = pref || browserThemeId();
+  applyThemeDef(state.themes.find((t) => t.id === id) || state.themes.find((t) => t.id === state.defaultTheme));
+}
+
+function renderThemeGrid() {
+  const grid = document.getElementById('theme-grid');
+  const follow = document.getElementById('theme-follow-browser');
+  follow.checked = !state.themePref;
+  const active = (currentThemeDef() || {}).id;
+  grid.innerHTML = state.themes
+    .map((t) => `
+      <button type="button" class="theme-card ${t.id === active ? 'active' : ''}" data-theme-id="${escapeHtml(t.id)}" title="${escapeHtml(t.name)}">
+        <div class="theme-card-preview">
+          <span style="background:${t.bg_dark}"></span><span style="background:${t.bg_panel}"></span>
+          <span style="background:${t.bg_active}"></span><span style="background:${t.accent}"></span>
+        </div>
+        <div class="theme-card-name" style="background:${t.bg_panel};color:${t.text_main};">${escapeHtml(t.name)}</div>
+      </button>`)
+    .join('');
+}
+
+async function chooseTheme(id) {
+  state.themePref = id;
+  applyThemeDef(state.themes.find((t) => t.id === id));
+  const follow = document.getElementById('theme-follow-browser');
+  if (follow) follow.checked = !id;
+  try {
+    await apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: id }) });
+  } catch (e) {}
+}
+
+document.addEventListener('click', (e) => {
+  const card = e.target.closest('.theme-card');
+  if (card) chooseTheme(card.dataset.themeId);
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target && e.target.id === 'theme-follow-browser') {
+    if (e.target.checked) {
+      state.themePref = null;
+      apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: null }) }).catch(() => {});
+      applyThemeDef(state.themes.find((t) => t.id === browserThemeId()));
+      renderThemeGrid();
+    } else {
+      chooseTheme((currentThemeDef() || {}).id || state.defaultTheme);
+    }
+  }
+});
+
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (!state.themePref && state.themes.length) applyThemeDef(state.themes.find((t) => t.id === browserThemeId()));
+  });
 }
 
 // ================= Keyboard Shortcuts =================
@@ -2736,6 +3208,114 @@ function showToast(msg, type = 'info') {
     setTimeout(() => toast.remove(), 200);
   }, 3500);
 }
+
+// ================= Connection icon picker (selfh.st via the server) & upload =================
+let iconSearchTimer = null;
+
+function openIconPicker() {
+  const overlay = document.getElementById('icon-picker');
+  overlay.style.display = 'flex';
+  document.getElementById('icon-picker-box').style.transform = '';
+  const input = document.getElementById('icon-picker-search');
+  if (!input.value) input.value = document.getElementById('conn-name').value.trim().split(/\s+/)[0] || '';
+  searchIcons(input.value);
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeIconPicker() {
+  document.getElementById('icon-picker').style.display = 'none';
+}
+
+async function searchIcons(q) {
+  const grid = document.getElementById('icon-picker-grid');
+  grid.innerHTML = '<div class="dir-empty" style="grid-column:1/-1;">Searching…</div>';
+  try {
+    const res = await apiFetch(`/api/icons/selfhst?q=${encodeURIComponent(q || '')}`);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      grid.innerHTML = `<div class="dir-empty" style="grid-column:1/-1;">${escapeHtml(d.error || 'Icons unavailable')}</div>`;
+      return;
+    }
+    const current = document.getElementById('conn-icon').value;
+    grid.innerHTML = d.icons.length
+      ? d.icons.map((i) => `
+          <button type="button" class="icon-cell ${current === 'selfhst:' + i.slug ? 'active' : ''}" data-icon-slug="${escapeHtml(i.slug)}" title="${escapeHtml(i.name)}">
+            <img src="/api/icons/selfhst/${encodeURIComponent(i.slug)}.png" alt="" loading="lazy">
+            <span>${escapeHtml(i.name)}</span>
+          </button>`).join('')
+      : '<div class="dir-empty" style="grid-column:1/-1;">No icons found.</div>';
+  } catch (e) {
+    grid.innerHTML = '<div class="dir-empty" style="grid-column:1/-1;">Server connection error</div>';
+  }
+}
+
+/** Shrink an image file to a 128 px square PNG in the browser before upload. */
+function imageToPng(file, size = 128) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const scale = Math.min(size / img.width, size / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+      URL.revokeObjectURL(img.src);
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not convert image'))), 'image/png');
+    };
+    img.onerror = () => reject(new Error('Not a supported image'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function uploadConnIcon(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
+    showToast('Use a PNG, JPG or WebP image', 'warning');
+    return;
+  }
+  try {
+    const png = await imageToPng(file);
+    const form = new FormData();
+    form.append('icon', png, 'icon.png');
+    const res = await apiFetch('/api/icons/upload', { method: 'POST', body: form });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast(d.error || 'Upload failed', 'danger');
+      return;
+    }
+    setConnIcon(d.icon);
+    showToast('Icon uploaded; save the connection to keep it', 'success');
+  } catch (err) {
+    showToast(err.message || 'Upload failed', 'danger');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  setupDirectory();
+  makeDraggable(document.getElementById('conn-edit-box'), document.getElementById('conn-edit-header'));
+  makeDraggable(document.getElementById('icon-picker-box'), document.getElementById('icon-picker-header'));
+  document.querySelectorAll('.conn-tab').forEach((b) => b.addEventListener('click', () => switchConnTab(b.dataset.connTab)));
+  const search = document.getElementById('icon-picker-search');
+  search.addEventListener('input', () => {
+    clearTimeout(iconSearchTimer);
+    iconSearchTimer = setTimeout(() => searchIcons(search.value), 250);
+  });
+  const overlay = document.getElementById('icon-picker');
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closeIconPicker();
+  });
+  document.getElementById('icon-picker-grid').addEventListener('click', (e) => {
+    const cell = e.target.closest('[data-icon-slug]');
+    if (!cell) return;
+    setConnIcon(`selfhst:${cell.dataset.iconSlug}`);
+    closeIconPicker();
+  });
+});
 
 // ================= Groups & Connection Assignments =================
 state.usersCache = [];
@@ -3367,174 +3947,198 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// ================= Pane Settings & Border/Color Customization (CommanderDog Spirit) =================
-const PANE_COLOR_PRESETS = [
-  { id: 'default', name: 'Default', hex: 'rgba(255,255,255,0.2)' },
-  { id: 'amber', name: 'Amber', hex: '#f59e0b' },
-  { id: 'emerald', name: 'Emerald', hex: '#10b981' },
-  { id: 'sky', name: 'Sky Blue', hex: '#38bdf8' },
-  { id: 'purple', name: 'Purple', hex: '#c084fc' },
-  { id: 'rose', name: 'Rose Red', hex: '#f43f5e' },
-  { id: 'indigo', name: 'Indigo', hex: '#6366f1' },
-  { id: 'teal', name: 'Teal', hex: '#14b8a6' },
-  { id: 'orange', name: 'Orange', hex: '#f97316' }
-];
-
-const PANE_COLOR_MAP = {
-  default: '#3f3f46',
-  amber: '#f59e0b',
-  emerald: '#10b981',
-  sky: '#38bdf8',
-  purple: '#c084fc',
-  rose: '#f43f5e',
-  indigo: '#6366f1',
-  teal: '#14b8a6',
-  orange: '#f97316'
+// ================= Pane Appearance (Brum-style: name, two-tone border, width, ring, glow) =================
+// Same presets as Brum. "default" follows the theme's border/accent colours.
+const PANE_COLOR_PRESETS = {
+  default: { name: 'Default', c1: null, c2: null },
+  amber: { name: 'Amber Gold', c1: '#f59e0b', c2: '#f97316' },
+  emerald: { name: 'Emerald Cyan', c1: '#10b981', c2: '#06b6d4' },
+  sky: { name: 'Sky Indigo', c1: '#38bdf8', c2: '#818cf8' },
+  purple: { name: 'Purple Rose', c1: '#c084fc', c2: '#f43f5e' },
+  rose: { name: 'Rose Coral', c1: '#f43f5e', c2: '#fb923c' },
+  indigo: { name: 'Indigo Violet', c1: '#6366f1', c2: '#a855f7' },
+  teal: { name: 'Teal Mint', c1: '#14b8a6', c2: '#10b981' },
+  orange: { name: 'Orange Amber', c1: '#f97316', c2: '#eab308' },
+};
+const PANE_ANGLES = ['45deg', '90deg', '135deg', '180deg', '270deg', '0deg'];
+const PANE_KEYS = {
+  colors: 'rd_pane_colors',
+  names: 'rd_pane_names',
+  widths: 'rd_pane_border_widths',
+  width: 'rd_border_width',
+  ring: 'rd_ring_style',
+  glow: 'rd_pane_glow',
+  angle: 'rd_border_angle',
 };
 
-function getPaneColors() {
-  try {
-    return JSON.parse(localStorage.getItem('rd_pane_colors')) || { 1: 'default', 2: 'default', 3: 'default', 4: 'default' };
-  } catch (e) {
-    return { 1: 'default', 2: 'default', 3: 'default', 4: 'default' };
+function readJson(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key)) || fallback; } catch (e) { return fallback; }
+}
+function getPaneColors() { return readJson(PANE_KEYS.colors, {}); }
+function getPaneNames() { return readJson(PANE_KEYS.names, {}); }
+function getPaneBorderWidths() { return readJson(PANE_KEYS.widths, {}); }
+
+/** A pane's colour choice as {c1, c2}: preset id, "custom:#a,#b", or an older single "#hex". */
+function paneColorPair(value) {
+  if (!value || value === 'default') return { id: 'default', c1: null, c2: null };
+  if (PANE_COLOR_PRESETS[value]) return { id: value, ...PANE_COLOR_PRESETS[value] };
+  if (value.startsWith('custom:')) {
+    const [c1, c2] = value.slice(7).split(',');
+    return { id: 'custom', c1, c2: c2 || c1 };
   }
+  if (/^#[0-9a-f]{3,6}$/i.test(value)) return { id: 'custom', c1: value, c2: value };
+  return { id: 'default', c1: null, c2: null };
 }
 
-function getPaneNames() {
-  try {
-    return JSON.parse(localStorage.getItem('rd_pane_names')) || {};
-  } catch (e) {
-    return {};
-  }
+function rgbaOf(hex, alpha) {
+  const rgb = hexToRgb(hex);
+  return rgb ? `rgba(${rgb.join(',')}, ${alpha})` : hex;
 }
 
-function getPaneBorderWidths() {
-  try {
-    return JSON.parse(localStorage.getItem('rd_pane_border_widths')) || {};
-  } catch (e) {
-    return {};
-  }
+/** Save pane appearance locally and (debounced) on the server, so it follows the user. */
+let panePrefsTimer = null;
+function savePanePrefs() {
+  clearTimeout(panePrefsTimer);
+  panePrefsTimer = setTimeout(() => {
+    if (!state.jwtToken) return;
+    const panes = {
+      colors: getPaneColors(),
+      names: getPaneNames(),
+      widths: getPaneBorderWidths(),
+      width: localStorage.getItem(PANE_KEYS.width) || '1px',
+      ring: localStorage.getItem(PANE_KEYS.ring) || 'subtle',
+      glow: localStorage.getItem(PANE_KEYS.glow) || 'subtle',
+      angle: localStorage.getItem(PANE_KEYS.angle) || '45deg',
+    };
+    apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ panes }) }).catch(() => {});
+  }, 400);
 }
 
-function setPaneColorPref(paneIndex, color) {
+/** Apply pane appearance saved on the server (called after login). */
+function applyServerPanePrefs(p) {
+  if (!p || typeof p !== 'object') return;
+  if (p.colors) localStorage.setItem(PANE_KEYS.colors, JSON.stringify(p.colors));
+  if (p.names) localStorage.setItem(PANE_KEYS.names, JSON.stringify(p.names));
+  if (p.widths) localStorage.setItem(PANE_KEYS.widths, JSON.stringify(p.widths));
+  for (const k of ['width', 'ring', 'glow', 'angle']) {
+    if (typeof p[k] === 'string') localStorage.setItem(PANE_KEYS[k], p[k]);
+  }
+  initPaneStyles();
+}
+
+function setPaneColorPref(paneIndex, value) {
   const colors = getPaneColors();
-  colors[paneIndex] = color;
-  localStorage.setItem('rd_pane_colors', JSON.stringify(colors));
+  if (!value || value === 'default') delete colors[paneIndex];
+  else colors[paneIndex] = value;
+  localStorage.setItem(PANE_KEYS.colors, JSON.stringify(colors));
   applyPaneStyle(paneIndex);
+  savePanePrefs();
 }
 
 function applyPaneRenameFromInput(paneIndex) {
   const input = document.getElementById(`pane-setting-name-input-${paneIndex}`);
   if (!input) return;
-  const name = input.value.trim();
+  const name = input.value.trim().slice(0, 40);
   const names = getPaneNames();
-  if (name) {
-    names[paneIndex] = name;
-  } else {
-    delete names[paneIndex];
-  }
-  localStorage.setItem('rd_pane_names', JSON.stringify(names));
+  if (name && name !== String(paneIndex)) names[paneIndex] = name;
+  else delete names[paneIndex];
+  localStorage.setItem(PANE_KEYS.names, JSON.stringify(names));
   applyPaneStyle(paneIndex);
-  showToast(`Pane ${paneIndex} renamed!`);
+  savePanePrefs();
+  showToast(`Pane ${paneIndex} renamed`, 'success');
 }
 
 function resetPaneName(paneIndex) {
   const names = getPaneNames();
   delete names[paneIndex];
-  localStorage.setItem('rd_pane_names', JSON.stringify(names));
+  localStorage.setItem(PANE_KEYS.names, JSON.stringify(names));
   applyPaneStyle(paneIndex);
+  savePanePrefs();
 }
 
 function cyclePaneColor(paneIndex) {
-  const colors = getPaneColors();
-  const cur = colors[paneIndex] || 'default';
-  const keys = PANE_COLOR_PRESETS.map(p => p.id);
-  let idx = keys.indexOf(cur);
-  if (idx === -1) idx = 0;
-  const next = keys[(idx + 1) % keys.length];
+  const keys = Object.keys(PANE_COLOR_PRESETS);
+  const cur = paneColorPair(getPaneColors()[paneIndex]).id;
+  const next = keys[(Math.max(0, keys.indexOf(cur)) + 1) % keys.length];
   setPaneColorPref(paneIndex, next);
 }
 
-function applyBorderSettings(borderWidth, ringStyle, paneIndex) {
-  if (paneIndex) {
-    if (borderWidth) {
+/** Border width (per pane when paneIndex is given), ring style, glow and fade direction. */
+function applyBorderSettings(borderWidth, ringStyle, paneIndex, glow, angle) {
+  if (borderWidth) {
+    if (paneIndex) {
       const bws = getPaneBorderWidths();
       bws[paneIndex] = borderWidth;
-      localStorage.setItem('rd_pane_border_widths', JSON.stringify(bws));
+      localStorage.setItem(PANE_KEYS.widths, JSON.stringify(bws));
+    } else {
+      localStorage.setItem(PANE_KEYS.width, borderWidth);
     }
-  } else if (borderWidth) {
-    localStorage.setItem('rd_border_width', borderWidth);
   }
-
-  if (ringStyle) {
-    localStorage.setItem('rd_ring_style', ringStyle);
-  }
-
+  if (ringStyle) localStorage.setItem(PANE_KEYS.ring, ringStyle);
+  if (glow) localStorage.setItem(PANE_KEYS.glow, glow);
+  if (angle) localStorage.setItem(PANE_KEYS.angle, angle);
   initPaneStyles();
+  savePanePrefs();
 }
 
 function applyPaneStyle(paneIndex) {
   const paneEl = document.getElementById(`pane-${paneIndex}`);
   if (!paneEl) return;
+  const pair = paneColorPair(getPaneColors()[paneIndex]);
+  const bw = getPaneBorderWidths()[paneIndex] || localStorage.getItem(PANE_KEYS.width) || '1px';
+  const name = getPaneNames()[paneIndex] || String(paneIndex);
 
-  const colors = getPaneColors();
-  const names = getPaneNames();
-  const bws = getPaneBorderWidths();
-  const globalBw = localStorage.getItem('rd_border_width') || '1px';
-
-  const colorKey = colors[paneIndex] || 'default';
-  const hex = PANE_COLOR_MAP[colorKey] || colorKey;
-  const bw = bws[paneIndex] || globalBw;
-  const customName = names[paneIndex] || `[ ${paneIndex} ]`;
-
-  if (colorKey !== 'default') {
-    paneEl.style.setProperty('--pane-custom-border', hex);
-    paneEl.style.setProperty('--pane-custom-color', hex);
+  const props = ['--pane-c1', '--pane-c2', '--pane-active-c1', '--pane-active-c2', '--pane-glow', '--pane-custom-border', '--pane-custom-color'];
+  if (pair.c1) {
+    paneEl.style.setProperty('--pane-c1', rgbaOf(pair.c1, 0.45));
+    paneEl.style.setProperty('--pane-c2', rgbaOf(pair.c2, 0.45));
+    paneEl.style.setProperty('--pane-active-c1', pair.c1);
+    paneEl.style.setProperty('--pane-active-c2', pair.c2);
+    paneEl.style.setProperty('--pane-glow', rgbaOf(pair.c1, 0.35));
+    paneEl.style.setProperty('--pane-custom-border', rgbaOf(pair.c1, 0.55));
+    paneEl.style.setProperty('--pane-custom-color', pair.c1);
   } else {
-    paneEl.style.removeProperty('--pane-custom-border');
-    paneEl.style.removeProperty('--pane-custom-color');
+    props.forEach((p) => paneEl.style.removeProperty(p));
   }
 
   paneEl.style.borderWidth = bw;
-  if (bw === '0px') {
-    paneEl.classList.add('borderless-pane');
-    paneEl.style.borderRadius = '0px';
-  } else {
-    paneEl.classList.remove('borderless-pane');
-    paneEl.style.borderRadius = '';
-  }
+  paneEl.classList.toggle('borderless-pane', bw === '0px');
+  paneEl.style.borderRadius = bw === '0px' ? '0px' : '';
 
   const dot = document.getElementById(`pane-dot-${paneIndex}`);
-  if (dot) {
-    dot.style.background = (colorKey !== 'default') ? hex : 'var(--woofson-accent)';
-  }
-
+  if (dot) dot.style.background = pair.c1 ? `linear-gradient(135deg, ${pair.c1}, ${pair.c2})` : 'var(--woofson-accent)';
   const label = document.getElementById(`pane-label-${paneIndex}`);
-  if (label) {
-    label.textContent = customName.startsWith('[') ? customName : `[ ${customName} ]`;
-  }
+  if (label) label.textContent = `[ ${name} ]`;
 }
 
 function initPaneStyles() {
-  const globalBw = localStorage.getItem('rd_border_width') || '1px';
-  const ringStyle = localStorage.getItem('rd_ring_style') || 'subtle';
   const root = document.documentElement;
+  root.style.setProperty('--pane-border-width', localStorage.getItem(PANE_KEYS.width) || '1px');
+  root.style.setProperty('--pane-border-angle', localStorage.getItem(PANE_KEYS.angle) || '45deg');
+  const ring = localStorage.getItem(PANE_KEYS.ring) || 'subtle';
+  root.style.setProperty('--pane-active-ring-width', { none: '0px', bold: '2.5px', glow: '1.5px' }[ring] || '1px');
+  root.dataset.paneGlow = localStorage.getItem(PANE_KEYS.glow) || 'subtle';
+  for (let i = 1; i <= 4; i++) applyPaneStyle(i);
+}
 
-  root.style.setProperty('--pane-border-width', globalBw);
-
-  if (ringStyle === 'none') {
-    root.style.setProperty('--pane-active-ring-width', '0px');
-  } else if (ringStyle === 'bold') {
-    root.style.setProperty('--pane-active-ring-width', '2.5px');
-  } else if (ringStyle === 'glow') {
-    root.style.setProperty('--pane-active-ring-width', '1.5px');
-  } else {
-    root.style.setProperty('--pane-active-ring-width', '1px');
+function applyPaneCustomTwoTone(paneIndex) {
+  const c1 = document.getElementById(`pane-custom-t1-${paneIndex}`).value.trim();
+  const c2 = document.getElementById(`pane-custom-t2-${paneIndex}`).value.trim();
+  const ok = (c) => /^#[0-9a-f]{6}$/i.test(c);
+  if (!ok(c1) || !ok(c2)) {
+    showToast('Use colours like #f59e0b', 'warning');
+    return;
   }
+  setPaneColorPref(paneIndex, `custom:${c1},${c2}`);
+  openPaneSettingsMenu(null, paneIndex);
+}
 
-  for (let i = 1; i <= 4; i++) {
-    applyPaneStyle(i);
-  }
+function updatePaneGradientPreview(paneIndex) {
+  const c1 = document.getElementById(`pane-custom-t1-${paneIndex}`).value;
+  const c2 = document.getElementById(`pane-custom-t2-${paneIndex}`).value;
+  const angle = localStorage.getItem(PANE_KEYS.angle) || '45deg';
+  const prev = document.getElementById(`pane-gradient-preview-${paneIndex}`);
+  if (prev) prev.style.background = `linear-gradient(${angle}, ${c1}, ${c2})`;
 }
 
 function openPaneSettingsMenu(e, paneIndex) {
@@ -3544,98 +4148,138 @@ function openPaneSettingsMenu(e, paneIndex) {
   }
   document.getElementById('pane-settings-popup')?.remove();
 
-  const colors = getPaneColors();
-  const names = getPaneNames();
-  const bws = getPaneBorderWidths();
-  const currentColor = colors[paneIndex] || 'default';
-  const currentName = names[paneIndex] || `${paneIndex}`;
-  const curBorderWidth = bws[paneIndex] || localStorage.getItem('rd_border_width') || '1px';
-  const curRingStyle = localStorage.getItem('rd_ring_style') || 'subtle';
-
-  const isCustomHex = currentColor.startsWith('#') || currentColor.startsWith('rgb');
-  const currentHexVal = isCustomHex ? currentColor : '#f59e0b';
+  const pair = paneColorPair(getPaneColors()[paneIndex]);
+  const name = getPaneNames()[paneIndex] || String(paneIndex);
+  const width = getPaneBorderWidths()[paneIndex] || localStorage.getItem(PANE_KEYS.width) || '1px';
+  const ring = localStorage.getItem(PANE_KEYS.ring) || 'subtle';
+  const glow = localStorage.getItem(PANE_KEYS.glow) || 'subtle';
+  const angle = localStorage.getItem(PANE_KEYS.angle) || '45deg';
+  const c1 = pair.c1 || '#f59e0b';
+  const c2 = pair.c2 || '#f97316';
+  const chip = (active, attrs, content, left) =>
+    `<button type="button" class="pane-chip ${left ? 'left' : ''} ${active ? 'active' : ''}" ${attrs}>${content}</button>`;
 
   const popup = document.createElement('div');
   popup.id = 'pane-settings-popup';
   popup.className = 'pane-settings-dropdown';
-
   popup.innerHTML = `
-    <div style="padding: 8px 12px; font-weight: 700; font-size: 11px; color: var(--woofson-accent); background: var(--woofson-bg-void); border-bottom: 1px solid var(--woofson-border); display: flex; justify-content: space-between; align-items: center;">
-      <span style="display: flex; align-items: center; gap: 6px;">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-        Pane ${paneIndex} Settings
-      </span>
-      <span style="font-size: 11px; color: var(--woofson-text-dim); cursor: pointer;" onclick="document.getElementById('pane-settings-popup')?.remove();">✕</span>
+    <div class="pane-settings-head">
+      <span>Pane ${paneIndex} appearance</span>
+      <button type="button" class="ui-dialog-close" data-ps="close" title="Close" style="width:26px;height:26px;">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
     </div>
-    
-    <div style="padding: 10px 12px; max-height: 440px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px;">
-      <!-- 1. Renaming -->
-      <div>
-        <div style="font-size: 10px; color: var(--woofson-text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Pane Name / Label</div>
-        <div style="display: flex; gap: 6px;">
-          <input type="text" id="pane-setting-name-input-${paneIndex}" value="${escapeHtml(currentName)}" placeholder="${paneIndex}" style="flex: 1; height: 26px; padding: 0 8px; font-size: 11px; background: var(--woofson-bg-void); border: 1px solid var(--woofson-border); border-radius: 4px; color: var(--woofson-text-main);" onkeydown="if(event.key==='Enter'){ applyPaneRenameFromInput(${paneIndex}); }">
-          <button type="button" class="btn btn-sm btn-accent" style="height: 26px; padding: 0 8px; font-size: 10px;" onclick="applyPaneRenameFromInput(${paneIndex})">Save</button>
-          <button type="button" class="btn btn-sm btn-secondary" style="height: 26px; padding: 0 6px; font-size: 10px;" title="Reset to default ${paneIndex}" onclick="resetPaneName(${paneIndex}); openPaneSettingsMenu(null, ${paneIndex});">Reset</button>
+    <div class="pane-settings-body">
+      <div class="pane-settings-section">
+        <div class="pane-settings-label"><span>Pane name / label</span></div>
+        <div class="pane-settings-row">
+          <input type="text" class="pane-settings-input" id="pane-setting-name-input-${paneIndex}" value="${escapeHtml(name)}" placeholder="${paneIndex}" maxlength="40">
+          <button type="button" class="btn btn-sm btn-accent" data-ps="rename">Save</button>
+          <button type="button" class="btn btn-sm btn-secondary" data-ps="reset-name" title="Back to ${paneIndex}">Reset</button>
         </div>
       </div>
 
-      <!-- 2. Border & Header Color Palette -->
-      <div style="border-top: 1px solid var(--woofson-border); padding-top: 10px;">
-        <div style="font-size: 10px; color: var(--woofson-text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px; display: flex; justify-content: space-between;">
-          <span>Border & Accent Color</span>
-          <span style="color: var(--woofson-accent); cursor: pointer; text-transform: none; font-weight: 600;" onclick="cyclePaneColor(${paneIndex}); openPaneSettingsMenu(null, ${paneIndex});">Cycle ↻</span>
+      <div class="pane-settings-section">
+        <div class="pane-settings-label"><span>Two-tone colour presets</span><span class="link" data-ps="cycle">Cycle ↻</span></div>
+        <div class="pane-settings-grid" style="grid-template-columns: repeat(3, 1fr);">
+          ${Object.entries(PANE_COLOR_PRESETS).map(([id, p]) => chip(pair.id === id, `data-ps="preset" data-value="${id}" title="${p.name}"`,
+            `<span class="pane-chip-dot" style="background:${p.c1 ? `linear-gradient(135deg, ${p.c1}, ${p.c2})` : 'var(--woofson-accent)'}"></span><span style="overflow:hidden;text-overflow:ellipsis;">${p.name}</span>`, true)).join('')}
         </div>
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 8px;">
-          ${PANE_COLOR_PRESETS.map(p => {
-            const isSelected = currentColor === p.id;
-            return `
-              <button type="button" class="btn btn-sm ${isSelected ? 'active' : ''}" 
-                      style="display: flex; align-items: center; gap: 5px; padding: 4px 6px; font-size: 10px; width: 100%; text-align: left; overflow: hidden;"
-                      onclick="setPaneColorPref(${paneIndex}, '${p.id}'); openPaneSettingsMenu(null, ${paneIndex});">
-                <span style="display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: ${p.hex}; border: 1px solid rgba(255,255,255,0.25); flex-shrink: 0;"></span>
-                <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; ${isSelected ? 'font-weight: 700; color: var(--woofson-accent);' : ''}">${p.name}</span>
-              </button>
-            `;
-          }).join('')}
-        </div>
-
-        <div style="display: flex; align-items: center; gap: 6px;">
-          <input type="color" id="pane-hex-picker-${paneIndex}" value="${currentHexVal}" style="width: 28px; height: 26px; border: 1px solid var(--woofson-border); border-radius: 4px; padding: 0; background: transparent; cursor: pointer;" oninput="document.getElementById('pane-hex-text-${paneIndex}').value = this.value; setPaneColorPref(${paneIndex}, this.value);">
-          <input type="text" id="pane-hex-text-${paneIndex}" value="${isCustomHex ? currentColor : ''}" placeholder="#RRGGBB" style="flex: 1; height: 26px; padding: 0 6px; font-family: var(--font-mono); font-size: 11px; background: var(--woofson-bg-void); border: 1px solid var(--woofson-border); border-radius: 4px; color: var(--woofson-text-main);" onchange="if(this.value){ document.getElementById('pane-hex-picker-${paneIndex}').value = this.value; setPaneColorPref(${paneIndex}, this.value); }">
-          <button type="button" class="btn btn-sm btn-accent" style="height: 26px; padding: 0 8px; font-size: 10px;" onclick="const val = document.getElementById('pane-hex-text-${paneIndex}').value; if(val){ setPaneColorPref(${paneIndex}, val); openPaneSettingsMenu(null, ${paneIndex}); }">Apply</button>
+        <div class="pane-custom-box">
+          <div class="pane-settings-label"><span>Custom border style</span><span style="text-transform:none;font-weight:500;">Colour 1 → Colour 2</span></div>
+          <div class="pane-settings-row" style="margin-bottom:6px;">
+            <div class="pane-color-field">
+              <input type="color" id="pane-custom-c1-${paneIndex}" value="${c1}" data-ps-color="1">
+              <input type="text" id="pane-custom-t1-${paneIndex}" value="${c1}" maxlength="7" data-ps-text="1">
+            </div>
+            <div class="pane-color-field">
+              <input type="color" id="pane-custom-c2-${paneIndex}" value="${c2}" data-ps-color="2">
+              <input type="text" id="pane-custom-t2-${paneIndex}" value="${c2}" maxlength="7" data-ps-text="2">
+            </div>
+          </div>
+          <div class="pane-settings-row">
+            <div class="pane-gradient-preview" id="pane-gradient-preview-${paneIndex}" style="background: linear-gradient(${angle}, ${c1}, ${c2});"></div>
+            <button type="button" class="btn btn-sm btn-accent" data-ps="custom">Apply</button>
+          </div>
         </div>
       </div>
 
-      <!-- 3. Border Width & Ring Settings -->
-      <div style="border-top: 1px solid var(--woofson-border); padding-top: 10px;">
-        <div style="font-size: 10px; color: var(--woofson-text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Border Width (Pane ${paneIndex})</div>
-        <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 8px;">
-          ${['0px', '1px', '2px', '3px', '4px'].map(bw => `
-            <button type="button" class="btn btn-sm ${curBorderWidth === bw ? 'active' : ''}" style="padding: 2px 2px; font-size: 9.5px; justify-content: center;" onclick="applyBorderSettings('${bw}', null, ${paneIndex}); openPaneSettingsMenu(null, ${paneIndex});">${bw === '0px' ? '0px (None)' : bw}</button>
-          `).join('')}
-        </div>
-
-        <div style="font-size: 10px; color: var(--woofson-text-muted); font-weight: 700; text-transform: uppercase; margin-bottom: 6px;">Active Focus Ring</div>
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;">
-          ${[['subtle', 'Subtle'], ['bold', 'Bold'], ['glow', 'Glow'], ['none', 'None']].map(([rKey, rName]) => `
-            <button type="button" class="btn btn-sm ${curRingStyle === rKey ? 'active' : ''}" style="padding: 2px 4px; font-size: 9.5px; justify-content: center;" onclick="applyBorderSettings(null, '${rKey}'); openPaneSettingsMenu(null, ${paneIndex});">${rName}</button>
-          `).join('')}
+      <div class="pane-settings-section">
+        <div class="pane-settings-label"><span>Colour fade direction</span><span style="text-transform:none;font-weight:500;">all panes</span></div>
+        <div class="pane-settings-grid" style="grid-template-columns: repeat(6, 1fr);">
+          ${PANE_ANGLES.map((a) => chip(angle === a, `data-ps="angle" data-value="${a}"`, a.replace('deg', '°'))).join('')}
         </div>
       </div>
-    </div>
-  `;
+
+      <div class="pane-settings-section">
+        <div class="pane-settings-label"><span>Border width (pane ${paneIndex})</span></div>
+        <div class="pane-settings-grid" style="grid-template-columns: repeat(5, 1fr);">
+          ${['0px', '1px', '2px', '3px', '4px'].map((w) => chip(width === w, `data-ps="width" data-value="${w}"`, w === '0px' ? 'None' : w)).join('')}
+        </div>
+      </div>
+
+      <div class="pane-settings-section">
+        <div class="pane-settings-label"><span>Active pane ring</span><span style="text-transform:none;font-weight:500;">all panes</span></div>
+        <div class="pane-settings-grid" style="grid-template-columns: repeat(4, 1fr);">
+          ${[['subtle', 'Subtle'], ['bold', 'Bold'], ['glow', 'Thin'], ['none', 'None']].map(([k, n]) => chip(ring === k, `data-ps="ring" data-value="${k}"`, n)).join('')}
+        </div>
+        <div class="pane-settings-label" style="margin-top:8px;"><span>Active pane glow</span></div>
+        <div class="pane-settings-grid" style="grid-template-columns: repeat(3, 1fr);">
+          ${[['off', 'Off'], ['subtle', 'Subtle'], ['strong', 'Strong']].map(([k, n]) => chip(glow === k, `data-ps="glow" data-value="${k}"`, n)).join('')}
+        </div>
+      </div>
+    </div>`;
 
   document.body.appendChild(popup);
 
+  popup.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const el = ev.target.closest('[data-ps]');
+    if (!el) return;
+    const v = el.dataset.value;
+    switch (el.dataset.ps) {
+      case 'close': popup.remove(); return;
+      case 'rename': applyPaneRenameFromInput(paneIndex); return;
+      case 'reset-name': resetPaneName(paneIndex); break;
+      case 'cycle': cyclePaneColor(paneIndex); break;
+      case 'preset': setPaneColorPref(paneIndex, v); break;
+      case 'custom': applyPaneCustomTwoTone(paneIndex); return;
+      case 'angle': applyBorderSettings(null, null, null, null, v); break;
+      case 'width': applyBorderSettings(v, null, paneIndex); break;
+      case 'ring': applyBorderSettings(null, v); break;
+      case 'glow': applyBorderSettings(null, null, null, v); break;
+      default: return;
+    }
+    openPaneSettingsMenu(null, paneIndex);
+  });
+  popup.addEventListener('input', (ev) => {
+    const t = ev.target;
+    if (t.dataset.psColor) {
+      document.getElementById(`pane-custom-t${t.dataset.psColor}-${paneIndex}`).value = t.value;
+      updatePaneGradientPreview(paneIndex);
+    } else if (t.dataset.psText && /^#[0-9a-f]{6}$/i.test(t.value)) {
+      document.getElementById(`pane-custom-c${t.dataset.psText}-${paneIndex}`).value = t.value;
+      updatePaneGradientPreview(paneIndex);
+    }
+  });
+  popup.addEventListener('keydown', (ev) => {
+    ev.stopPropagation();
+    if (ev.key === 'Escape') popup.remove();
+    if (ev.key === 'Enter' && ev.target.id === `pane-setting-name-input-${paneIndex}`) applyPaneRenameFromInput(paneIndex);
+  });
+
   const btn = document.getElementById(`pane-badge-btn-${paneIndex}`);
+  popup.style.position = 'fixed';
   if (btn) {
     const rect = btn.getBoundingClientRect();
-    popup.style.position = 'fixed';
-    popup.style.top = `${rect.bottom + 4}px`;
-    popup.style.left = `${Math.min(window.innerWidth - 280, Math.max(10, rect.left))}px`;
+    popup.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 80)}px`;
+    popup.style.left = `${Math.min(window.innerWidth - 310, Math.max(10, rect.left))}px`;
   }
-
   const closeHandler = (evt) => {
+    if (!popup.isConnected) {
+      document.removeEventListener('click', closeHandler);
+      return;
+    }
     if (!popup.contains(evt.target) && (!btn || !btn.contains(evt.target))) {
       popup.remove();
       document.removeEventListener('click', closeHandler);

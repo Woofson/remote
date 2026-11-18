@@ -92,22 +92,18 @@
           </button>
           <div class="profile-dropdown-menu" id="profile-dropdown-menu" style="display: none;">
             <div class="profile-dropdown-header">
-              <div class="profile-avatar-large profile-avatar-clickable" id="menu-avatar-large" onclick="openUserProfileModal()" title="Edit profile">A</div>
+              <div class="profile-avatar-large profile-avatar-clickable" id="menu-avatar-large" onclick="openPersonalSettings('account')" title="Edit profile">A</div>
               <div style="overflow: hidden; flex: 1;">
                 <div style="font-weight: 700; font-size: 13px;" id="menu-user-name">admin</div>
                 <div style="font-size: 11px; color: var(--woofson-text-dim, #71717a);" id="menu-user-email">admin@remote.local</div>
                 <span class="user-role-badge" id="nav-user-role" style="margin-top: 4px; display: inline-block;">ADMIN</span>
               </div>
             </div>
-            <div class="dropdown-item" id="admin-nav-item" onclick="openUsersModal()">
+            <div class="dropdown-item" id="admin-nav-item" onclick="openAdminPanel()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-              <span>Admin & RBAC Panel</span>
+              <span>Admin Control Panel</span>
             </div>
-            <div class="dropdown-item" onclick="openAuditModal()">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-              <span>Audit & Security Logs</span>
-            </div>
-            <div class="dropdown-item" onclick="openSettingsModal()">
+            <div class="dropdown-item" onclick="openPersonalSettings()">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
               <span>Settings</span>
             </div>
@@ -396,6 +392,23 @@
       </div>
     </div>
 
+    <!-- Icon picker (selfh.st, served through the Remote server) -->
+    <div id="icon-picker" class="modal-overlay ui-dialog-overlay" style="display:none;">
+      <div class="modal-box ui-dialog-box icon-picker-box" id="icon-picker-box" role="dialog" aria-modal="true" aria-labelledby="icon-picker-title">
+        <div class="ui-dialog-header" id="icon-picker-header">
+          <span id="icon-picker-title" class="modal-title">Choose an icon</span>
+          <button type="button" class="ui-dialog-close" title="Close" onclick="closeIconPicker()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="ui-dialog-body">
+          <input type="search" id="icon-picker-search" class="form-input" placeholder="Search, e.g. proxmox, truenas, windows" autocomplete="off" />
+          <div id="icon-picker-grid" class="icon-grid"></div>
+          <div class="pw-hint">Icons by <strong>selfh.st/icons</strong> (CC BY 4.0), downloaded and stored by the Remote server.</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Admin: Group members -->
     <div id="group-members" class="modal-overlay ui-dialog-overlay" style="display:none;">
       <div class="modal-box ui-dialog-box" id="group-members-box" role="dialog" aria-modal="true" aria-labelledby="group-members-title">
@@ -595,8 +608,8 @@
 
     <!-- Connections Manager Modal (CommanderDog Style) -->
     <div id="connections-modal" class="modal-overlay" style="display:none;">
-      <div class="modal-box" style="width: 900px; max-height: 85vh;">
-        <div class="modal-header">
+      <div class="modal-box dir-box" id="connections-box">
+        <div class="modal-header" id="connections-header">
           <div style="display: flex; align-items: center; gap: 8px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
             <span style="font-weight: 700; font-size: 14px;">Connections Directory</span>
@@ -606,40 +619,36 @@
             <button class="btn btn-icon" onclick="closeConnectionsModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
           </div>
         </div>
-        <div class="modal-body" style="padding: 16px; overflow-y: auto;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div style="display: flex; gap: 6px;">
-              <button class="btn btn-sm active" id="filter-conn-all" onclick="filterConnectionList('all')">All</button>
-              <button class="btn btn-sm btn-secondary" id="filter-conn-global" onclick="filterConnectionList('global')">🌐 Global Shared</button>
-              <button class="btn btn-sm btn-secondary" id="filter-conn-personal" onclick="filterConnectionList('personal')">🔒 Personal Private</button>
-            </div>
-            <input type="text" id="connections-search-input" class="form-input" placeholder="Search connections or tags..." style="width: 240px; padding: 5px 10px; font-size: 12px;" oninput="onSearchConnections(this.value)" />
+        <div class="modal-body dir-body">
+          <div class="dir-toolbar">
+            <input type="search" id="connections-search-input" class="form-input" placeholder="Search name, host or tag" oninput="onSearchConnections(this.value)" autocomplete="off" />
+            <select id="dir-filter-protocol" class="form-input" aria-label="Protocol">
+              <option value="">All protocols</option>
+              <option value="rdp">RDP</option><option value="vnc">VNC</option><option value="ssh">SSH</option>
+              <option value="telnet">Telnet</option><option value="local_pty">Local shell</option>
+            </select>
+            <select id="dir-filter-tag" class="form-input" aria-label="Tag"><option value="">All tags</option></select>
+            <select id="dir-filter-scope" class="form-input" aria-label="Scope">
+              <option value="all">Everything</option>
+              <option value="global">Shared with everyone</option>
+              <option value="personal">Private</option>
+            </select>
+            <select id="dir-sort" class="form-input" aria-label="Sort">
+              <option value="name">Sort: name</option>
+              <option value="protocol">Sort: protocol</option>
+              <option value="host">Sort: host</option>
+              <option value="updated">Sort: recently changed</option>
+            </select>
           </div>
-          <div class="table-responsive">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Scope</th>
-                  <th>Name</th>
-                  <th>Protocol</th>
-                  <th>Host : Port</th>
-                  <th>Security Policies</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="connections-table-body">
-                <tr><td colspan="6" class="text-center text-muted">Loading connections...</td></tr>
-              </tbody>
-            </table>
-          </div>
+          <div id="connections-list" class="dir-list"></div>
         </div>
       </div>
     </div>
 
     <!-- Add/Edit Connection Modal (CommanderDog Style) -->
     <div id="connection-edit-modal" class="modal-overlay" style="display:none;">
-      <div class="modal-box" style="width: 520px; max-height: 90vh;">
-        <div class="modal-header">
+      <div class="modal-box conn-edit-box" id="conn-edit-box">
+        <div class="modal-header" id="conn-edit-header">
           <div style="display: flex; align-items: center; gap: 8px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
             <span style="font-weight: 700; font-size: 14px;" id="connection-edit-title">New Remote Target</span>
@@ -650,6 +659,13 @@
           <input type="hidden" id="conn-id" />
           <div class="modal-body" style="padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto;">
             
+            <div class="conn-tabs" role="tablist">
+              <button type="button" class="conn-tab active" data-conn-tab="general">General</button>
+              <button type="button" class="conn-tab" data-conn-tab="login">Login</button>
+              <button type="button" class="conn-tab" data-conn-tab="display">Display</button>
+              <button type="button" class="conn-tab" data-conn-tab="access">Access</button>
+            </div>
+            <div class="conn-section active" data-conn-section="general">
             <!-- Connection Name & Scope -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
               <div class="form-group">
@@ -663,20 +679,6 @@
                   <option value="false">🔒 Private (Owner and assigned only)</option>
                 </select>
               </div>
-            </div>
-
-            <!-- Owner & assignments (admins) -->
-            <div id="conn-assign-section" class="assign-section" style="display:none;">
-              <div class="form-group">
-                <label style="font-size: 11px; font-weight: 600;">Owner</label>
-                <select id="conn-owner" class="form-input"></select>
-              </div>
-              <div class="assign-header">
-                <span style="font-size: 11px; font-weight: 600;">Assigned to</span>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="addAssignmentRow()">+ Add user or group</button>
-              </div>
-              <div id="conn-assign-list" class="assign-list"></div>
-              <div class="pw-hint">Assigned users and groups see this connection in their directory. The owner and admins can always edit it; edit by assignment covers details, not access rules.</div>
             </div>
 
             <!-- Protocol, Host, Port -->
@@ -701,6 +703,33 @@
               </div>
             </div>
 
+            <!-- Icon & tags -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Icon</label>
+                <div class="icon-field">
+                  <span id="conn-icon-preview" class="conn-icon conn-icon-lg"></span>
+                  <input type="hidden" id="conn-icon" />
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="openIconPicker()">Choose…</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('conn-icon-file').click()">Upload</button>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="setConnIcon('')" title="Use the protocol icon">Default</button>
+                  <input type="file" id="conn-icon-file" accept="image/png,image/jpeg,image/webp" style="display:none;" onchange="uploadConnIcon(event)" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Tags (comma-separated)</label>
+                <input type="text" id="conn-tags" class="form-input" placeholder="prod, linux, finance" />
+              </div>
+            </div>
+
+            <!-- Test connection -->
+            <div class="test-row" id="group-test">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="testConnectionTarget()">Test connection</button>
+              <span id="conn-test-result" class="text-sm text-muted"></span>
+            </div>
+            </div>
+            <div class="conn-section" data-conn-section="login">
+            <p class="pw-hint" id="conn-login-note" style="display:none;">The local shell runs on the Remote server and needs no login.</p>
             <!-- Credentials -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;" id="group-auth-user">
               <div class="form-group">
@@ -723,6 +752,9 @@
               <textarea id="conn-ssh-certificate" class="form-input" rows="2" placeholder="ssh-ed25519-cert-v01@openssh.com AAAA... user@host" style="font-family: var(--font-mono); font-size: 11px;"></textarea>
             </div>
 
+            </div>
+            <div class="conn-section" data-conn-section="display">
+            <p class="pw-hint conn-display-note" id="conn-display-note">Display options are only needed for RDP connections.</p>
             <!-- RDP / Windows & TLS Settings -->
             <div id="group-rdp-settings" style="display: none; background: var(--woofson-bg-header, #202024); padding: 12px; border-radius: var(--radius-md, 6px); border: 1px solid var(--woofson-border, #3f3f46); display: flex; flex-direction: column; gap: 10px;">
               <div style="font-size: 11px; font-weight: 700; color: var(--woofson-accent, #f59e0b); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
@@ -812,6 +844,22 @@
               </div>
             </div>
 
+            </div>
+            <div class="conn-section" data-conn-section="access">
+            <!-- Owner & assignments (admins) -->
+            <div id="conn-assign-section" class="assign-section" style="display:none;">
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Owner</label>
+                <select id="conn-owner" class="form-input"></select>
+              </div>
+              <div class="assign-header">
+                <span style="font-size: 11px; font-weight: 600;">Assigned to</span>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="addAssignmentRow()">+ Add user or group</button>
+              </div>
+              <div id="conn-assign-list" class="assign-list"></div>
+              <div class="pw-hint">Assigned users and groups see this connection in their directory. The owner and admins can always edit it; edit by assignment covers details, not access rules.</div>
+            </div>
+
             <!-- Security & RBAC Policy Section -->
             <div style="background: var(--woofson-bg-header, #202024); padding: 12px; border-radius: var(--radius-md, 6px); border: 1px solid var(--woofson-border, #3f3f46); display: flex; flex-direction: column; gap: 10px;">
               <div style="font-size: 11px; font-weight: 700; color: var(--woofson-accent, #f59e0b); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
@@ -848,15 +896,13 @@
                     <option value="disabled">🚫 Disabled (Blocked)</option>
                   </select>
                 </div>
-                <div class="form-group">
-                  <label style="font-size: 11px; font-weight: 600;">Tags (Comma-separated)</label>
-                  <input type="text" id="conn-tags" class="form-input" placeholder="prod, linux, aws" />
-                </div>
               </div>
             </div>
 
+            </div>
           </div>
           <div class="modal-footer">
+            <span id="conn-edit-error" class="conn-edit-error"></span>
             <button type="button" class="btn" onclick="closeConnectionEditModal()">Cancel</button>
             <button type="submit" class="btn btn-accent"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Connection</button>
           </div>
@@ -864,21 +910,33 @@
       </div>
     </div>
 
-    <!-- User & RBAC Management Modal (Admin) -->
-    <!-- User & RBAC Management Modal (Admin) -->
-    <div id="users-modal" class="modal-overlay" style="display:none;">
-      <div class="modal-box" style="width: 860px; max-height: 85vh;">
-        <div class="modal-header">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="20" y1="8" x2="20" y2="14"></line><line x1="23" y1="11" x2="17" y2="11"></line></svg>
-            <span style="font-weight: 700; font-size: 14px;">User Management & RBAC</span>
+    
+
+    <!-- Admin Control Panel (admins) -->
+    <div id="admin-panel" class="modal-overlay panel-overlay" style="display:none;">
+      <div class="modal-box panel-box" id="admin-panel-box" role="dialog" aria-modal="true" aria-label="Admin Control Panel">
+        <div class="panel-header" id="admin-panel-header">
+          <div class="panel-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent);"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+            <span>Admin Control Panel</span>
           </div>
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <button class="btn btn-accent btn-sm" onclick="openAddUserModal()">+ Add User</button>
-            <button class="btn btn-icon" onclick="closeUsersModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
-          </div>
+          <input type="search" class="panel-search" id="admin-panel-search" placeholder="Find a setting…" autocomplete="off" spellcheck="false" aria-label="Find a setting" />
+          <button type="button" class="ui-dialog-close" title="Close" onclick="closeAdminPanel()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
         </div>
-        <div class="modal-body" style="padding: 16px; overflow-y: auto;">
+        <div class="panel-layout">
+          <nav class="panel-nav" id="admin-panel-nav">
+            <button type="button" class="panel-nav-btn active" data-panel-page="users" data-keywords="users groups members accounts password reset role disable enable add delete">Users &amp; Groups</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="connections" data-keywords="connections global private owner assigned assignment shared local terminal scope">Connections</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="activity" data-keywords="activity audit log access denied login password history">Activity Log</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="server" data-keywords="server settings secret key backup oidc sso password policy upload config status version">Server</button>
+          </nav>
+          <div class="panel-content">
+            <section class="panel-page active" data-page="users">
+              <div class="panel-page-header">
+                <h3>Users &amp; Groups</h3>
+                <button class="btn btn-accent btn-sm" onclick="openAddUserModal()">+ Add User</button>
+              </div>
+
           <table class="data-table">
             <thead>
               <tr>
@@ -903,6 +961,159 @@
             </div>
             <p class="pw-hint" style="margin: 0 0 8px 0;">Assign connections to a group to give all its members access in one step.</p>
             <div id="groups-list" class="groups-list"></div>
+          </div>
+        
+            </section>
+            <section class="panel-page" data-page="connections">
+              <div class="panel-page-header"><h3>Connections</h3></div>
+              <div id="admin-conn-warning"></div>
+              <table class="data-table">
+                <thead><tr><th>Name</th><th>Target</th><th>Scope</th><th>Owner</th><th>Assigned to</th><th>Actions</th></tr></thead>
+                <tbody id="admin-conn-body"></tbody>
+              </table>
+            </section>
+            <section class="panel-page" data-page="activity">
+              <div class="panel-page-header"><h3>Activity Log</h3><span class="text-muted text-sm" id="audit-count"></span></div>
+
+          <div class="panel-filters">
+            <input type="search" id="audit-filter-text" class="form-input" placeholder="Search user, connection or details" />
+            <select id="audit-filter-action" class="form-input"><option value="">All actions</option></select>
+            <select id="audit-filter-user" class="form-input"><option value="">All users</option></select>
+          </div>
+
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Connection</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody id="audit-table-body"></tbody>
+          </table>
+        
+            </section>
+            <section class="panel-page" data-page="server">
+              <div class="panel-page-header"><h3>Server</h3><span class="text-muted text-sm" id="server-version"></span></div>
+              <div id="admin-server-status" class="status-list"></div>
+              <div id="admin-server-settings"></div>
+              <p class="pw-hint">These settings are read from <code>config.toml</code>. Change them there and restart Remote.</p>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Personal Settings (everyone) -->
+    <div id="settings-panel" class="modal-overlay panel-overlay" style="display:none;">
+      <div class="modal-box panel-box" id="settings-panel-box" role="dialog" aria-modal="true" aria-label="Settings">
+        <div class="panel-header" id="settings-panel-header">
+          <div class="panel-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent);"><circle cx="12" cy="12" r="3"></circle><path d="M12 1v3M12 20v3M4.22 4.22l2.12 2.12M17.66 17.66l2.12 2.12M1 12h3M20 12h3M4.22 19.78l2.12-2.12M17.66 6.34l2.12-2.12"></path></svg>
+            <span>Settings</span>
+          </div>
+          <input type="search" class="panel-search" id="settings-panel-search" placeholder="Find a setting…" autocomplete="off" spellcheck="false" aria-label="Find a setting" />
+          <button type="button" class="ui-dialog-close" title="Close" onclick="closePersonalSettings()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        </div>
+        <div class="panel-layout">
+          <nav class="panel-nav" id="settings-panel-nav">
+            <button type="button" class="panel-nav-btn active" data-panel-page="account" data-keywords="account profile photo avatar name email password change">Account</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="appearance" data-keywords="appearance theme colours colors dark light">Appearance</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="shortcuts" data-keywords="shortcuts keyboard keys hotkeys">Shortcuts</button>
+          </nav>
+          <div class="panel-content">
+            <section class="panel-page active" data-page="account">
+              <div class="panel-page-header"><h3>Account</h3></div>
+
+          <!-- Avatar Uploader & Account Header Box -->
+          <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; background: var(--woofson-bg-header, #202024); padding: 12px; border-radius: var(--radius-md, 6px); border: 1px solid var(--woofson-border, #3f3f46);">
+            <div style="position: relative; display: inline-block;">
+              <div class="profile-avatar-large profile-avatar-clickable" id="profile-modal-avatar" onclick="document.getElementById('profile-avatar-file-input').click()" title="Click to upload profile photo">A</div>
+              <button type="button" class="btn btn-sm btn-icon" onclick="document.getElementById('profile-avatar-file-input').click()" title="Upload Photo" style="position: absolute; bottom: -3px; right: -3px; border-radius: 50%; width: 22px; height: 22px; background: var(--woofson-accent, #f59e0b); color: #000; border: none; padding: 0; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 5px rgba(0,0,0,0.5); cursor: pointer;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+              </button>
+            </div>
+            <input type="file" id="profile-avatar-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display: none;" onchange="handleAvatarFileUpload(event)">
+            <input type="hidden" id="profile-avatar-data" />
+            <div style="flex: 1;">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div>
+                  <div style="font-weight: 700; font-size: 15px;" id="profile-edit-username">admin</div>
+                  <div style="font-size: 11px; color: var(--woofson-text-muted, #71717a);" id="profile-edit-auth-type">Local Database Account</div>
+                </div>
+                <span class="user-role-badge" id="profile-edit-role-badge">ADMIN</span>
+              </div>
+              <div style="display: flex; gap: 6px; margin-top: 8px;">
+                <button type="button" class="btn btn-sm" onclick="document.getElementById('profile-avatar-file-input').click()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Upload Photo</button>
+                <button type="button" class="btn btn-sm btn-secondary" onclick="resetAvatarToDefault()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg> Reset</button>
+              </div>
+            </div>
+          </div>
+
+          <form id="profile-update-form" onsubmit="handleUpdateProfile(event)">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600; color: var(--woofson-text-muted);">Username (System ID)</label>
+                <input type="text" id="profile-username" class="form-input" readonly disabled style="background: var(--woofson-bg-void, #121214); cursor: not-allowed; opacity: 0.75;" />
+              </div>
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Nickname / Display Name</label>
+                <input type="text" id="profile-display-name" class="form-input" placeholder="e.g. Woofson" />
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 10px;">
+              <label style="font-size: 11px; font-weight: 600;">Email Address (for password recovery & notifications):</label>
+              <input type="email" id="profile-email" class="form-input" placeholder="e.g. user@domain.com" />
+            </div>
+
+            <div id="profile-password-section" class="pw-section">
+              <div class="pw-section-title">Change password <span class="text-muted">(leave empty to keep the current one)</span></div>
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Current password</label>
+                <input type="password" id="profile-current-password" class="form-input" autocomplete="current-password" />
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="form-group">
+                  <label style="font-size: 11px; font-weight: 600;">New password</label>
+                  <input type="password" id="profile-new-password" class="form-input" autocomplete="new-password" />
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 11px; font-weight: 600;">New password again</label>
+                  <input type="password" id="profile-new-password-confirm" class="form-input" autocomplete="new-password" />
+                </div>
+              </div>
+              <div class="pw-hint"><span class="pw-min-text">At least 12 characters</span>, not your username or current password. You stay logged in here; other logins end.</div>
+            </div>
+
+            <div id="profile-modal-msg" class="text-success text-sm mt-2" style="display: none;"></div>
+
+            <div class="modal-footer" style="padding: 12px 0 0 0; background: transparent; border: none; margin-top: 12px;">
+              <button type="button" class="btn" onclick="closePersonalSettings()">Close</button>
+              <button type="submit" class="btn btn-accent"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Profile</button>
+            </div>
+          </form>
+        
+            </section>
+            <section class="panel-page" data-page="appearance">
+              <div class="panel-page-header"><h3>Appearance</h3></div>
+              <label class="pw-check"><input type="checkbox" id="theme-follow-browser" /> <span>Follow the browser's light/dark setting</span></label>
+              <div id="theme-grid" class="theme-grid"></div>
+            </section>
+            <section class="panel-page" data-page="shortcuts">
+              <div class="panel-page-header"><h3>Keyboard shortcuts</h3></div>
+              <table class="data-table shortcuts-table">
+                <tbody>
+                  <tr><td><kbd>Alt</kbd> + <kbd>1</kbd> … <kbd>4</kbd></td><td>Pane layout: single, dual, triple, quad</td></tr>
+                  <tr><td><kbd>F10</kbd> or <kbd>Alt</kbd> + <kbd>W</kbd></td><td>Full window mode</td></tr>
+                  <tr><td><kbd>F11</kbd></td><td>Full screen</td></tr>
+                  <tr><td><kbd>Ctrl</kbd> + <kbd>D</kbd>, <code>exit</code></td><td>Close a terminal session</td></tr>
+                  <tr><td><kbd>Enter</kbd> / <kbd>Esc</kbd></td><td>Confirm / cancel in dialogs</td></tr>
+                </tbody>
+              </table>
+            </section>
           </div>
         </div>
       </div>
@@ -977,53 +1188,9 @@
       </div>
     </div>
 
-    <!-- Settings & Authentik OIDC Modal -->
-    <div id="settings-modal" class="modal-backdrop" style="display:none;">
-      <div class="modal-card modal-lg">
-        <div class="modal-header">
-          <div class="modal-title">
-            <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-            <span>System Settings & Authentik / OIDC Configuration</span>
-          </div>
-          <button class="btn-close" onclick="closeSettingsModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="settings-section">
-            <h4>Authentik / Keycloak OpenID Connect (SSO)</h4>
-            <p class="text-muted text-sm">Configure single sign-on with Authentik or any standard OAuth2 / OIDC identity provider.</p>
-            <div id="settings-oidc-details" class="settings-grid mt-3"></div>
-          </div>
-          <div class="settings-section mt-4">
-            <h4>Clipboard & Security Rules</h4>
-            <div class="settings-grid mt-3" id="settings-general-details"></div>
-          </div>
-        </div>
-      </div>
-    </div>
+    
 
-    <!-- Audit Logs Modal -->
-    <div id="audit-modal" class="modal-backdrop" style="display:none;">
-      <div class="modal-card modal-lg">
-        <div class="modal-header">
-          <span class="modal-title">System Audit & Access Logs</span>
-          <button class="btn-close" onclick="closeAuditModal()">&times;</button>
-        </div>
-        <div class="modal-body">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Timestamp</th>
-                <th>User</th>
-                <th>Action</th>
-                <th>Connection</th>
-                <th>Details</th>
-              </tr>
-            </thead>
-            <tbody id="audit-table-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    
 
     <!-- Help & Browser Setup Guide Modal -->
     <div class="modal-overlay" id="help-modal" style="display: none;">
@@ -1149,6 +1316,7 @@
               <div><span style="color: var(--woofson-text-muted);">Auth:</span> <span>Argon2id + JWT + Authentik OIDC</span></div>
               <div><span style="color: var(--woofson-text-muted);">Database:</span> <span>SQLite 3 (Bundled C)</span></div>
               <div><span style="color: var(--woofson-text-muted);">Repository:</span> <a href="https://github.com/Woofson/remote" target="_blank" style="color: var(--woofson-accent); text-decoration: none;">github.com/Woofson/remote</a></div>
+              <div><span style="color: var(--woofson-text-muted);">Connection icons:</span> <a href="https://selfh.st/icons/" target="_blank" rel="noopener noreferrer" style="color: var(--woofson-accent); text-decoration: none;">selfh.st/icons</a> (CC BY 4.0)</div>
               <div><span style="color: var(--woofson-text-muted);">Support:</span> <a href="https://ko-fi.com/J7P327BXTR" target="_blank" rel="noopener noreferrer" style="color: var(--woofson-accent); text-decoration: none;">Support development on Ko-fi</a></div>
               <div><span style="color: var(--woofson-text-muted);">License:</span> <span>MIT License</span></div>
             </div>
@@ -1160,88 +1328,7 @@
       </div>
     </div>
 
-    <!-- User Profile Modal (Matches CommanderDog profile-modal 1:1) -->
-    <div class="modal-overlay" id="user-profile-modal" style="display: none;">
-      <div class="modal-box" style="width: 480px;">
-        <div class="modal-header">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            <span style="font-weight: 700; font-size: 14px;">User Profile & Account Settings</span>
-          </div>
-          <button class="btn btn-icon" onclick="closeUserProfileModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
-        </div>
-        <div class="modal-body" style="padding: 16px;">
-          <!-- Avatar Uploader & Account Header Box -->
-          <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 16px; background: var(--woofson-bg-header, #202024); padding: 12px; border-radius: var(--radius-md, 6px); border: 1px solid var(--woofson-border, #3f3f46);">
-            <div style="position: relative; display: inline-block;">
-              <div class="profile-avatar-large profile-avatar-clickable" id="profile-modal-avatar" onclick="document.getElementById('profile-avatar-file-input').click()" title="Click to upload profile photo">A</div>
-              <button type="button" class="btn btn-sm btn-icon" onclick="document.getElementById('profile-avatar-file-input').click()" title="Upload Photo" style="position: absolute; bottom: -3px; right: -3px; border-radius: 50%; width: 22px; height: 22px; background: var(--woofson-accent, #f59e0b); color: #000; border: none; padding: 0; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 5px rgba(0,0,0,0.5); cursor: pointer;">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-              </button>
-            </div>
-            <input type="file" id="profile-avatar-file-input" accept="image/png,image/jpeg,image/webp,image/gif" style="display: none;" onchange="handleAvatarFileUpload(event)">
-            <input type="hidden" id="profile-avatar-data" />
-            <div style="flex: 1;">
-              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div>
-                  <div style="font-weight: 700; font-size: 15px;" id="profile-edit-username">admin</div>
-                  <div style="font-size: 11px; color: var(--woofson-text-muted, #71717a);" id="profile-edit-auth-type">Local Database Account</div>
-                </div>
-                <span class="user-role-badge" id="profile-edit-role-badge">ADMIN</span>
-              </div>
-              <div style="display: flex; gap: 6px; margin-top: 8px;">
-                <button type="button" class="btn btn-sm" onclick="document.getElementById('profile-avatar-file-input').click()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Upload Photo</button>
-                <button type="button" class="btn btn-sm btn-secondary" onclick="resetAvatarToDefault()"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg> Reset</button>
-              </div>
-            </div>
-          </div>
-
-          <form id="profile-update-form" onsubmit="handleUpdateProfile(event)">
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-              <div class="form-group">
-                <label style="font-size: 11px; font-weight: 600; color: var(--woofson-text-muted);">Username (System ID)</label>
-                <input type="text" id="profile-username" class="form-input" readonly disabled style="background: var(--woofson-bg-void, #121214); cursor: not-allowed; opacity: 0.75;" />
-              </div>
-              <div class="form-group">
-                <label style="font-size: 11px; font-weight: 600;">Nickname / Display Name</label>
-                <input type="text" id="profile-display-name" class="form-input" placeholder="e.g. Woofson" />
-              </div>
-            </div>
-
-            <div class="form-group" style="margin-top: 10px;">
-              <label style="font-size: 11px; font-weight: 600;">Email Address (for password recovery & notifications):</label>
-              <input type="email" id="profile-email" class="form-input" placeholder="e.g. user@domain.com" />
-            </div>
-
-            <div id="profile-password-section" class="pw-section">
-              <div class="pw-section-title">Change password <span class="text-muted">(leave empty to keep the current one)</span></div>
-              <div class="form-group">
-                <label style="font-size: 11px; font-weight: 600;">Current password</label>
-                <input type="password" id="profile-current-password" class="form-input" autocomplete="current-password" />
-              </div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                <div class="form-group">
-                  <label style="font-size: 11px; font-weight: 600;">New password</label>
-                  <input type="password" id="profile-new-password" class="form-input" autocomplete="new-password" />
-                </div>
-                <div class="form-group">
-                  <label style="font-size: 11px; font-weight: 600;">New password again</label>
-                  <input type="password" id="profile-new-password-confirm" class="form-input" autocomplete="new-password" />
-                </div>
-              </div>
-              <div class="pw-hint"><span class="pw-min-text">At least 12 characters</span>, not your username or current password. You stay logged in here; other logins end.</div>
-            </div>
-
-            <div id="profile-modal-msg" class="text-success text-sm mt-2" style="display: none;"></div>
-
-            <div class="modal-footer" style="padding: 12px 0 0 0; background: transparent; border: none; margin-top: 12px;">
-              <button type="button" class="btn" onclick="closeUserProfileModal()">Cancel</button>
-              <button type="submit" class="btn btn-accent"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Profile</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
+    
 
   </div>
 

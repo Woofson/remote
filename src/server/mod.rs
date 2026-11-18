@@ -42,6 +42,8 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub db: Database,
     pub transfer_mgr: TransferManager,
+    pub themes: Arc<Vec<crate::themes::ThemeDefinition>>,
+    pub icons: Arc<crate::icons::IconStore>,
     pub oidc_service: Arc<OidcService>,
 }
 
@@ -108,6 +110,16 @@ pub fn create_router(state: AppState) -> Router {
         // Audit & Settings API
         .route("/api/audit-logs", get(api_list_audit_logs))
         .route("/api/settings", get(api_get_settings))
+        .route("/api/themes", get(api_list_themes))
+        .route("/api/icons/selfhst", get(api_icons_search))
+        .route("/api/icons/selfhst/:file", get(api_icon_selfhst))
+        .route(
+            "/api/icons/upload",
+            post(api_icon_upload).layer(DefaultBodyLimit::max(crate::icons::MAX_UPLOAD_PNG + 64 * 1024)),
+        )
+        .route("/api/icons/upload/:file", get(api_icon_uploaded))
+        .route("/api/me/preferences", get(api_get_preferences).put(api_set_preferences))
+        .route("/api/connections/:id/scope", post(api_set_connection_scope))
         // WebSocket Remote Gateway Tunnel
         .route("/ws/tunnel/:connection_id", get(ws_tunnel_handler))
         // Static Frontend Files
@@ -1099,7 +1111,7 @@ pub async fn api_create_connection(
         password_enc,
         private_key_enc,
         settings_json: payload.settings_json.unwrap_or_else(|| "{}".into()),
-        icon: payload.icon,
+        icon: clean_icon(payload.icon.clone())?,
         tags: payload.tags,
         is_global,
         allow_clipboard,
@@ -1184,7 +1196,7 @@ pub async fn api_update_connection(
     record.port = payload.port;
     record.username = payload.username;
     record.settings_json = payload.settings_json.unwrap_or(record.settings_json);
-    record.icon = payload.icon;
+    record.icon = clean_icon(payload.icon.clone())?;
     record.tags = payload.tags;
     if is_admin {
         if let Some(g) = payload.is_global {
@@ -1338,6 +1350,99 @@ fn session_drives(state: &AppState, user: &User) -> Vec<crate::protocols::rdp_dr
         drives.push(DriveSpec { device_id: 2, name: "Shared".into(), path: shared.root, read_only: user.role != "admin" });
     }
     drives
+}
+
+// ================= Connection Icons =================
+
+/// Only `selfhst:<slug>` / `upload:<hash>` (or nothing) may be stored as a connection icon.
+fn clean_icon(icon: Option<String>) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    match icon.map(|i| i.trim().to_string()).filter(|i| !i.is_empty()) {
+        None => Ok(None),
+        Some(i) if crate::icons::valid_icon_ref(&i) => Ok(Some(i)),
+        Some(_) => Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "Invalid icon" })))),
+    }
+}
+
+fn png_response(bytes: Vec<u8>) -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/png")
+        .header(header::CACHE_CONTROL, "private, max-age=86400")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Body::from(bytes))
+        .unwrap()
+}
+
+#[derive(Deserialize)]
+pub struct IconSearchQuery {
+    pub q: Option<String>,
+}
+
+pub async fn api_icons_search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<IconSearchQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let _ = extract_claims(&state, &headers)?;
+    let icons = state
+        .icons
+        .search(q.q.as_deref().unwrap_or(""), 60)
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(json!({ "error": e }))))?;
+    Ok(Json(json!({ "icons": icons })))
+}
+
+pub async fn api_icon_selfhst(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(file): AxumPath<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = extract_claims(&state, &headers)?;
+    let slug = file.strip_suffix(".png").unwrap_or(&file);
+    let bytes = state
+        .icons
+        .selfhst_png(slug)
+        .await
+        .map_err(|e| (StatusCode::NOT_FOUND, Json(json!({ "error": e }))))?;
+    Ok(png_response(bytes))
+}
+
+pub async fn api_icon_uploaded(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(file): AxumPath<String>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let _ = extract_claims(&state, &headers)?;
+    let hash = file.strip_suffix(".png").unwrap_or(&file);
+    let bytes = state
+        .icons
+        .read_upload(hash)
+        .map_err(|e| (StatusCode::NOT_FOUND, Json(json!({ "error": e }))))?;
+    Ok(png_response(bytes))
+}
+
+/// Upload an icon (a PNG already resized by the browser). Operator or Admin.
+pub async fn api_icon_upload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_files_writer(&claims)?;
+    let field = multipart
+        .next_field()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "No file" }))))?;
+    let bytes = field
+        .bytes()
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?;
+    let icon = state
+        .icons
+        .save_upload(&bytes)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+    Ok(Json(json!({ "icon": icon })))
 }
 
 // ================= Connection Assignments =================
@@ -1946,7 +2051,7 @@ pub async fn api_list_audit_logs(
         ));
     }
 
-    let logs = state.db.list_audit_logs(100).map_err(|e| {
+    let logs = state.db.list_audit_logs(1000).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
@@ -1956,9 +2061,39 @@ pub async fn api_list_audit_logs(
     Ok(Json(json!(logs)))
 }
 
-pub async fn api_get_settings(State(state): State<AppState>) -> Json<Value> {
+/// Admin: read-only server settings plus status checks for the Admin Control Panel.
+pub async fn api_get_settings(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
     let cfg = state.config.read().clone();
-    Json(json!({
+    let data_dir = std::path::Path::new(&cfg.server.data_dir);
+    let secret_file = data_dir.join(crate::secrets::SECRET_FILE);
+    let admin_user = state.db.get_user_by_username("admin").ok().flatten();
+    let all_conns = state.db.get_user_by_id(&claims.sub).ok().flatten()
+        .and_then(|u| state.db.list_connections_for_user(&u).ok())
+        .unwrap_or_default();
+    let global: Vec<String> = all_conns.iter().filter(|c| c.is_global).map(|c| c.name.clone()).collect();
+    let global_local_shell = all_conns.iter().any(|c| c.is_global && c.protocol == "local_pty");
+    Ok(Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "status": {
+            "secret_source": if secret_file.exists() { "file" } else { "config" },
+            "secret_file": secret_file.display().to_string(),
+            "admin_note_present": data_dir.join(crate::secrets::ADMIN_NOTE_FILE).exists(),
+            "admin_must_change": admin_user.map(|a| state.db.get_user_security(&a.id).map(|s| s.1).unwrap_or(false)).unwrap_or(false),
+            "global_connections": global,
+            "global_local_shell": global_local_shell,
+            "themes": state.themes.len(),
+        },
+        "auth": {
+            "allow_local_login": cfg.auth.allow_local_login,
+            "allow_pam_login": cfg.auth.allow_pam_login,
+            "default_role": cfg.auth.default_role,
+            "min_password_length": cfg.auth.min_password_length,
+        },
         "server": {
             "bind_address": cfg.server.bind_address,
             "data_dir": cfg.server.data_dir,
@@ -1982,7 +2117,88 @@ pub async fn api_get_settings(State(state): State<AppState>) -> Json<Value> {
             "admin_group": cfg.oidc.admin_group,
             "operator_group": cfg.oidc.operator_group,
         }
-    }))
+    })))
+}
+
+pub async fn api_list_themes(
+    State(state): State<AppState>,
+) -> Json<Value> {
+    // Public: the login screen uses the remembered theme before anyone signs in.
+    Json(json!({ "default": crate::themes::DEFAULT_THEME, "themes": *state.themes }))
+}
+
+pub async fn api_get_preferences(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    let raw = state.db.get_user_preferences(&claims.sub).unwrap_or_else(|_| "{}".into());
+    Ok(Json(serde_json::from_str(&raw).unwrap_or_else(|_| json!({}))))
+}
+
+/// Save interface preferences (theme and similar). Merged into what is stored; max 16 KB.
+pub async fn api_set_preferences(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    let Value::Object(update) = payload else {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "Preferences must be an object" }))));
+    };
+    let raw = state.db.get_user_preferences(&claims.sub).unwrap_or_else(|_| "{}".into());
+    let mut prefs: serde_json::Map<String, Value> = serde_json::from_str(&raw).unwrap_or_default();
+    for (k, v) in update {
+        if v.is_null() {
+            prefs.remove(&k);
+        } else {
+            prefs.insert(k, v);
+        }
+    }
+    let text = Value::Object(prefs.clone()).to_string();
+    if text.len() > 16 * 1024 {
+        return Err((StatusCode::PAYLOAD_TOO_LARGE, Json(json!({ "error": "Preferences too large" }))));
+    }
+    state
+        .db
+        .set_user_preferences(&claims.sub, &text)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    Ok(Json(Value::Object(prefs)))
+}
+
+#[derive(Deserialize)]
+pub struct ScopePayload {
+    pub is_global: bool,
+}
+
+/// Admin: make a connection global or private in one click.
+pub async fn api_set_connection_scope(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<ScopePayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let conn = state
+        .db
+        .get_connection_raw(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": "Connection not found" }))))?;
+    state
+        .db
+        .set_connection_global(&id, payload.is_global)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "CONNECTION_SCOPE",
+        Some(&conn.id),
+        Some(&conn.name),
+        Some(if payload.is_global { "Made global" } else { "Made private" }),
+        None,
+    );
+    Ok(Json(json!({ "is_global": payload.is_global })))
 }
 
 // ================= WebSocket Gateway Handler =================

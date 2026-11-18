@@ -11,9 +11,14 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 ## Done
 
 - RDP, VNC, SSH, Telnet and local shell sessions in a 1 to 4 pane grid.
-- Local accounts, roles (Admin, Operator, Viewer), per-connection permissions, global and personal connections, OpenID Connect login, audit log.
+- Local accounts, roles (Admin, Operator, Viewer), OpenID Connect login, audit log.
+- Connections assigned to users and groups, with an owner and per-assignment rights ([#18](https://github.com/Woofson/remote/issues/18)).
+- Password reset, change on next login, password policy, logout everywhere ([#20](https://github.com/Woofson/remote/issues/20)).
+- Admin Control Panel, personal Settings and Brum themes ([#21](https://github.com/Woofson/remote/issues/21), [#22](https://github.com/Woofson/remote/issues/22)).
+- Connections directory and editor, connection icons ([#17](https://github.com/Woofson/remote/issues/17), [#19](https://github.com/Woofson/remote/issues/19)).
 - Clipboard sync for RDP, VNC and SSH; SFTP file browsing.
-- Files: shared folder managed from the browser and offered to RDP sessions as `\\tsclient\Files` ([#5](https://github.com/Woofson/remote/issues/5), [#13](https://github.com/Woofson/remote/issues/13)).
+- Files: private "My files" per user and an admin-managed Shared folder, also offered to RDP sessions as `\\tsclient\Files` and `\\tsclient\Shared` ([#5](https://github.com/Woofson/remote/issues/5), [#12](https://github.com/Woofson/remote/issues/12), [#13](https://github.com/Woofson/remote/issues/13)).
+- Security hardening: private secret key, SFTP permission checks, guarded RDP drives ([#14](https://github.com/Woofson/remote/issues/14), [#15](https://github.com/Woofson/remote/issues/15)).
 - Per-pane keyboard layouts, RDP dynamic resolution and performance presets.
 - Full window mode and session lock screen.
 

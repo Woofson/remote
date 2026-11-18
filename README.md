@@ -21,14 +21,16 @@ By Bolt J Woofson @ Woofsons Lab. Free and open source; if it is useful to you, 
 - Terminal based on xterm.js with a bundled JetBrainsMono Nerd Font.
 - Per-pane keyboard layout switcher (NO, US, GB, SE, DK, FI, DE, FR, ES, IT, Auto).
 - Clipboard drawer for pushing text to and pulling text from remote sessions.
+- **Themes**: the same theme files as Brum (Woofsons Amber, Catppuccin, Nord, Dracula, Tokyo Night, Gruvbox, Solarized and more), chosen per user under Settings > Appearance and followed by terminals. Extra `*.toml` theme files can be dropped into `themes/` or `data/themes/`.
 - **Files**: every user has a private folder ("My files"), and there is a **Shared** folder everyone can read and only admins can change, e.g. for scripts and installers. Browse, upload, download and organise both from the browser. RDP sessions with drive redirection see them as `\\tsclient\Files` and `\\tsclient\Shared` (read-only for non-admins).
 
 **Users and access**
 - Local accounts in an embedded SQLite database, with Argon2id password hashing and JWT sessions.
 - Roles: Admin, Operator, Viewer. Per-connection permissions for connecting, editing, clipboard direction, file transfer and view-only mode.
-- Global (shared) and personal connections. Stored connection passwords are encrypted with AES-256-GCM.
+- Global and private connections; admins choose a connection's owner and assign it to users and groups. Stored connection passwords are encrypted with AES-256-GCM.
+- **Connections directory** with search, protocol/tag/scope filters and sorting, and an editor in tabs (General, Login, Display, Access) with a **Test connection** button. Connection **icons** can be picked from [selfh.st/icons](https://selfh.st/icons/) (downloaded and cached by the server, so browsers never contact selfh.st) or uploaded.
 - OpenID Connect login (Authentik, Keycloak and others) with automatic user creation and group-to-role mapping.
-- Groups, profile pictures, and an audit log.
+- **Admin Control Panel**: users and groups, all connections (with a warning for global ones), the activity log with filters, and server status. Personal **Settings**: account, appearance and keyboard shortcuts.
 
 ---
 

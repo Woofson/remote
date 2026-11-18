@@ -1,0 +1,29 @@
+# Arctic Nord Color Scheme for Brum
+
+[[themes]]
+id = "nord"
+name = "Nord Frost"
+bg_dark = "#242933"
+bg_panel = "#2e3440"
+bg_active = "#3b4252"
+accent = "#88c0d0"
+accent_hover = "#81a1c1"
+text_main = "#eceff4"
+text_muted = "#d8dee9"
+border = "#4c566a"
+folder_color = "#88c0d0"
+radius = "6px"
+
+[[themes]]
+id = "nord-snow"
+name = "Nord Snow (Light)"
+bg_dark = "#e5e9f0"
+bg_panel = "#eceff4"
+bg_active = "#d8dee9"
+accent = "#5e81ac"
+accent_hover = "#81a1c1"
+text_main = "#2e3440"
+text_muted = "#4c566a"
+border = "#d8dee9"
+folder_color = "#5e81ac"
+radius = "6px"

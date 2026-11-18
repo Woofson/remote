@@ -1630,7 +1630,7 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
                         if text_len <= 10 * 1024 * 1024 {
                             let mut text_buf = vec![0u8; text_len];
                             if stream.read_exact(&mut text_buf).is_ok() {
-                                let text = String::from_utf8_lossy(&text_buf).to_string();
+                                let text = latin1_to_string(&text_buf);
                                 let msg = serde_json::json!({
                                     "type": "clipboard_sync",
                                     "text": text
@@ -1715,7 +1715,8 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
                                         match msg_type {
                                             "clipboard_push" => {
                                                 if let Some(content) = val.get("text").and_then(|t| t.as_str()) {
-                                                    let content_bytes = content.as_bytes();
+                                                    let latin1 = string_to_latin1(content);
+                                                    let content_bytes = latin1.as_slice();
                                                     let mut cut_msg = Vec::with_capacity(8 + content_bytes.len());
                                                     cut_msg.push(6); // ClientCutText
                                                     cut_msg.extend_from_slice(&[0, 0, 0]); // 3 bytes padding
@@ -1772,4 +1773,35 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
     ws_send_handle.abort();
     let _ = vnc_io_handle.await;
     info!("VNC session closed");
+}
+
+/// RFB clipboard text is ISO-8859-1 (Latin-1), not UTF-8 (RFC 6143, 7.5.6 / 7.6.4).
+/// Each byte maps directly to the Unicode code point of the same value.
+fn latin1_to_string(bytes: &[u8]) -> String {
+    bytes.iter().map(|&b| b as char).collect()
+}
+
+/// Encode clipboard text as Latin-1 for the VNC server; characters outside Latin-1
+/// (emoji, CJK, ...) become '?'. Line breaks are sent as LF, as the standard expects.
+fn string_to_latin1(text: &str) -> Vec<u8> {
+    text.replace("\r\n", "\n")
+        .chars()
+        .map(|c| if (c as u32) < 256 { c as u8 } else { b'?' })
+        .collect()
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn latin1_clipboard_round_trip() {
+        let text = "Blåbærsyltetøy ÆØÅ é ü";
+        let bytes = string_to_latin1(text);
+        assert_eq!(bytes.len(), text.chars().count(), "one byte per character");
+        assert_eq!(bytes[2], 0xE5); // å
+        assert_eq!(latin1_to_string(&bytes), text);
+        assert_eq!(string_to_latin1("smile 😀"), b"smile ?".to_vec());
+        assert_eq!(string_to_latin1("a\r\nb"), b"a\nb".to_vec());
+    }
 }

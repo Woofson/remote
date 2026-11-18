@@ -1,0 +1,29 @@
+# Dracula Theme for Brum
+
+[[themes]]
+id = "dracula"
+name = "Dracula Dark"
+bg_dark = "#1e1f29"
+bg_panel = "#282a36"
+bg_active = "#44475a"
+accent = "#bd93f9"
+accent_hover = "#ff79c6"
+text_main = "#f8f8f2"
+text_muted = "#6272a4"
+border = "#6272a4"
+folder_color = "#bd93f9"
+radius = "6px"
+
+[[themes]]
+id = "dracula-alucard"
+name = "Dracula Alucard (Light)"
+bg_dark = "#e4e4e8"
+bg_panel = "#f8f8f2"
+bg_active = "#d1d1db"
+accent = "#6272a4"
+accent_hover = "#bd93f9"
+text_main = "#282a36"
+text_muted = "#6272a4"
+border = "#d1d1db"
+folder_color = "#6272a4"
+radius = "6px"

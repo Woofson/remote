@@ -63,10 +63,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let transfer_mgr = TransferManager::new(&config.storage.staging_dir);
     let oidc_service = Arc::new(OidcService::new(config.oidc.clone()));
 
+    let themes = Arc::new(remoted::themes::load_themes(&[
+        Path::new("themes"),
+        &Path::new(&config.server.data_dir).join("themes"),
+    ]));
+    info!("Themes: {} available", themes.len());
+
     let app_state = AppState {
         config: Arc::new(RwLock::new(config.clone())),
         db,
         transfer_mgr,
+        themes,
+        icons: Arc::new(remoted::icons::IconStore::new(Path::new(&config.server.data_dir))),
         oidc_service,
     };
 

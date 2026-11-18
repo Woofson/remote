@@ -1,0 +1,29 @@
+# Gruvbox Retro Groove Color Scheme (Dark & Light)
+
+[[themes]]
+id = "gruvbox"
+name = "Gruvbox Dark"
+bg_dark = "#1d2021"
+bg_panel = "#282828"
+bg_active = "#3c3836"
+accent = "#fabd2f"
+accent_hover = "#fe8019"
+text_main = "#ebdbb2"
+text_muted = "#a89984"
+border = "#504945"
+folder_color = "#fabd2f"
+radius = "6px"
+
+[[themes]]
+id = "gruvbox-light"
+name = "Gruvbox Light"
+bg_dark = "#fbf1c7"
+bg_panel = "#f2e5bc"
+bg_active = "#ebdbb2"
+accent = "#b57614"
+accent_hover = "#af3a03"
+text_main = "#282828"
+text_muted = "#7c6f64"
+border = "#d5c4a1"
+folder_color = "#b57614"
+radius = "6px"

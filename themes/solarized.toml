@@ -1,0 +1,29 @@
+# Solarized Precision Colors for Brum
+
+[[themes]]
+id = "solarized-dark"
+name = "Solarized Dark"
+bg_dark = "#00212b"
+bg_panel = "#002b36"
+bg_active = "#073642"
+accent = "#268bd2"
+accent_hover = "#2aa198"
+text_main = "#839496"
+text_muted = "#657b83"
+border = "#586e75"
+folder_color = "#268bd2"
+radius = "6px"
+
+[[themes]]
+id = "solarized-light"
+name = "Solarized Light"
+bg_dark = "#eee8d5"
+bg_panel = "#fdf6e3"
+bg_active = "#e0d9c4"
+accent = "#268bd2"
+accent_hover = "#2aa198"
+text_main = "#657b83"
+text_muted = "#93a1a1"
+border = "#cb4b16"
+folder_color = "#268bd2"
+radius = "6px"

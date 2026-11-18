@@ -1,0 +1,29 @@
+# Monokai Pro Theme for Brum
+
+[[themes]]
+id = "monokai"
+name = "Monokai Pro"
+bg_dark = "#1e1f1c"
+bg_panel = "#272822"
+bg_active = "#3e3d32"
+accent = "#ffd866"
+accent_hover = "#a9dc76"
+text_main = "#f8f8f2"
+text_muted = "#939293"
+border = "#49483e"
+folder_color = "#ffd866"
+radius = "6px"
+
+[[themes]]
+id = "monokai-light"
+name = "Monokai Light"
+bg_dark = "#e8e8e3"
+bg_panel = "#f8f8f2"
+bg_active = "#d6d6ce"
+accent = "#e59400"
+accent_hover = "#78a100"
+text_main = "#272822"
+text_muted = "#75715e"
+border = "#cfcfc2"
+folder_color = "#e59400"
+radius = "6px"

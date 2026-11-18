@@ -1,0 +1,44 @@
+# Woofsons Amber Themes (Dark & Light)
+# Brand Official Themes for Brum
+
+[[themes]]
+id = "amber-charcoal"
+name = "Woofsons Amber Charcoal"
+bg_dark = "#121214"
+bg_panel = "#18181b"
+bg_active = "#27272a"
+accent = "#f59e0b"
+accent_hover = "#fbbf24"
+text_main = "#f4f4f5"
+text_muted = "#a1a1aa"
+border = "#3f3f46"
+folder_color = "#f59e0b"
+radius = "6px"
+
+[[themes]]
+id = "zink"
+name = "Woofsons Amber Zink"
+bg_dark = "#fafafa"
+bg_panel = "#ffffff"
+bg_active = "#e4e4e7"
+accent = "#d97706"
+accent_hover = "#b45309"
+text_main = "#18181b"
+text_muted = "#52525b"
+border = "#d4d4d8"
+folder_color = "#d97706"
+radius = "6px"
+
+[[themes]]
+id = "amber"
+name = "Amber Gold (Classic)"
+bg_dark = "#0c0a09"
+bg_panel = "#1c1917"
+bg_active = "#292524"
+accent = "#f59e0b"
+accent_hover = "#fbbf24"
+text_main = "#fafaf9"
+text_muted = "#a8a29e"
+border = "#44403c"
+folder_color = "#f59e0b"
+radius = "6px"

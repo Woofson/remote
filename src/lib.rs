@@ -1,8 +1,10 @@
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod icons;
 pub mod protocols;
 pub mod secrets;
+pub mod themes;
 pub mod server;
 pub mod transfer;
 

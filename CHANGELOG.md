@@ -4,6 +4,55 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.8.0] - 2026-11-18
+
+Covers everything since 0.2.0 (versions 0.3.0 to 0.7.0 were pushed to git without a release).
+
+### Upgrading from 0.2.0: read first
+- **Secret key moves to `data/secret.key`.** On first start Remote generates a private secret, re-encrypts saved connection passwords with it, and everyone is logged out once. **Back up `data/secret.key` together with `data/remote.db`**; without it saved connection passwords cannot be unlocked.
+- **`config.toml` is no longer in the repository.** It was replaced by `config.example.toml`; your existing `config.toml` keeps working. On `git pull`, git removes a tracked `config.toml`: copy yours aside first, or Remote recreates one with defaults.
+- **Admin password:** fresh installs generate a random admin password (shown in the console and saved to `data/initial_admin_credentials.txt`). An existing `admin` still using a published default (`remote`, or `remotedog` from the RemoteDog days) must choose a new password at next login. Lost it? Run `remoted reset-admin-password`.
+- **Files:** the old shared "Dropbox" folder becomes **Files**. Its contents move into the new **Shared** folder on first start; every user gets a private **My files** folder.
+- **Connections stay global** (visible to every user) until you make them private in the Admin Control Panel.
+- New single sign-on users now get the **viewer** role by default.
+
+### Security
+- RDP drive redirection is guarded: paths sent by the remote machine can no longer escape the drive folder (`..`, alternate data streams, symlinks), so a compromised remote host cannot reach server files. Read-only drives refuse every write.
+- Private, randomly generated secret instead of the published default; hardcoded fallback removed.
+- SFTP checks connection permissions, the connection's file-transfer setting, view-only and role; refusals are audited.
+- Explicit "may not connect" assignments are honoured.
+- Unauthenticated file download and settings endpoints closed; the connection test needs Operator or Admin.
+- Every request checks that the account is active and the login current; password changes, resets, disabling and role changes end other logins.
+- Login no longer reveals whether an account exists or is disabled.
+- Theme files and connection icons are validated (no CSS injection, PNG only, no SVG).
+
+### Users and access
+- Admins assign connections to users and groups with Connect, Edit, Clipboard and File transfer rights, and choose a connection's owner.
+- Groups: create, rename, delete, members.
+- Password reset (generated or set), change on next login, entered twice, minimum length (`min_password_length`, default 12), own change needs the current password.
+- SSH asks for a password when none is saved; session errors are shown on the disconnected screen.
+
+### Interface
+- **Admin Control Panel:** Users & Groups, Connections (global warning, make private), Activity Log with filters, Server status.
+- **Settings:** Account, Appearance, Shortcuts.
+- **Themes:** Brum's 38 themes, per user, followed by terminals; extra themes from `themes/`.
+- **Pane appearance** like Brum: name, two-tone borders, fade direction, width, ring and glow, saved per user.
+- **Connections directory:** search, protocol/tag/scope filters, sorting; editor in tabs with checks before saving and a Test connection button.
+- **Connection icons** from selfh.st/icons (downloaded and cached by the server) or uploaded.
+- In-app dialogs and coloured toasts replace browser pop-ups.
+- Version shown from the server; new Remote icon.
+
+### Files
+- Private **My files** per user and an admin-managed **Shared** folder (e.g. scripts), in the browser and in RDP as `\\tsclient\Files` and `\\tsclient\Shared`.
+- Real file names, folders, upload/download/delete, large uploads streamed to disk.
+
+### Protocols
+- RDP drive redirection restored (Windows needs a sound channel to start drive sharing).
+- SSH, Telnet and VNC accept hostnames and IPv6.
+- VNC clipboard uses Latin-1 as the standard requires, so æ, ø and å work with UltraVNC and others.
+
+---
+
 ## [0.2.0] - 2026-09-01
 
 ### RDP
