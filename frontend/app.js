@@ -997,6 +997,7 @@ function renderConnectionsTable() {
           <td>
             <strong>${escapeHtml(c.name)}</strong>
             ${c.tags ? `<span class="badge-count" style="margin-left: 6px;">${escapeHtml(c.tags)}</span>` : ''}
+            ${connectionAccessLine(c)}
           </td>
           <td><span class="pane-protocol-badge">${c.protocol.toUpperCase()}</span></td>
           <td><code>${c.protocol === 'local_pty' ? 'Local System' : `${escapeHtml(c.host)}:${c.port}`}</code></td>
@@ -1045,6 +1046,7 @@ function openAddConnectionModal() {
   if (scopeGroup) {
     scopeGroup.style.display = isAdm ? 'block' : 'none';
   }
+  prepareAssignments(null);
 
   document.getElementById('conn-allow-clipboard').value = 'bidirectional';
   document.getElementById('conn-allow-transfer').value = 'full';
@@ -1095,6 +1097,7 @@ function openEditConnectionModal(id) {
   if (scopeEl) {
     scopeEl.value = c.is_global ? 'true' : 'false';
   }
+  prepareAssignments(c);
   const scopeGroup = document.getElementById('group-conn-scope');
   if (scopeGroup) {
     scopeGroup.style.display = isAdm ? 'block' : 'none';
@@ -1233,6 +1236,11 @@ async function handleSaveConnection(e) {
     allow_transfer: document.getElementById('conn-allow-transfer').value,
     view_only: document.getElementById('conn-view-only').value === 'true',
   };
+  const isAdminUser = state.currentUser && state.currentUser.role === 'admin';
+  if (isAdminUser) {
+    const owner = document.getElementById('conn-owner').value;
+    if (owner) payload.owner_id = owner;
+  }
 
   const url = id ? `/api/connections/${id}` : '/api/connections';
   const method = id ? 'PUT' : 'POST';
@@ -1248,6 +1256,12 @@ async function handleSaveConnection(e) {
     });
 
     if (res.ok) {
+      const saved = await res.json().catch(() => ({}));
+      const connId = id || saved.id;
+      if (isAdminUser && connId) {
+        const ok = await saveAssignments(connId);
+        if (!ok) return;
+      }
       showToast(id ? 'Connection updated!' : 'Connection created!', 'success');
       closeConnectionEditModal();
       await loadConnections();
@@ -2362,7 +2376,9 @@ async function openUsersModal() {
     });
     if (res.ok) {
       const users = await res.json();
+      state.usersCache = users;
       renderUsersTable(users);
+      await loadGroups();
     }
   } catch (err) {
     console.error('Failed to load users:', err);
@@ -2403,6 +2419,7 @@ function renderUsersTable(users) {
         <td class="text-muted text-sm">${u.email ? escapeHtml(u.email) : '—'}</td>
         <td><span class="user-role-badge">${roleName}</span></td>
         <td><span class="pane-protocol-badge">${u.auth_provider.toUpperCase()}</span></td>
+        <td class="text-muted text-sm">${u.groups && u.groups.length ? u.groups.map(escapeHtml).join(', ') : '—'}</td>
         <td>${statusBadge}</td>
         <td class="text-muted">${new Date(u.created_at).toLocaleDateString()}</td>
         <td>
@@ -2663,6 +2680,255 @@ function showToast(msg, type = 'info') {
     toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 200);
   }, 3500);
+}
+
+// ================= Groups & Connection Assignments =================
+state.usersCache = [];
+state.groupsCache = [];
+
+async function loadGroups() {
+  try {
+    const res = await apiFetch('/api/groups');
+    if (!res.ok) return;
+    state.groupsCache = await res.json();
+    renderGroups();
+  } catch (e) {}
+}
+
+function renderGroups() {
+  const el = document.getElementById('groups-list');
+  if (!el) return;
+  if (!state.groupsCache.length) {
+    el.innerHTML = `<div class="text-muted text-sm">No groups yet.</div>`;
+    return;
+  }
+  const nameOf = (id) => (state.usersCache.find((u) => u.id === id) || {}).username;
+  el.innerHTML = state.groupsCache
+    .map((g) => {
+      const members = (g.member_ids || []).map(nameOf).filter(Boolean);
+      return `
+        <div class="group-row">
+          <div class="group-row-name">${escapeHtml(g.name)}
+            <span class="group-row-meta">· ${members.length} member${members.length === 1 ? '' : 's'}${members.length ? ': ' + members.map(escapeHtml).join(', ') : ''}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" data-group-action="members" data-group-id="${escapeHtml(g.id)}">Members</button>
+          <button class="btn btn-secondary btn-sm" data-group-action="rename" data-group-id="${escapeHtml(g.id)}">Rename</button>
+          <button class="btn btn-secondary btn-sm text-danger" data-group-action="delete" data-group-id="${escapeHtml(g.id)}">Delete</button>
+        </div>`;
+    })
+    .join('');
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-group-action]');
+  if (!btn) return;
+  const group = state.groupsCache.find((g) => g.id === btn.dataset.groupId);
+  if (!group) return;
+  if (btn.dataset.groupAction === 'members') openGroupMembers(group);
+  if (btn.dataset.groupAction === 'rename') renameGroup(group);
+  if (btn.dataset.groupAction === 'delete') deleteGroup(group);
+});
+
+async function createGroup() {
+  const name = await uiPrompt('', { title: 'New group', placeholder: 'e.g. Finance', okText: 'Create' });
+  if (!name || !name.trim()) return;
+  const res = await apiFetch('/api/groups', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not create group'), 'danger');
+    return;
+  }
+  showToast(`Group "${name.trim()}" created`, 'success');
+  loadGroups();
+}
+
+async function renameGroup(group) {
+  const name = await uiPrompt('', { title: 'Rename group', value: group.name, okText: 'Rename' });
+  if (!name || !name.trim() || name.trim() === group.name) return;
+  const res = await apiFetch(`/api/groups/${group.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name: name.trim(), description: group.description || null }),
+  });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not rename group'), 'danger');
+    return;
+  }
+  await openUsersModal();
+}
+
+async function deleteGroup(group) {
+  const ok = await uiConfirm(
+    `Delete group "${group.name}"? Its members keep their accounts, but lose access given through this group.`,
+    { title: 'Delete group', okText: 'Delete', danger: true },
+  );
+  if (!ok) return;
+  const res = await apiFetch(`/api/groups/${group.id}`, { method: 'DELETE' });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not delete group'), 'danger');
+    return;
+  }
+  showToast(`Group "${group.name}" deleted`, 'success');
+  await openUsersModal();
+}
+
+let membersTarget = null;
+
+function openGroupMembers(group) {
+  membersTarget = group;
+  document.getElementById('group-members-title').textContent = `Members of ${group.name}`;
+  const ids = new Set(group.member_ids || []);
+  document.getElementById('group-members-list').innerHTML = state.usersCache
+    .map(
+      (u) => `
+      <label class="pw-check">
+        <input type="checkbox" value="${escapeHtml(u.id)}" ${ids.has(u.id) ? 'checked' : ''} />
+        <span>${escapeHtml(u.username)}${u.display_name && u.display_name !== u.username ? ` <span class="text-muted">(${escapeHtml(u.display_name)})</span>` : ''}</span>
+      </label>`,
+    )
+    .join('');
+  document.getElementById('group-members-box').style.transform = '';
+  document.getElementById('group-members').style.display = 'flex';
+}
+
+function closeGroupMembers() {
+  document.getElementById('group-members').style.display = 'none';
+  membersTarget = null;
+}
+
+async function saveGroupMembers() {
+  if (!membersTarget) return;
+  const user_ids = [...document.querySelectorAll('#group-members-list input:checked')].map((i) => i.value);
+  const res = await apiFetch(`/api/groups/${membersTarget.id}/members`, {
+    method: 'PUT',
+    body: JSON.stringify({ user_ids }),
+  });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not save members'), 'danger');
+    return;
+  }
+  closeGroupMembers();
+  showToast('Members saved', 'success');
+  await openUsersModal();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  makeDraggable(document.getElementById('group-members-box'), document.getElementById('group-members-header'));
+  const save = document.getElementById('group-members-save');
+  if (save) save.addEventListener('click', saveGroupMembers);
+  const overlay = document.getElementById('group-members');
+  if (overlay) {
+    overlay.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') closeGroupMembers();
+    });
+  }
+  const list = document.getElementById('conn-assign-list');
+  if (list) {
+    list.addEventListener('click', (e) => {
+      const rm = e.target.closest('.assign-remove');
+      if (rm) rm.closest('.assign-row').remove();
+    });
+  }
+});
+
+/** One line under a connection's name: where it comes from (users) or owner/assignees (admins). */
+function connectionAccessLine(c) {
+  if (c.access === 'admin') {
+    const parts = [];
+    if (c.owner_name) parts.push(`Owner: ${escapeHtml(c.owner_name)}`);
+    if (c.assigned_to && c.assigned_to.length) parts.push(`Assigned: ${c.assigned_to.map(escapeHtml).join(', ')}`);
+    return parts.length ? `<span class="conn-access-line">${parts.join(' · ')}</span>` : '';
+  }
+  const label = {
+    own: 'Mine',
+    assigned: 'Assigned to me',
+    group: `Via group ${escapeHtml(c.access_group || '')}`,
+    global: 'Shared with everyone',
+  }[c.access];
+  return label ? `<span class="conn-access-line">${label}</span>` : '';
+}
+
+/** Admins: fill the Owner and Assigned-to section of the connection dialog. */
+async function prepareAssignments(conn) {
+  const section = document.getElementById('conn-assign-section');
+  const list = document.getElementById('conn-assign-list');
+  const isAdm = state.currentUser && state.currentUser.role === 'admin';
+  list.innerHTML = '';
+  section.style.display = isAdm ? '' : 'none';
+  if (!isAdm) return;
+
+  try {
+    const [uRes, gRes] = await Promise.all([apiFetch('/api/users'), apiFetch('/api/groups')]);
+    if (uRes.ok) state.usersCache = await uRes.json();
+    if (gRes.ok) state.groupsCache = await gRes.json();
+  } catch (e) {}
+
+  const ownerId = conn ? conn.created_by : state.currentUser.id;
+  document.getElementById('conn-owner').innerHTML = state.usersCache
+    .map((u) => `<option value="${escapeHtml(u.id)}" ${u.id === ownerId ? 'selected' : ''}>${escapeHtml(u.username)}${u.id === state.currentUser.id ? ' (me)' : ''}</option>`)
+    .join('');
+
+  if (conn) {
+    try {
+      const res = await apiFetch(`/api/connections/${conn.id}/permissions`);
+      if (res.ok) {
+        const d = await res.json();
+        d.grants.forEach((g) => addAssignmentRow(g));
+      }
+    } catch (e) {}
+  }
+}
+
+function addAssignmentRow(grant) {
+  const g = grant || { can_connect: true, can_edit: false, can_clipboard: true, can_transfer: true };
+  const target = g.user_id ? `u:${g.user_id}` : g.group_id ? `g:${g.group_id}` : '';
+  const userOpts = state.usersCache
+    .map((u) => `<option value="u:${escapeHtml(u.id)}" ${target === 'u:' + u.id ? 'selected' : ''}>${escapeHtml(u.username)}</option>`)
+    .join('');
+  const groupOpts = state.groupsCache
+    .map((x) => `<option value="g:${escapeHtml(x.id)}" ${target === 'g:' + x.id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`)
+    .join('');
+  const row = document.createElement('div');
+  row.className = 'assign-row';
+  row.innerHTML = `
+    <select class="form-input assign-target">
+      <option value="">Choose user or group…</option>
+      <optgroup label="Users">${userOpts}</optgroup>
+      ${groupOpts ? `<optgroup label="Groups">${groupOpts}</optgroup>` : ''}
+    </select>
+    <label class="pw-check"><input type="checkbox" class="assign-connect" ${g.can_connect ? 'checked' : ''}/>Connect</label>
+    <label class="pw-check"><input type="checkbox" class="assign-edit" ${g.can_edit ? 'checked' : ''}/>Edit</label>
+    <label class="pw-check"><input type="checkbox" class="assign-clipboard" ${g.can_clipboard ? 'checked' : ''}/>Clipboard</label>
+    <label class="pw-check"><input type="checkbox" class="assign-transfer" ${g.can_transfer ? 'checked' : ''}/>Files</label>
+    <button type="button" class="assign-remove" title="Remove">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    </button>`;
+  document.getElementById('conn-assign-list').appendChild(row);
+}
+
+async function saveAssignments(connId) {
+  const grants = [];
+  for (const row of document.querySelectorAll('#conn-assign-list .assign-row')) {
+    const target = row.querySelector('.assign-target').value;
+    if (!target) continue;
+    const [kind, targetId] = [target.slice(0, 1), target.slice(2)];
+    grants.push({
+      user_id: kind === 'u' ? targetId : null,
+      group_id: kind === 'g' ? targetId : null,
+      can_connect: row.querySelector('.assign-connect').checked,
+      can_edit: row.querySelector('.assign-edit').checked,
+      can_clipboard: row.querySelector('.assign-clipboard').checked,
+      can_transfer: row.querySelector('.assign-transfer').checked,
+    });
+  }
+  const res = await apiFetch(`/api/connections/${connId}/permissions`, {
+    method: 'PUT',
+    body: JSON.stringify({ grants }),
+  });
+  if (!res.ok) {
+    showToast(`Connection saved, but assignments failed: ${await readError(res, 'unknown error')}`, 'danger');
+    return false;
+  }
+  return true;
 }
 
 // ================= Passwords =================

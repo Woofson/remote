@@ -96,6 +96,59 @@ mod tests {
     }
 
     #[test]
+    fn test_assignments_groups_and_access_source() {
+        use db::ConnectionUserPerms;
+        let db = Database::new_in_memory().unwrap();
+        let admin = test_user("root", "admin");
+        let anna = test_user("anna", "operator");
+        let ben = test_user("ben", "viewer");
+        for u in [&admin, &anna, &ben] {
+            db.create_user(u).unwrap();
+        }
+        let finance = db.create_group("Finance", None).unwrap();
+        db.set_group_members(&finance.id, &[anna.id.clone(), ben.id.clone()]).unwrap();
+        assert_eq!(db.group_members().unwrap()[&finance.id].len(), 2);
+
+        // Anna's own VM (admin-created, owned by Anna).
+        let mut annas_vm = test_conn("anna-vm", false);
+        annas_vm.created_by = Some(anna.id.clone());
+        db.save_connection(&annas_vm).unwrap();
+
+        // Shared finance box via the group, plus a direct grant for Ben.
+        let fin_box = test_conn("finance-box", false);
+        db.save_connection(&fin_box).unwrap();
+        let connect = ConnectionUserPerms { can_connect: true, can_edit: false, can_clipboard: true, can_transfer: false };
+        db.replace_connection_permissions(&fin_box.id, &[(None, Some(finance.id.clone()), connect.clone())]).unwrap();
+        let bens_box = test_conn("ben-box", false);
+        db.save_connection(&bens_box).unwrap();
+        db.replace_connection_permissions(&bens_box.id, &[(Some(ben.id.clone()), None, connect.clone())]).unwrap();
+
+        let access = |u: &User, id: &str| {
+            db.list_connections_for_user(u).unwrap().into_iter().find(|c| c.id == id).map(|c| (c.access, c.access_group))
+        };
+        assert_eq!(access(&anna, &annas_vm.id), Some(("own".into(), None)));
+        assert_eq!(access(&ben, &annas_vm.id), None, "not visible to others");
+        assert_eq!(access(&anna, &fin_box.id), Some(("group".into(), Some("Finance".into()))));
+        assert_eq!(access(&ben, &bens_box.id), Some(("assigned".into(), None)));
+        assert_eq!(access(&anna, &bens_box.id), None);
+
+        // Admin view names owner and assignees.
+        let list = db.list_connections_for_user(&admin).unwrap();
+        let vm = list.iter().find(|c| c.id == annas_vm.id).unwrap();
+        assert_eq!(vm.owner_name.as_deref(), Some("anna"));
+        let fb = list.iter().find(|c| c.id == fin_box.id).unwrap();
+        assert_eq!(fb.assigned_to, vec!["Group: Finance".to_string()]);
+        assert_eq!(db.list_connection_permissions(&fin_box.id).unwrap()[0].name.as_deref(), Some("Finance"));
+
+        // Removing Ben from the group removes his access to the finance box; deleting the group clears grants.
+        db.set_group_members(&finance.id, &[anna.id.clone()]).unwrap();
+        assert_eq!(access(&ben, &fin_box.id), None);
+        db.delete_group(&finance.id).unwrap();
+        assert!(db.list_connection_permissions(&fin_box.id).unwrap().is_empty());
+        assert_eq!(access(&anna, &fin_box.id), None);
+    }
+
+    #[test]
     fn test_explicit_grants_decide_access() {
         use db::ConnectionUserPerms;
         let db = Database::new_in_memory().unwrap();

@@ -389,6 +389,25 @@
       </div>
     </div>
 
+    <!-- Admin: Group members -->
+    <div id="group-members" class="modal-overlay ui-dialog-overlay" style="display:none;">
+      <div class="modal-box ui-dialog-box" id="group-members-box" role="dialog" aria-modal="true" aria-labelledby="group-members-title">
+        <div class="ui-dialog-header" id="group-members-header">
+          <span id="group-members-title" class="modal-title">Members</span>
+          <button type="button" class="ui-dialog-close" title="Close" onclick="closeGroupMembers()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+        </div>
+        <div class="ui-dialog-body">
+          <div id="group-members-list" class="members-list"></div>
+        </div>
+        <div class="ui-dialog-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeGroupMembers()">Cancel</button>
+          <button type="button" class="btn btn-accent" id="group-members-save">Save members</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Admin: Reset a user's password -->
     <div id="pw-reset" class="modal-overlay ui-dialog-overlay" style="display:none;">
       <div class="modal-box ui-dialog-box" id="pw-reset-box" role="dialog" aria-modal="true" aria-labelledby="pw-reset-title">
@@ -634,9 +653,23 @@
                 <label style="font-size: 11px; font-weight: 600;">Access Scope</label>
                 <select id="conn-is-global" class="form-input">
                   <option value="true" selected>🌐 Global (Shared with Team)</option>
-                  <option value="false">🔒 Personal (Private to Me)</option>
+                  <option value="false">🔒 Private (Owner and assigned only)</option>
                 </select>
               </div>
+            </div>
+
+            <!-- Owner & assignments (admins) -->
+            <div id="conn-assign-section" class="assign-section" style="display:none;">
+              <div class="form-group">
+                <label style="font-size: 11px; font-weight: 600;">Owner</label>
+                <select id="conn-owner" class="form-input"></select>
+              </div>
+              <div class="assign-header">
+                <span style="font-size: 11px; font-weight: 600;">Assigned to</span>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="addAssignmentRow()">+ Add user or group</button>
+              </div>
+              <div id="conn-assign-list" class="assign-list"></div>
+              <div class="pw-hint">Assigned users and groups see this connection in their directory. The owner and admins can always edit it; edit by assignment covers details, not access rules.</div>
             </div>
 
             <!-- Protocol, Host, Port -->
@@ -846,6 +879,7 @@
                 <th>Email</th>
                 <th>Role</th>
                 <th>Auth Provider</th>
+                <th>Groups</th>
                 <th>Status</th>
                 <th>Created</th>
                 <th>Actions</th>
@@ -853,6 +887,16 @@
             </thead>
             <tbody id="users-table-body"></tbody>
           </table>
+
+          <!-- Groups -->
+          <div class="groups-section">
+            <div class="groups-header">
+              <span class="pw-section-title" style="margin: 0;">Groups</span>
+              <button class="btn btn-secondary btn-sm" onclick="createGroup()">+ New group</button>
+            </div>
+            <p class="pw-hint" style="margin: 0 0 8px 0;">Assign connections to a group to give all its members access in one step.</p>
+            <div id="groups-list" class="groups-list"></div>
+          </div>
         </div>
       </div>
     </div>

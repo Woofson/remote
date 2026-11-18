@@ -71,6 +71,12 @@ pub fn create_router(state: AppState) -> Router {
             put(api_update_user).delete(api_delete_user),
         )
         .route("/api/groups", get(api_list_groups).post(api_create_group))
+        .route("/api/groups/:id", put(api_update_group).delete(api_delete_group))
+        .route("/api/groups/:id/members", put(api_set_group_members))
+        .route(
+            "/api/connections/:id/permissions",
+            get(api_get_connection_permissions).put(api_set_connection_permissions),
+        )
         // Connections API
         .route(
             "/api/connections",
@@ -825,15 +831,119 @@ pub async fn api_delete_user(
 pub async fn api_list_groups(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<Group>>, (StatusCode, Json<Value>)> {
-    let _ = extract_claims(&state, &headers)?;
-    let groups = state.db.list_groups().map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": e.to_string() })),
-        )
-    })?;
-    Ok(Json(groups))
+) -> Result<Json<Vec<Value>>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    let internal = |e: rusqlite::Error| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() })));
+    let groups = state.db.list_groups().map_err(internal)?;
+    let members = if claims.role == "admin" { state.db.group_members().map_err(internal)? } else { Default::default() };
+    Ok(Json(
+        groups
+            .into_iter()
+            .map(|g| {
+                let ids = members.get(&g.id).cloned().unwrap_or_default();
+                let mut v = json!(g);
+                v["member_ids"] = json!(ids);
+                v
+            })
+            .collect(),
+    ))
+}
+
+fn require_admin(claims: &Claims) -> Result<(), (StatusCode, Json<Value>)> {
+    if claims.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Admin role required" }))));
+    }
+    Ok(())
+}
+
+pub async fn api_update_group(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<CreateGroupPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let name = payload.name.trim();
+    if name.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "Group name is required" }))));
+    }
+    let found = state
+        .db
+        .rename_group(&id, name, payload.description.as_deref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?;
+    if !found {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Group not found" }))));
+    }
+    state.db.log_audit(Some(&claims.sub), &claims.username, "GROUP_UPDATED", None, None, Some(&format!("Group '{}'", name)), None);
+    Ok(Json(json!({ "message": "Group updated" })))
+}
+
+pub async fn api_delete_group(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let name = state.db.list_groups().ok().and_then(|g| g.into_iter().find(|g| g.id == id)).map(|g| g.name);
+    let found = state
+        .db
+        .delete_group(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    if !found {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Group not found" }))));
+    }
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "GROUP_DELETED",
+        None,
+        None,
+        Some(&format!("Group '{}' (memberships and assignments removed)", name.unwrap_or_default())),
+        None,
+    );
+    Ok(Json(json!({ "message": "Group deleted" })))
+}
+
+#[derive(Deserialize)]
+pub struct GroupMembersPayload {
+    pub user_ids: Vec<String>,
+}
+
+pub async fn api_set_group_members(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<GroupMembersPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let group = state
+        .db
+        .list_groups()
+        .ok()
+        .and_then(|g| g.into_iter().find(|g| g.id == id))
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": "Group not found" }))))?;
+    for uid in &payload.user_ids {
+        if state.db.get_user_by_id(uid).ok().flatten().is_none() {
+            return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": format!("Unknown user {}", uid) }))));
+        }
+    }
+    state
+        .db
+        .set_group_members(&id, &payload.user_ids)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "GROUP_MEMBERS_CHANGED",
+        None,
+        None,
+        Some(&format!("Group '{}': {} member(s)", group.name, payload.user_ids.len())),
+        None,
+    );
+    Ok(Json(json!({ "message": "Members updated" })))
 }
 
 #[derive(Deserialize)]
@@ -919,6 +1029,8 @@ pub struct SaveConnectionPayload {
     pub allow_clipboard: Option<String>,
     pub allow_transfer: Option<String>,
     pub view_only: Option<bool>,
+    /// Admins: the user this connection belongs to (default: the creator).
+    pub owner_id: Option<String>,
 }
 
 pub async fn api_create_connection(
@@ -993,7 +1105,18 @@ pub async fn api_create_connection(
         allow_clipboard,
         allow_transfer,
         view_only,
-        created_by: Some(claims.sub),
+        created_by: Some(match payload.owner_id.filter(|o| is_admin && !o.is_empty()) {
+            Some(owner) => {
+                state
+                    .db
+                    .get_user_by_id(&owner)
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "Owner not found" }))))?;
+                owner
+            }
+            None => claims.sub.clone(),
+        }),
         created_at: now.clone(),
         updated_at: now,
     };
@@ -1041,12 +1164,19 @@ pub async fn api_update_connection(
 
     let is_admin = claims.role == "admin";
     let is_owner = record.created_by.as_deref() == Some(&claims.sub);
-    if !is_admin && !is_owner {
+    let can_edit_by_grant = !is_admin
+        && !is_owner
+        && authorize_connection(&state, &claims, &id, "Edit")
+            .map(|a| a.perms.can_edit)
+            .unwrap_or(false);
+    if !is_admin && !is_owner && !can_edit_by_grant {
         return Err((
             StatusCode::FORBIDDEN,
-            Json(json!({ "error": "Access denied: only the owner or an administrator can modify this connection" })),
+            Json(json!({ "error": "Access denied: you may not edit this connection" })),
         ));
     }
+    // Access rules stay with the owner and admins; editors by assignment change details only.
+    let may_change_rules = is_admin || is_owner;
 
     record.name = payload.name;
     record.protocol = payload.protocol;
@@ -1061,14 +1191,29 @@ pub async fn api_update_connection(
             record.is_global = g;
         }
     }
-    if let Some(clip) = payload.allow_clipboard {
-        record.allow_clipboard = clip;
+    if may_change_rules {
+        if let Some(clip) = payload.allow_clipboard {
+            record.allow_clipboard = clip;
+        }
+        if let Some(trans) = payload.allow_transfer {
+            record.allow_transfer = trans;
+        }
+        if let Some(vo) = payload.view_only {
+            record.view_only = vo;
+        }
     }
-    if let Some(trans) = payload.allow_transfer {
-        record.allow_transfer = trans;
-    }
-    if let Some(vo) = payload.view_only {
-        record.view_only = vo;
+    if is_admin {
+        if let Some(owner) = payload.owner_id.filter(|o| !o.is_empty()) {
+            if record.created_by.as_deref() != Some(owner.as_str()) {
+                state
+                    .db
+                    .get_user_by_id(&owner)
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "Owner not found" }))))?;
+                record.created_by = Some(owner);
+            }
+        }
     }
     record.updated_at = chrono::Utc::now().to_rfc3339();
 
@@ -1179,6 +1324,111 @@ pub async fn api_test_connection(
         "host": payload.host,
         "port": payload.port,
     })))
+}
+
+// ================= Connection Assignments =================
+
+pub async fn api_get_connection_permissions(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let grants = state
+        .db
+        .list_connection_permissions(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    Ok(Json(json!({ "grants": grants })))
+}
+
+#[derive(Deserialize)]
+pub struct GrantPayload {
+    pub user_id: Option<String>,
+    pub group_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub can_connect: bool,
+    #[serde(default)]
+    pub can_edit: bool,
+    #[serde(default = "default_true")]
+    pub can_clipboard: bool,
+    #[serde(default = "default_true")]
+    pub can_transfer: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
+pub struct SetGrantsPayload {
+    pub grants: Vec<GrantPayload>,
+}
+
+/// Admin: replace who a connection is assigned to.
+pub async fn api_set_connection_permissions(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<SetGrantsPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let bad = |m: String| (StatusCode::BAD_REQUEST, Json(json!({ "error": m })));
+    let conn = state
+        .db
+        .get_connection_raw(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": "Connection not found" }))))?;
+
+    let groups = state.db.list_groups().unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    let mut grants = Vec::new();
+    for g in payload.grants {
+        let user_id = g.user_id.filter(|v| !v.is_empty());
+        let group_id = g.group_id.filter(|v| !v.is_empty());
+        match (&user_id, &group_id) {
+            (Some(u), None) => {
+                if state.db.get_user_by_id(u).ok().flatten().is_none() {
+                    return Err(bad(format!("Unknown user {}", u)));
+                }
+            }
+            (None, Some(gid)) => {
+                if !groups.iter().any(|x| &x.id == gid) {
+                    return Err(bad(format!("Unknown group {}", gid)));
+                }
+            }
+            _ => return Err(bad("Each assignment needs exactly one user or one group".into())),
+        }
+        if !seen.insert((user_id.clone(), group_id.clone())) {
+            continue; // same target listed twice: keep the first
+        }
+        grants.push((
+            user_id,
+            group_id,
+            ConnectionUserPerms {
+                can_connect: g.can_connect,
+                can_edit: g.can_edit,
+                can_clipboard: g.can_clipboard,
+                can_transfer: g.can_transfer,
+            },
+        ));
+    }
+
+    state
+        .db
+        .replace_connection_permissions(&id, &grants)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "PERMISSIONS_CHANGED",
+        Some(&conn.id),
+        Some(&conn.name),
+        Some(&format!("{} assignment(s)", grants.len())),
+        None,
+    );
+    Ok(Json(json!({ "message": "Assignments saved", "count": grants.len() })))
 }
 
 // ================= Connection Authorization =================

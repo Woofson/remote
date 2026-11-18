@@ -110,6 +110,13 @@ pub struct ConnectionSafe {
     pub created_at: String,
     pub updated_at: String,
     pub user_permissions: ConnectionUserPerms,
+    /// Why this user sees the connection: "admin", "own", "assigned", "group" or "global".
+    pub access: String,
+    /// For access "group": the group name.
+    pub access_group: Option<String>,
+    /// Admins only: owner's username and the names of users/groups it is assigned to.
+    pub owner_name: Option<String>,
+    pub assigned_to: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -126,6 +133,8 @@ pub struct ConnectionPermission {
     pub connection_id: String,
     pub user_id: Option<String>,
     pub group_id: Option<String>,
+    /// Username or group name, for display.
+    pub name: Option<String>,
     pub can_connect: bool,
     pub can_edit: bool,
     pub can_clipboard: bool,
@@ -628,6 +637,47 @@ impl Database {
         })
     }
 
+    pub fn rename_group(&self, id: &str, name: &str, description: Option<&str>) -> SqlResult<bool> {
+        let n = self.conn.lock().execute(
+            "UPDATE groups SET name = ?1, description = ?2 WHERE id = ?3",
+            params![name, description, id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Delete a group; its memberships and connection grants go with it (ON DELETE CASCADE).
+    pub fn delete_group(&self, id: &str) -> SqlResult<bool> {
+        let n = self.conn.lock().execute("DELETE FROM groups WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
+    /// group id -> member user ids
+    pub fn group_members(&self) -> SqlResult<std::collections::HashMap<String, Vec<String>>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT group_id, user_id FROM user_groups")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        for row in rows {
+            let (g, u) = row?;
+            map.entry(g).or_default().push(u);
+        }
+        Ok(map)
+    }
+
+    /// Replace a group's members in one transaction.
+    pub fn set_group_members(&self, group_id: &str, user_ids: &[String]) -> SqlResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM user_groups WHERE group_id = ?1", params![group_id])?;
+        for uid in user_ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?1, ?2)",
+                params![uid, group_id],
+            )?;
+        }
+        tx.commit()
+    }
+
     // ================= Connections =================
 
     pub fn list_connections_for_user(&self, user: &User) -> SqlResult<Vec<ConnectionSafe>> {
@@ -698,6 +748,8 @@ impl Database {
             let is_owner = created_by.as_deref() == Some(&user.id);
             let can_clipboard_val = allow_clipboard != "disabled";
             let can_transfer_val = allow_transfer != "disabled";
+            let mut access = if is_admin { "admin" } else if is_owner { "own" } else { "global" };
+            let mut access_group: Option<String> = None;
 
             let perms = if is_admin {
                 ConnectionUserPerms {
@@ -716,9 +768,10 @@ impl Database {
             } else {
                 // Check granular permissions if defined
                 let mut p_stmt = conn.prepare(
-                    "SELECT cp.can_connect, cp.can_edit, cp.can_clipboard, cp.can_transfer 
+                    "SELECT cp.can_connect, cp.can_edit, cp.can_clipboard, cp.can_transfer, cp.user_id, g.name
                      FROM connection_permissions cp
                      LEFT JOIN user_groups ug ON ug.group_id = cp.group_id
+                     LEFT JOIN groups g ON g.id = cp.group_id
                      WHERE cp.connection_id = ?1 AND (cp.user_id = ?2 OR ug.user_id = ?2)",
                 )?;
                 let mut p_rows = p_stmt.query(params![id, user.id])?;
@@ -733,6 +786,14 @@ impl Database {
                 let mut found = false;
                 while let Some(p_row) = p_rows.next()? {
                     found = true;
+                    if p_row.get::<_, Option<String>>(4)?.is_some() {
+                        access = "assigned";
+                    } else if access != "assigned" {
+                        access = "group";
+                        if access_group.is_none() {
+                            access_group = p_row.get::<_, Option<String>>(5)?;
+                        }
+                    }
                     if p_row.get::<_, i64>(0)? != 0 { user_perms.can_connect = true; }
                     if p_row.get::<_, i64>(1)? != 0 { user_perms.can_edit = true; }
                     if p_row.get::<_, i64>(2)? != 0 { user_perms.can_clipboard = true; }
@@ -773,10 +834,91 @@ impl Database {
                 created_at,
                 updated_at,
                 user_permissions: perms,
+                access: access.to_string(),
+                access_group: if access == "group" { access_group } else { None },
+                owner_name: None,
+                assigned_to: Vec::new(),
             });
         }
 
+        if is_admin {
+            for c in connections.iter_mut() {
+                if let Some(owner) = &c.created_by {
+                    c.owner_name = conn
+                        .query_row("SELECT username FROM users WHERE id = ?1", params![owner], |r| r.get(0))
+                        .optional()?;
+                }
+                let mut a_stmt = conn.prepare(
+                    "SELECT COALESCE(u.username, 'Group: ' || g.name)
+                     FROM connection_permissions cp
+                     LEFT JOIN users u ON u.id = cp.user_id
+                     LEFT JOIN groups g ON g.id = cp.group_id
+                     WHERE cp.connection_id = ?1
+                     ORDER BY cp.group_id IS NOT NULL, 1",
+                )?;
+                let names = a_stmt.query_map(params![c.id], |r| r.get::<_, Option<String>>(0))?;
+                c.assigned_to = names.filter_map(|n| n.ok().flatten()).collect();
+            }
+        }
+
         Ok(connections)
+    }
+
+    /// All grants on a connection, with user/group names for display.
+    pub fn list_connection_permissions(&self, connection_id: &str) -> SqlResult<Vec<ConnectionPermission>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT cp.id, cp.connection_id, cp.user_id, cp.group_id, COALESCE(u.username, g.name),
+                    cp.can_connect, cp.can_edit, cp.can_clipboard, cp.can_transfer
+             FROM connection_permissions cp
+             LEFT JOIN users u ON u.id = cp.user_id
+             LEFT JOIN groups g ON g.id = cp.group_id
+             WHERE cp.connection_id = ?1
+             ORDER BY cp.group_id IS NOT NULL, 5",
+        )?;
+        let rows = stmt.query_map(params![connection_id], |r| {
+            Ok(ConnectionPermission {
+                id: r.get(0)?,
+                connection_id: r.get(1)?,
+                user_id: r.get(2)?,
+                group_id: r.get(3)?,
+                name: r.get(4)?,
+                can_connect: r.get::<_, i64>(5)? != 0,
+                can_edit: r.get::<_, i64>(6)? != 0,
+                can_clipboard: r.get::<_, i64>(7)? != 0,
+                can_transfer: r.get::<_, i64>(8)? != 0,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Replace all grants on a connection in one transaction.
+    pub fn replace_connection_permissions(
+        &self,
+        connection_id: &str,
+        grants: &[(Option<String>, Option<String>, ConnectionUserPerms)],
+    ) -> SqlResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM connection_permissions WHERE connection_id = ?1", params![connection_id])?;
+        for (user_id, group_id, p) in grants {
+            tx.execute(
+                "INSERT INTO connection_permissions
+                    (id, connection_id, user_id, group_id, can_connect, can_edit, can_clipboard, can_transfer)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    Uuid::new_v4().to_string(),
+                    connection_id,
+                    user_id,
+                    group_id,
+                    p.can_connect as i64,
+                    p.can_edit as i64,
+                    p.can_clipboard as i64,
+                    p.can_transfer as i64
+                ],
+            )?;
+        }
+        tx.commit()
     }
 
     pub fn get_connection_raw(&self, id: &str) -> SqlResult<Option<ConnectionRecord>> {

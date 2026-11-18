@@ -1217,6 +1217,107 @@ body, html {
   color: #fecaca;
 }
 
+/* Groups & connection assignments */
+.groups-section {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--woofson-border, #3f3f46);
+}
+
+.groups-header,
+.assign-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.groups-list,
+.assign-list,
+.members-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-row,
+.assign-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-radius: 6px;
+  background: var(--woofson-bg-void, #121214);
+}
+
+.group-row-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-row-meta {
+  font-size: 11px;
+  color: var(--woofson-text-muted, #a1a1aa);
+}
+
+.assign-section {
+  margin: 4px 0 10px;
+  padding: 10px;
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.assign-row select.form-input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+}
+
+.assign-row .pw-check {
+  margin: 0;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.assign-remove {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--woofson-text-muted, #a1a1aa);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.assign-remove:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.members-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.conn-access-line {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--woofson-text-muted, #a1a1aa);
+}
+
 /* Password forms */
 .pw-section {
   margin-top: 12px;
