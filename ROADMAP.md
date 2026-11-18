@@ -12,13 +12,13 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 
 - RDP, VNC, SSH, Telnet and local shell sessions in a 1 to 4 pane grid.
 - Local accounts, roles (Admin, Operator, Viewer), per-connection permissions, global and personal connections, OpenID Connect login, audit log.
-- Clipboard sync for RDP, VNC and SSH; SFTP file browsing; upload staging.
+- Clipboard sync for RDP, VNC and SSH; SFTP file browsing.
+- Files: shared folder managed from the browser and offered to RDP sessions as `\\tsclient\Files` ([#5](https://github.com/Woofson/remote/issues/5), [#13](https://github.com/Woofson/remote/issues/13)).
 - Per-pane keyboard layouts, RDP dynamic resolution and performance presets.
 - Full window mode and session lock screen.
 
 ## Open bugs
 
-- Windows drive redirection (`\\tsclient\Dropbox`) was lost in a refactor and needs restoring ([#5](https://github.com/Woofson/remote/issues/5)).
 - fish/zsh terminal support needs confirming ([#4](https://github.com/Woofson/remote/issues/4)).
 - Keyboard layout "Auto" mode and non-RDP protocols need confirming ([#6](https://github.com/Woofson/remote/issues/6)).
 

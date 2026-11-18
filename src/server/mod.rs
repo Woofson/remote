@@ -17,7 +17,7 @@ use axum::{
     body::Body,
     extract::{
         ws::WebSocketUpgrade,
-        Multipart, Path as AxumPath, Query, State,
+        DefaultBodyLimit, Multipart, Path as AxumPath, Query, State,
     },
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
@@ -46,6 +46,13 @@ pub struct AppState {
 }
 
 pub fn create_router(state: AppState) -> Router {
+    let upload_limit = state
+        .config
+        .read()
+        .storage
+        .max_upload_size_mb
+        .saturating_mul(1024 * 1024);
+
     Router::new()
         // Auth API
         .route("/api/auth/login", post(api_login))
@@ -71,12 +78,16 @@ pub fn create_router(state: AppState) -> Router {
             put(api_update_connection).delete(api_delete_connection),
         )
         .route("/api/connections/test", post(api_test_connection))
-        // File Transfers & Dropboxes API
-        .route("/api/transfers/upload", post(api_upload_file))
+        // Files (shared folder, also the RDP \\tsclient\Files drive)
+        .route("/api/files/list", get(api_files_list))
+        .route("/api/files/download", get(api_files_download))
         .route(
-            "/api/transfers/download/:id",
-            get(api_download_staged_file),
+            "/api/files/upload",
+            post(api_files_upload).layer(DefaultBodyLimit::max(upload_limit)),
         )
+        .route("/api/files/mkdir", post(api_files_mkdir))
+        .route("/api/files/delete", post(api_files_delete))
+        // SFTP transfers
         .route(
             "/api/transfers/sftp/:connection_id/list",
             post(api_sftp_list),
@@ -957,92 +968,204 @@ pub async fn api_test_connection(
     Json(json!({ "reachable": reachable, "host": payload.host, "port": payload.port }))
 }
 
-// ================= File Transfers & Dropboxes API =================
+// ================= Files API =================
 
-pub async fn api_upload_file(
+#[derive(Deserialize)]
+pub struct FilesPathQuery {
+    pub path: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct FilesMkdirPayload {
+    pub path: Option<String>,
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+pub struct FilesDeletePayload {
+    pub path: String,
+}
+
+fn files_err(code: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Value>) {
+    (code, Json(json!({ "error": msg.into() })))
+}
+
+/// Uploading and deleting need the Operator or Admin role; Viewers can browse and download.
+fn require_files_writer(claims: &Claims) -> Result<(), (StatusCode, Json<Value>)> {
+    if claims.role != "admin" && claims.role != "operator" {
+        return Err(files_err(StatusCode::FORBIDDEN, "Operator or Admin role required"));
+    }
+    Ok(())
+}
+
+/// `Content-Disposition` value that is safe for any file name (ASCII fallback + UTF-8 name).
+fn content_disposition(name: &str) -> String {
+    let fallback: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || " .-_()[]".contains(c) { c } else { '_' })
+        .collect();
+    format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        fallback,
+        urlencoding::encode(name)
+    )
+}
+
+pub async fn api_files_list(
     State(state): State<AppState>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    Query(q): Query<FilesPathQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().clone();
+    let _ = extract_claims(&headers, &cfg.server.jwt_secret)?;
+
+    let (path, entries) = state
+        .transfer_mgr
+        .list(q.path.as_deref().unwrap_or(""))
+        .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
+
+    Ok(Json(json!({ "path": path, "entries": entries })))
+}
+
+pub async fn api_files_download(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<FilesPathQuery>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
     let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
 
-    let mut staged_files = Vec::new();
+    let file = state
+        .transfer_mgr
+        .file(q.path.as_deref().unwrap_or(""))
+        .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
 
-    while let Some(field) = multipart
-        .next_field()
+    let handle = tokio::fs::File::open(&file.abs)
         .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?
-    {
-        let original_name = field
-            .file_name()
-            .unwrap_or("upload.bin")
-            .to_string();
-        let content_type = field
-            .content_type()
-            .unwrap_or("application/octet-stream")
-            .to_string();
+        .map_err(|_| files_err(StatusCode::NOT_FOUND, "File not found"))?;
+    let size = handle.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let name = file
+        .abs
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "file.bin".to_string());
 
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e.to_string() }))))?;
+    state
+        .db
+        .log_transfer(None, Some(&claims.sub), &file.rel, size, "download", "completed");
 
-        let staged = state
-            .transfer_mgr
-            .save_upload(original_name, content_type, data)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
-
-        state.db.log_transfer(
-            None,
-            Some(&claims.sub),
-            &staged.original_name,
-            staged.file_size,
-            "upload",
-            "staged",
-        );
-
-        staged_files.push(staged);
-    }
-
-    Ok(Json(json!({ "files": staged_files })))
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, size)
+        .header(header::CONTENT_DISPOSITION, content_disposition(&name))
+        .body(Body::from_stream(tokio_util::io::ReaderStream::new(handle)))
+        .map_err(|e| files_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
 
-pub async fn api_download_staged_file(
+pub async fn api_files_upload(
     State(state): State<AppState>,
-    AxumPath(id): AxumPath<String>,
-) -> Result<Response, (StatusCode, Json<Value>)> {
-    if let Some(path) = state.transfer_mgr.get_staged_file(&id) {
-        if let Ok(data) = tokio::fs::read(&path).await {
-            let filename = path
-                .file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| "file.bin".to_string());
+    headers: HeaderMap,
+    Query(q): Query<FilesPathQuery>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    use tokio::io::AsyncWriteExt;
 
-            let clean_name = if filename.contains('_') {
-                filename.split_once('_').map(|(_, b)| b).unwrap_or(&filename)
-            } else {
-                &filename
-            };
+    let cfg = state.config.read().clone();
+    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    require_files_writer(&claims)?;
 
-            let resp = Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "application/octet-stream")
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"{}\"", clean_name),
-                )
-                .body(Body::from(data))
-                .unwrap();
-            return Ok(resp);
+    let dir = state
+        .transfer_mgr
+        .folder(q.path.as_deref().unwrap_or(""))
+        .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
+
+    let mut saved = Vec::new();
+
+    while let Some(mut field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| files_err(StatusCode::BAD_REQUEST, e.to_string()))?
+    {
+        let name = crate::transfer::sanitize_name(field.file_name().unwrap_or("upload.bin"))
+            .map_err(|e| files_err(StatusCode::BAD_REQUEST, e))?;
+
+        // Stream to a temporary file so large uploads never sit in memory.
+        let part = TransferManager::part_path(&dir.abs);
+        let mut out = tokio::fs::File::create(&part)
+            .await
+            .map_err(|e| files_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        let mut size: u64 = 0;
+        let result: Result<(), String> = async {
+            while let Some(chunk) = field.chunk().await.map_err(|e| e.to_string())? {
+                size += chunk.len() as u64;
+                out.write_all(&chunk).await.map_err(|e| e.to_string())?;
+            }
+            out.flush().await.map_err(|e| e.to_string())
         }
+        .await;
+        drop(out);
+
+        if let Err(e) = result {
+            let _ = tokio::fs::remove_file(&part).await;
+            return Err(files_err(StatusCode::BAD_REQUEST, format!("Upload failed: {}", e)));
+        }
+
+        let rel = state.transfer_mgr.finish_upload(&dir, &part, &name).map_err(|e| {
+            let _ = std::fs::remove_file(&part);
+            files_err(StatusCode::INTERNAL_SERVER_ERROR, e)
+        })?;
+
+        state
+            .db
+            .log_transfer(None, Some(&claims.sub), &rel, size, "upload", "completed");
+        saved.push(json!({ "path": rel, "size": size }));
     }
 
-    Err((
-        StatusCode::NOT_FOUND,
-        Json(json!({ "error": "Staged file not found" })),
-    ))
+    Ok(Json(json!({ "files": saved })))
+}
+
+pub async fn api_files_mkdir(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<FilesMkdirPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().clone();
+    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    require_files_writer(&claims)?;
+
+    let rel = state
+        .transfer_mgr
+        .mkdir(payload.path.as_deref().unwrap_or(""), &payload.name)
+        .map_err(|e| files_err(StatusCode::BAD_REQUEST, e))?;
+
+    Ok(Json(json!({ "path": rel })))
+}
+
+pub async fn api_files_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<FilesDeletePayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let cfg = state.config.read().clone();
+    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    require_files_writer(&claims)?;
+
+    let (rel, was_dir) = state
+        .transfer_mgr
+        .delete(&payload.path)
+        .map_err(|e| files_err(StatusCode::BAD_REQUEST, e))?;
+
+    state.db.log_transfer(
+        None,
+        Some(&claims.sub),
+        &rel,
+        0,
+        if was_dir { "delete_folder" } else { "delete" },
+        "completed",
+    );
+
+    Ok(Json(json!({ "deleted": rel })))
 }
 
 #[derive(Deserialize)]
@@ -1127,7 +1250,8 @@ pub async fn api_sftp_list(
 
 #[derive(Deserialize)]
 pub struct SftpUploadStagedPayload {
-    pub staged_id: String,
+    /// File path inside the Files folder.
+    pub file_path: String,
     pub remote_path: String,
 }
 
@@ -1142,13 +1266,9 @@ pub async fn api_sftp_upload_staged(
 
     let local_path = state
         .transfer_mgr
-        .get_staged_file(&payload.staged_id)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(json!({ "error": "Staged file not found" })),
-            )
-        })?;
+        .file(&payload.file_path)
+        .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?
+        .abs;
 
     let conn_rec = state
         .db

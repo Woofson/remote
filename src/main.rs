@@ -21,17 +21,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     remoted::init_crypto_provider();
 
-    println!(
-        r#"
-  ██████╗ ███████╗███╗   ███╗ ██████╗ ████████╗███████╗
-  ██╔══██╗██╔════╝████╗ ████║██╔═══██╗╚══██╔══╝██╔════╝
-  ██████╔╝█████╗  ██╔████╔██║██║   ██║   ██║   █████╗  
-  ██╔══██╗██╔══╝  ██║╚██╔╝██║██║   ██║   ██║   ██╔══╝  
-  ██║  ██║███████╗██║ ╚═╝ ██║╚██████╔╝   ██║   ███████╗
-  ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝ ╚═════╝    ╚═╝   ╚══════╝
-                 Ultra-Low-Resource Remote Gateway — By Woofson
-"#
-    );
+    println!("\n{}\n", include_str!("../banner.txt").trim_end());
 
     let config_path = "config.toml";
     let config = AppConfig::load_or_create(config_path)?;

@@ -1679,6 +1679,7 @@ dependencies = [
  "ironrdp-pdu",
  "ironrdp-propertyset",
  "ironrdp-rdcleanpath",
+ "ironrdp-rdpdr",
  "ironrdp-session",
  "ironrdp-svc",
  "ironrdp-tls",
@@ -1889,6 +1890,19 @@ dependencies = [
  "ironrdp-rdpdr",
  "ironrdp-svc",
  "nix 0.31.3",
+ "tracing",
+]
+
+[[package]]
+name = "ironrdp-rdpsnd"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d1a4f7092ae8fdc0a2f61be8e100277dc6f4ad51b85455dc9e8157979993ea2"
+dependencies = [
+ "bitflags 2.13.1",
+ "ironrdp-core",
+ "ironrdp-pdu",
+ "ironrdp-svc",
  "tracing",
 ]
 
@@ -3039,7 +3053,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remoted"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "argon2",
@@ -3062,6 +3076,7 @@ dependencies = [
  "ironrdp-pdu",
  "ironrdp-rdpdr",
  "ironrdp-rdpdr-native",
+ "ironrdp-rdpsnd",
  "ironrdp-session",
  "ironrdp-svc",
  "ironrdp-tls",
@@ -3084,6 +3099,7 @@ dependencies = [
  "ssh2",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "tower-http 0.5.2",
  "tracing",

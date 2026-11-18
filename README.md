@@ -21,7 +21,7 @@ By Bolt J Woofson @ Woofsons Lab. Free and open source; if it is useful to you, 
 - Terminal based on xterm.js with a bundled JetBrainsMono Nerd Font.
 - Per-pane keyboard layout switcher (NO, US, GB, SE, DK, FI, DE, FR, ES, IT, Auto).
 - Clipboard drawer for pushing text to and pulling text from remote sessions.
-- Drag-and-drop file upload to a staging area.
+- **Files**: a shared folder you can browse, upload to, download from and organise in folders from the browser. RDP sessions with drive redirection see the same folder as `\\tsclient\Files`.
 
 **Users and access**
 - Local accounts in an embedded SQLite database, with Argon2id password hashing and JWT sessions.
@@ -68,7 +68,7 @@ src/
   db/                SQLite storage: users, groups, connections, audit log
   auth/              Password hashing, sessions, encryption, OIDC
   server/            HTTP API and WebSocket session tunnels
-  transfer/          File upload staging
+  transfer/          Files folder (browser file manager and RDP drive)
   protocols/         rdp.rs, vnc.rs, ssh.rs, telnet.rs, local_pty.rs
 frontend/            Web interface (index.html, app.js, app.css), built into the binary
 ```
@@ -78,7 +78,6 @@ frontend/            Web interface (index.html, app.js, app.css), built into the
 ## Status and roadmap
 
 Planned work and known bugs are tracked in [GitHub Issues](https://github.com/Woofson/remote/issues). Known gaps:
-- Windows drive redirection (`\\tsclient\Dropbox`) is currently missing ([#5](https://github.com/Woofson/remote/issues/5)).
 - Running behind a reverse proxy is not fully supported yet ([#3](https://github.com/Woofson/remote/issues/3)).
 
 Release history: [CHANGELOG.md](CHANGELOG.md).

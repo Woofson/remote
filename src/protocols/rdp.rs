@@ -512,6 +512,37 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         }
     }
 
+    if params.enable_drive_redirection {
+        // Windows only starts the RDPDR channel when the client also advertises RDPSND
+        // (MS-RDPEFS, Appendix A). Register a silent RDPSND channel that offers no audio
+        // formats, so no audio is streamed.
+        config_builder = config_builder.with_static_channel(|_ps| {
+            Some(ironrdp_rdpsnd::client::Rdpsnd::new(Box::new(
+                ironrdp_rdpsnd::client::NoopRdpsndBackend,
+            )))
+        });
+        config_builder = config_builder.with_rdpdr(true);
+        let staging_dir = params
+            .staging_dir
+            .clone()
+            .unwrap_or_else(|| "./data/staging".to_string());
+        let _ = std::fs::create_dir_all(&staging_dir);
+        let staging_dir_clone = staging_dir.clone();
+
+        info!(
+            "RDP Gateway: Enabling RDPDR drive redirection for Files folder '{}' as \\\\tsclient\\Files",
+            staging_dir
+        );
+        config_builder = config_builder.with_static_channel(move |_ps| {
+            let backend = Box::new(ironrdp_rdpdr_native::backend::NixRdpdrBackend::new(
+                staging_dir_clone.clone(),
+            ));
+            let rdpdr = ironrdp_rdpdr::Rdpdr::new(backend, "Remote".to_owned())
+                .with_drives(Some(vec![(1, "Files".to_owned())]));
+            Some(rdpdr)
+        });
+    }
+
     let config = match config_builder.build() {
         Ok(c) => c,
         Err(e) => {

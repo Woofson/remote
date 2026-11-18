@@ -37,7 +37,7 @@ const state = {
   activePaneIndex: 1,
   paneLayout: 1,
   connections: [],
-  stagedFiles: [],
+  filesPath: '',
   panes: {
     1: { id: 1, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
     2: { id: 2, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
@@ -734,12 +734,12 @@ function copyCurrentOriginToClipboard() {
   const origin = window.location.origin;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(origin).then(() => {
-      showToast(`Copied ${origin} to clipboard!`);
+      showToast(`Copied ${origin} to clipboard!`, 'success');
     }).catch(() => {
-      prompt('Copy this origin URL for chrome://flags:', origin);
+      uiCopyDialog('Copy origin URL', 'Copy this origin URL for chrome://flags:', origin);
     });
   } else {
-    prompt('Copy this origin URL for chrome://flags:', origin);
+    uiCopyDialog('Copy origin URL', 'Copy this origin URL for chrome://flags:', origin);
   }
 }
 
@@ -828,10 +828,10 @@ async function handleUpdateProfile(e) {
       setTimeout(() => { closeUserProfileModal(); msgEl.style.display = 'none'; }, 1000);
     } else {
       const d = await res.json();
-      alert(d.error || 'Failed to update profile');
+      showToast(d.error || 'Failed to update profile', 'danger');
     }
   } catch (err) {
-    alert('Error updating profile');
+    showToast('Error updating profile', 'danger');
   }
 }
 
@@ -1200,15 +1200,15 @@ async function handleSaveConnection(e) {
       await loadConnections();
     } else {
       const err = await res.json();
-      alert(`Error saving connection: ${err.error}`);
+      showToast(`Error saving connection: ${err.error}`, 'danger');
     }
   } catch (err) {
-    alert(`Failed to save connection: ${err}`);
+    showToast(`Failed to save connection: ${err}`, 'danger');
   }
 }
 
 async function deleteConnection(id) {
-  if (!confirm('Are you sure you want to delete this connection?')) return;
+  if (!(await uiConfirm('Are you sure you want to delete this connection?', { title: 'Delete connection', okText: 'Delete', danger: true }))) return;
   try {
     const res = await fetch(`/api/connections/${id}`, {
       method: 'DELETE',
@@ -1219,7 +1219,7 @@ async function deleteConnection(id) {
       await loadConnections();
     }
   } catch (err) {
-    alert(`Failed to delete connection: ${err}`);
+    showToast(`Failed to delete connection: ${err}`, 'danger');
   }
 }
 
@@ -1917,13 +1917,18 @@ async function copyBufferToLocalDevice() {
   showToast('Press Ctrl+C in the drawer buffer to copy text', 'warning');
 }
 
-// ================= File Dropbox & SFTP Transfers =================
+// ================= Files (shared folder) & SFTP Transfers =================
+const FOLDER_ICON = '<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>';
+const FILE_ICON = '<svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></svg>';
+
 function toggleTransferDrawer() {
   const drawer = document.getElementById('transfer-drawer');
-  drawer.style.display = drawer.style.display === 'none' ? 'flex' : 'none';
+  const opening = drawer.style.display === 'none';
+  drawer.style.display = opening ? 'flex' : 'none';
+  if (opening) loadFiles(state.filesPath);
 }
 
-function openPaneDropbox(paneIndex) {
+function openPaneFiles(paneIndex) {
   activatePane(paneIndex);
   toggleTransferDrawer();
 }
@@ -1935,7 +1940,8 @@ function triggerFileInput() {
 async function handleFileInputChange(e) {
   const files = e.target.files;
   if (!files || files.length === 0) return;
-  await uploadFilesToStaging(files);
+  await uploadFiles(files);
+  e.target.value = '';
 }
 
 function setupGlobalDragAndDrop() {
@@ -1962,73 +1968,211 @@ function setupGlobalDragAndDrop() {
       const files = e.dataTransfer.files;
       if (files.length > 0) {
         activatePane(i);
-        await uploadFilesToStaging(files);
+        await uploadFiles(files);
       }
+    });
+  }
+
+  const drawerZone = document.getElementById('drawer-dropzone');
+  if (drawerZone) {
+    drawerZone.addEventListener('dragover', (e) => e.preventDefault());
+    drawerZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      if (e.dataTransfer.files.length > 0) await uploadFiles(e.dataTransfer.files);
+    });
+  }
+
+  const listEl = document.getElementById('files-list');
+  if (listEl) listEl.addEventListener('click', onFilesListClick);
+  const crumbEl = document.getElementById('files-breadcrumb');
+  if (crumbEl) {
+    crumbEl.addEventListener('click', (e) => {
+      const el = e.target.closest('[data-path]');
+      if (el) loadFiles(el.dataset.path);
     });
   }
 }
 
-async function uploadFilesToStaging(files) {
+async function readError(res, fallback) {
+  try {
+    const data = await res.json();
+    return data.error || fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+async function loadFiles(path) {
+  const listEl = document.getElementById('files-list');
+  try {
+    const res = await apiFetch(`/api/files/list?path=${encodeURIComponent(path || '')}`);
+    if (!res.ok) {
+      // Folder vanished (e.g. deleted from inside Windows): fall back to the top level.
+      if (path) return loadFiles('');
+      listEl.innerHTML = `<div class="text-muted text-sm p-3 text-center">${escapeHtml(await readError(res, 'Could not load files'))}</div>`;
+      return;
+    }
+    const data = await res.json();
+    state.filesPath = data.path;
+    renderFiles(data.entries);
+  } catch (err) {
+    listEl.innerHTML = `<div class="text-muted text-sm p-3 text-center">Could not load files</div>`;
+  }
+}
+
+function renderFiles(entries) {
+  const crumbEl = document.getElementById('files-breadcrumb');
+  const listEl = document.getElementById('files-list');
+
+  const parts = state.filesPath ? state.filesPath.split('/') : [];
+  let crumbs = `<span class="files-crumb" data-path="">Files</span>`;
+  parts.forEach((part, i) => {
+    const p = parts.slice(0, i + 1).join('/');
+    crumbs += `<span class="files-crumb-sep">/</span><span class="files-crumb" data-path="${escapeHtml(p)}">${escapeHtml(part)}</span>`;
+  });
+  crumbEl.innerHTML = crumbs;
+
+  if (!entries || entries.length === 0) {
+    listEl.innerHTML = `<div class="text-muted text-sm p-3 text-center">This folder is empty.</div>`;
+    return;
+  }
+
+  const pane = state.panes[state.activePaneIndex];
+  const sshPane = pane && pane.conn && pane.conn.protocol === 'ssh';
+
+  listEl.innerHTML = entries
+    .map((f) => {
+      const p = escapeHtml(f.path);
+      const when = f.modified ? new Date(f.modified).toLocaleString() : '';
+      const meta = f.is_dir ? when : `${formatBytes(f.size)}${when ? ' • ' + when : ''}`;
+      const actions = f.is_dir
+        ? ''
+        : `<a href="/api/files/download?path=${encodeURIComponent(f.path)}" class="pane-btn" title="Download" download>
+             <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+           </a>
+           ${sshPane ? `<button class="pane-btn" title="Send to SSH host" data-action="push" data-path="${p}">
+             <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M2.01 21 23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+           </button>` : ''}`;
+      return `
+        <div class="transfer-item files-item${f.is_dir ? ' is-dir' : ''}" ${f.is_dir ? `data-action="open" data-path="${p}"` : ''}>
+          <div class="files-item-left">
+            ${f.is_dir ? FOLDER_ICON : FILE_ICON}
+            <div class="transfer-info">
+              <span class="transfer-name">${escapeHtml(f.name)}</span>
+              <span class="transfer-meta">${escapeHtml(meta)}</span>
+            </div>
+          </div>
+          <div class="files-item-actions">
+            ${actions}
+            <button class="pane-btn files-delete" title="Delete" data-action="delete" data-path="${p}" data-dir="${f.is_dir ? '1' : ''}">
+              <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
+          </div>
+        </div>`;
+    })
+    .join('');
+}
+
+function onFilesListClick(e) {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const path = el.dataset.path;
+  switch (el.dataset.action) {
+    case 'open':
+      loadFiles(path);
+      break;
+    case 'delete':
+      e.stopPropagation();
+      deleteFilesEntry(path, el.dataset.dir === '1');
+      break;
+    case 'push': {
+      e.stopPropagation();
+      const pane = state.panes[state.activePaneIndex];
+      if (pane && pane.conn) {
+        const name = path.split('/').pop();
+        pushFileToSftp(pane.conn.id, path, `./${name}`);
+      }
+      break;
+    }
+  }
+}
+
+async function uploadFiles(files) {
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
     formData.append(`file_${i}`, files[i]);
   }
 
-  showToast(`Uploading ${files.length} file(s) to staging...`);
+  showToast(`Uploading ${files.length} file(s)...`);
 
   try {
-    const res = await fetch('/api/transfers/upload', {
+    const res = await apiFetch(`/api/files/upload?path=${encodeURIComponent(state.filesPath)}`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${state.jwtToken}` },
       body: formData,
     });
 
-    if (res.ok) {
-      const data = await res.json();
-      state.stagedFiles.push(...data.files);
-      renderStagedFiles();
-      showToast('Files staged in Dropbox!');
-      toggleTransferDrawer();
+    if (!res.ok) {
+      showToast(await readError(res, 'Upload failed'), 'danger');
+      return;
+    }
 
-      // Check if current pane is SSH, prompt to push to remote
-      const pane = state.panes[state.activePaneIndex];
-      if (pane && pane.conn && pane.conn.protocol === 'ssh') {
-        if (confirm(`Push uploaded file "${data.files[0].original_name}" directly to remote SSH host?`)) {
-          await pushStagedFileToSftp(pane.conn.id, data.files[0].id, `./${data.files[0].original_name}`);
-        }
+    const data = await res.json();
+    showToast(`Uploaded ${data.files.length} file(s) to Files`, 'success');
+    const drawer = document.getElementById('transfer-drawer');
+    if (drawer.style.display === 'none') toggleTransferDrawer();
+    else loadFiles(state.filesPath);
+
+    // If the active pane is SSH, offer to push the first file to the remote host
+    const pane = state.panes[state.activePaneIndex];
+    if (pane && pane.conn && pane.conn.protocol === 'ssh' && data.files.length > 0) {
+      const first = data.files[0].path;
+      const name = first.split('/').pop();
+      if (await uiConfirm(`Push uploaded file "${name}" directly to the remote SSH host?`, { title: 'Send to SSH host', okText: 'Send' })) {
+        await pushFileToSftp(pane.conn.id, first, `./${name}`);
       }
     }
   } catch (err) {
-    showToast('Failed to upload file to staging', 'danger');
+    showToast('Upload failed', 'danger');
   }
 }
 
-function renderStagedFiles() {
-  const listEl = document.getElementById('staged-files-list');
-  const countBadge = document.getElementById('badge-transfer-count');
-
-  if (state.stagedFiles.length === 0) {
-    listEl.innerHTML = `<div class="text-muted text-sm p-3 text-center">No files staged in current session.</div>`;
-    countBadge.style.display = 'none';
-    return;
+async function createFilesFolder() {
+  const name = await uiPrompt('', { title: 'New folder', placeholder: 'Folder name', okText: 'Create' });
+  if (!name || !name.trim()) return;
+  try {
+    const res = await apiFetch('/api/files/mkdir', {
+      method: 'POST',
+      body: JSON.stringify({ path: state.filesPath, name: name.trim() }),
+    });
+    if (!res.ok) {
+      showToast(await readError(res, 'Could not create folder'), 'danger');
+      return;
+    }
+    loadFiles(state.filesPath);
+  } catch (err) {
+    showToast('Could not create folder', 'danger');
   }
+}
 
-  countBadge.style.display = 'inline-block';
-  countBadge.textContent = state.stagedFiles.length;
-
-  listEl.innerHTML = state.stagedFiles
-    .map(f => `
-      <div class="transfer-item">
-        <div class="transfer-info">
-          <span class="transfer-name">${escapeHtml(f.original_name)}</span>
-          <span class="transfer-meta">${formatBytes(f.file_size)} • ${new Date(f.uploaded_at).toLocaleTimeString()}</span>
-        </div>
-        <div style="display:flex;gap:4px;">
-          <a href="/api/transfers/download/${f.id}" class="btn btn-secondary btn-sm" download>Download</a>
-        </div>
-      </div>
-    `)
-    .join('');
+async function deleteFilesEntry(path, isDir) {
+  const name = path.split('/').pop();
+  const question = isDir
+    ? `Delete folder "${name}" and everything in it?`
+    : `Delete "${name}"?`;
+  if (!(await uiConfirm(question, { title: isDir ? 'Delete folder' : 'Delete file', okText: 'Delete', danger: true }))) return;
+  try {
+    const res = await apiFetch('/api/files/delete', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    });
+    if (!res.ok) {
+      showToast(await readError(res, 'Delete failed'), 'danger');
+      return;
+    }
+    loadFiles(state.filesPath);
+  } catch (err) {
+    showToast('Delete failed', 'danger');
+  }
 }
 
 async function loadSftpDirectory(paneIndex, path) {
@@ -2090,21 +2234,19 @@ function renderSftpFiles(paneIndex, entries, currentPath) {
   listEl.innerHTML = html;
 }
 
-async function pushStagedFileToSftp(connectionId, stagedId, remotePath) {
+async function pushFileToSftp(connectionId, filePath, remotePath) {
   showToast('Transferring file to remote server via SFTP...');
   try {
-    const res = await fetch(`/api/transfers/sftp/${connectionId}/upload`, {
+    const res = await apiFetch(`/api/transfers/sftp/${connectionId}/upload`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.jwtToken}`,
-      },
-      body: JSON.stringify({ staged_id: stagedId, remote_path: remotePath }),
+      body: JSON.stringify({ file_path: filePath, remote_path: remotePath }),
     });
 
     if (res.ok) {
       showToast('File transfer to remote SSH host complete!', 'success');
       loadSftpDirectory(state.activePaneIndex, '.');
+    } else {
+      showToast(await readError(res, 'SFTP transfer failed'), 'danger');
     }
   } catch (err) {
     showToast('Failed to push file via SFTP', 'danger');
@@ -2176,7 +2318,7 @@ function renderUsersTable(users) {
 
 async function toggleUserStatus(userId, newActive) {
   const actionName = newActive ? 'enable' : 'disable';
-  if (!confirm(`Are you sure you want to ${actionName} this user account?`)) return;
+  if (!(await uiConfirm(`Are you sure you want to ${actionName} this user account?`, { title: newActive ? 'Enable user' : 'Disable user', okText: newActive ? 'Enable' : 'Disable', danger: !newActive }))) return;
 
   try {
     const res = await apiFetch(`/api/users/${userId}`, {
@@ -2188,10 +2330,10 @@ async function toggleUserStatus(userId, newActive) {
       openUsersModal();
     } else {
       const err = await res.json();
-      alert(`Failed to update status: ${err.error || 'Unknown error'}`);
+      showToast(`Failed to update status: ${err.error || 'Unknown error'}`, 'danger');
     }
   } catch (err) {
-    alert(`Failed: ${err}`);
+    showToast(`Failed: ${err}`, 'danger');
   }
 }
 
@@ -2243,7 +2385,7 @@ async function handleSaveUser(e) {
         errEl.textContent = `Error: ${data.error || 'Failed to create user'}`;
         errEl.style.display = 'block';
       } else {
-        alert(`Error creating user: ${data.error}`);
+        showToast(`Error creating user: ${data.error}`, 'danger');
       }
     }
   } catch (err) {
@@ -2251,13 +2393,13 @@ async function handleSaveUser(e) {
       errEl.textContent = `Failed: ${err}`;
       errEl.style.display = 'block';
     } else {
-      alert(`Failed: ${err}`);
+      showToast(`Failed: ${err}`, 'danger');
     }
   }
 }
 
 async function deleteUser(id) {
-  if (!confirm('Are you sure you want to delete this user?')) return;
+  if (!(await uiConfirm('Are you sure you want to delete this user?', { title: 'Delete user', okText: 'Delete', danger: true }))) return;
   try {
     const res = await fetch(`/api/users/${id}`, {
       method: 'DELETE',
@@ -2268,7 +2410,7 @@ async function deleteUser(id) {
       openUsersModal();
     }
   } catch (err) {
-    alert(`Failed: ${err}`);
+    showToast(`Failed: ${err}`, 'danger');
   }
 }
 
@@ -2402,7 +2544,7 @@ function setupKeyboardShortcuts() {
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
-  toast.className = 'toast';
+  toast.className = `toast toast-${type}`;
   toast.innerHTML = `<span>${escapeHtml(msg)}</span>`;
   container.appendChild(toast);
 
@@ -2410,6 +2552,149 @@ function showToast(msg, type = 'info') {
     toast.style.opacity = '0';
     setTimeout(() => toast.remove(), 200);
   }, 3500);
+}
+
+// ================= In-app Dialog (replaces confirm/prompt/alert) =================
+let uiDialogResolve = null;
+let uiDialogMode = 'confirm';
+let uiDialogCopyValue = '';
+
+function setupUiDialog() {
+  const overlay = document.getElementById('ui-dialog');
+  if (!overlay || overlay.dataset.ready) return;
+  overlay.dataset.ready = '1';
+  const box = document.getElementById('ui-dialog-box');
+  const header = document.getElementById('ui-dialog-header');
+  const input = document.getElementById('ui-dialog-input');
+
+  document.getElementById('ui-dialog-ok').addEventListener('click', uiDialogAccept);
+  document.getElementById('ui-dialog-cancel').addEventListener('click', () => closeUiDialog(null));
+  document.getElementById('ui-dialog-x').addEventListener('click', () => closeUiDialog(null));
+  overlay.addEventListener('mousedown', (e) => {
+    if (e.target === overlay) closeUiDialog(null);
+  });
+  // Keep keys inside the dialog away from pane shortcuts and remote sessions.
+  overlay.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeUiDialog(null);
+    } else if (e.key === 'Enter' && (e.target === input || e.target === overlay || e.target === box)) {
+      e.preventDefault();
+      uiDialogAccept();
+    }
+  });
+
+  // Whole header is a drag handle.
+  let drag = null;
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    const m = (box.style.transform.match(/-?[\d.]+/g) || [0, 0]).map(Number);
+    drag = { x: e.clientX - m[0], y: e.clientY - m[1] };
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (drag) box.style.transform = `translate(${e.clientX - drag.x}px, ${e.clientY - drag.y}px)`;
+  });
+  document.addEventListener('mouseup', () => { drag = null; });
+}
+
+function openUiDialog({ title, message = '', mode = 'confirm', value = '', placeholder = '', okText = 'OK', cancelText = 'Cancel', danger = false }) {
+  setupUiDialog();
+  if (uiDialogResolve) closeUiDialog(null);
+
+  return new Promise((resolve) => {
+    uiDialogResolve = resolve;
+    uiDialogMode = mode;
+    uiDialogCopyValue = value;
+
+    const overlay = document.getElementById('ui-dialog');
+    const input = document.getElementById('ui-dialog-input');
+    const ok = document.getElementById('ui-dialog-ok');
+    const cancel = document.getElementById('ui-dialog-cancel');
+
+    document.getElementById('ui-dialog-title').textContent = title;
+    document.getElementById('ui-dialog-message').textContent = message;
+    document.getElementById('ui-dialog-box').style.transform = '';
+
+    const hasInput = mode === 'prompt' || mode === 'copy';
+    input.style.display = hasInput ? '' : 'none';
+    input.value = hasInput ? value : '';
+    input.placeholder = placeholder;
+    input.readOnly = mode === 'copy';
+
+    ok.textContent = okText;
+    ok.className = danger ? 'btn btn-danger' : 'btn btn-accent';
+    cancel.textContent = cancelText;
+
+    overlay.style.display = 'flex';
+    setTimeout(() => {
+      if (hasInput) {
+        input.focus();
+        input.select();
+      } else {
+        ok.focus();
+      }
+    }, 0);
+  });
+}
+
+function uiDialogAccept() {
+  const input = document.getElementById('ui-dialog-input');
+  if (uiDialogMode === 'prompt') {
+    closeUiDialog(input.value);
+  } else if (uiDialogMode === 'copy') {
+    copyTextToClipboard(uiDialogCopyValue, input);
+    closeUiDialog(true);
+  } else {
+    closeUiDialog(true);
+  }
+}
+
+function closeUiDialog(result) {
+  const overlay = document.getElementById('ui-dialog');
+  if (overlay) overlay.style.display = 'none';
+  const resolve = uiDialogResolve;
+  uiDialogResolve = null;
+  if (resolve) resolve(result);
+}
+
+/** In-app replacement for confirm(). Resolves to true or false. */
+async function uiConfirm(message, { title = 'Confirm', okText = 'OK', danger = false } = {}) {
+  return (await openUiDialog({ title, message, okText, danger })) === true;
+}
+
+/** In-app replacement for prompt(). Resolves to the text, or null when cancelled. */
+async function uiPrompt(message, { title = 'Enter a value', value = '', placeholder = '', okText = 'OK' } = {}) {
+  const r = await openUiDialog({ title, message, mode: 'prompt', value, placeholder, okText });
+  return typeof r === 'string' ? r : null;
+}
+
+/** Shows a value in a read-only field with a Copy button. */
+function uiCopyDialog(title, message, value) {
+  return openUiDialog({ title, message, mode: 'copy', value, okText: 'Copy', cancelText: 'Close' });
+}
+
+function copyTextToClipboard(text, fallbackInput) {
+  const done = () => showToast('Copied to clipboard', 'success');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(() => legacyCopy(text, fallbackInput, done));
+  } else {
+    legacyCopy(text, fallbackInput, done);
+  }
+}
+
+function legacyCopy(text, input, done) {
+  try {
+    if (input) {
+      input.select();
+    }
+    if (document.execCommand('copy')) {
+      done();
+      return;
+    }
+  } catch (e) {}
+  showToast('Copy failed: select the text and press Ctrl+C', 'warning');
 }
 
 function formatBytes(bytes, decimals = 2) {

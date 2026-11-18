@@ -802,7 +802,7 @@ body, html {
   gap: 6px;
 }
 
-.dropbox-zone {
+.files-dropzone {
   border: 2px dashed var(--woofson-border);
   border-radius: var(--radius-md);
   padding: 20px;
@@ -816,7 +816,7 @@ body, html {
   transition: var(--transition-fast);
 }
 
-.dropbox-zone:hover {
+.files-dropzone:hover {
   border-color: var(--woofson-accent);
   background: var(--woofson-bg-active);
 }
@@ -858,6 +858,103 @@ body, html {
 .transfer-meta {
   font-size: 10px;
   color: var(--woofson-text-muted);
+}
+
+/* Files Browser */
+.section-title-flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.files-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.files-crumb {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.files-crumb:hover {
+  background: var(--woofson-bg-active);
+  color: var(--woofson-accent);
+}
+
+.files-crumb-sep {
+  color: var(--woofson-text-dim);
+}
+
+.files-toolbar,
+.files-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.files-toolbar .pane-btn,
+.files-item-actions .pane-btn {
+  width: 26px;
+  height: 26px;
+  justify-content: center;
+  border-radius: 6px;
+}
+
+.files-toolbar .pane-btn .icon,
+.files-item-actions .pane-btn .icon {
+  width: 13px;
+  height: 13px;
+}
+
+.files-list {
+  max-height: 360px;
+}
+
+.files-item {
+  gap: 8px;
+}
+
+.files-item.is-dir {
+  cursor: pointer;
+}
+
+.files-item:hover {
+  background: var(--woofson-bg-active);
+}
+
+.files-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.files-item-left > .icon {
+  flex-shrink: 0;
+  color: var(--woofson-text-muted);
+}
+
+.files-item.is-dir .files-item-left > .icon {
+  color: var(--woofson-accent);
+}
+
+.files-item-actions .files-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
 }
 
 /* SFTP Tree View */
@@ -1105,6 +1202,95 @@ body, html {
   gap: 8px;
   font-weight: 500;
   animation: toastFade 0.2s ease;
+}
+
+.toast.toast-success {
+  border-color: #10b981;
+}
+
+.toast.toast-warning {
+  border-color: #f59e0b;
+}
+
+.toast.toast-danger {
+  border-color: #ef4444;
+  color: #fecaca;
+}
+
+/* In-app Dialog */
+.ui-dialog-overlay {
+  z-index: 1500;
+}
+
+.ui-dialog-box {
+  width: 420px;
+  max-width: calc(100vw - 32px);
+}
+
+.ui-dialog-header {
+  min-height: 42px;
+  padding: 0 8px 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--woofson-bg-header, #202024);
+  border-bottom: 1px solid var(--woofson-border, #3f3f46);
+  cursor: grab;
+  user-select: none;
+}
+
+.ui-dialog-header:active {
+  cursor: grabbing;
+}
+
+.ui-dialog-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--woofson-text-main, #f4f4f5);
+  border-radius: var(--radius, 6px);
+  opacity: 0.7;
+  cursor: pointer;
+}
+
+.ui-dialog-close:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+  opacity: 1;
+}
+
+.ui-dialog-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ui-dialog-message {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--woofson-text-main, #f4f4f5);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog-message:empty {
+  display: none;
+}
+
+.ui-dialog-footer {
+  padding: 10px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--woofson-bg-header, #202024);
+  border-top: 1px solid var(--woofson-border, #3f3f46);
 }
 
 @keyframes toastFade {

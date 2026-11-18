@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-Pane HTML5 Canvas & Woofson UI"
@@ -40,6 +40,7 @@ portable-pty = "0.8"
 ssh2 = "0.9"
 bytes = "1"
 futures-util = "0.3"
+tokio-util = { version = "0.7", features = ["io"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 base64 = "0.22"
 flate2 = "1.1"
@@ -53,7 +54,7 @@ dirs = "5.0"
 open = "5.3"
 async-trait = "0.1"
 urlencoding = "2.1"
-ironrdp-client = { version = "0.1.0", features = ["rustls", "clipboard"] }
+ironrdp-client = { version = "0.1.0", features = ["rustls", "clipboard", "rdpdr"] }
 ironrdp-connector = "0.10.0"
 ironrdp-session = "0.11.0"
 ironrdp-pdu = "0.9.0"
@@ -64,6 +65,7 @@ ironrdp-tokio = { version = "0.10.0", features = ["reqwest"] }
 ironrdp-rdpdr = "0.7.0"
 ironrdp-rdpdr-native = "0.7.0"
 ironrdp-cliprdr = "0.7.0"
+ironrdp-rdpsnd = "0.9.0"
 ironrdp-svc = "0.8.0"
 ironrdp-core = "0.2.0"
 smallvec = "1.16.0"
