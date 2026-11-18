@@ -38,6 +38,8 @@ const state = {
   paneLayout: 1,
   connections: [],
   filesPath: '',
+  filesArea: 'my',
+  filesWritable: true,
   panes: {
     1: { id: 1, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
     2: { id: 2, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
@@ -1390,7 +1392,7 @@ function connectToTarget(connectionId) {
     bodyEl.innerHTML = `
       <div class="pane-empty-state" style="padding: 24px; text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 100%;">
         <div class="empty-icon" style="opacity: 0.8;">
-          <img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" style="filter: grayscale(30%); width: 44px; height: 44px;" />
+          <img src="assets/icons/remote-160.webp" alt="Remote" class="empty-brand-img" style="filter: grayscale(30%); width: 44px; height: 44px;" />
         </div>
         <div style="display: flex; flex-direction: column; align-items: center;">
           <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: var(--woofson-text);">Session Disconnected</h3>
@@ -1901,7 +1903,7 @@ function disconnectPane(paneIndex) {
 
   document.getElementById(`pane-${paneIndex}-body`).innerHTML = `
     <div class="pane-empty-state">
-      <div class="empty-icon"><img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" /></div>
+      <div class="empty-icon"><img src="assets/icons/remote-160.webp" alt="Remote" class="empty-brand-img" /></div>
       <h3>Ready for Session</h3>
       <div style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
         <button class="btn btn-primary" onclick="openConnectionsModal()">Connect Target</button>
@@ -2061,6 +2063,10 @@ function setupGlobalDragAndDrop() {
     });
   }
 
+  document.querySelectorAll('[data-files-area]').forEach((btn) => {
+    btn.addEventListener('click', () => switchFilesArea(btn.dataset.filesArea));
+  });
+
   const listEl = document.getElementById('files-list');
   if (listEl) listEl.addEventListener('click', onFilesListClick);
   const crumbEl = document.getElementById('files-breadcrumb');
@@ -2081,10 +2087,51 @@ async function readError(res, fallback) {
   }
 }
 
+function filesQuery(path) {
+  return `area=${state.filesArea}&path=${encodeURIComponent(path || '')}`;
+}
+
+function switchFilesArea(area) {
+  if (area === state.filesArea) return;
+  state.filesArea = area;
+  state.filesPath = '';
+  document.querySelectorAll('[data-files-area]').forEach((b) => b.classList.toggle('active', b.dataset.filesArea === area));
+  loadFiles('');
+}
+
+/** Show or hide changing controls depending on whether this area is writable. */
+function applyFilesWritable() {
+  const w = state.filesWritable;
+  const zone = document.getElementById('drawer-dropzone');
+  if (zone) zone.style.display = w ? '' : 'none';
+  const nf = document.getElementById('files-new-folder');
+  if (nf) nf.style.display = w ? '' : 'none';
+  const hint = document.getElementById('files-area-hint');
+  if (hint) {
+    hint.textContent = state.filesArea === 'shared'
+      ? 'Shared with everyone; only admins can change it. In RDP sessions: \\\\tsclient\\Shared.'
+      : 'Your private files. In RDP sessions: \\\\tsclient\\Files.';
+  }
+  let note = document.getElementById('files-readonly-note');
+  if (!w) {
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'files-readonly-note';
+      note.className = 'files-readonly-note';
+      document.querySelector('.files-areas').after(note);
+    }
+    note.textContent = state.filesArea === 'shared'
+      ? 'Read-only: only admins can change the Shared folder.'
+      : 'Read-only for your role.';
+  } else if (note) {
+    note.remove();
+  }
+}
+
 async function loadFiles(path) {
   const listEl = document.getElementById('files-list');
   try {
-    const res = await apiFetch(`/api/files/list?path=${encodeURIComponent(path || '')}`);
+    const res = await apiFetch(`/api/files/list?${filesQuery(path)}`);
     if (!res.ok) {
       // Folder vanished (e.g. deleted from inside Windows): fall back to the top level.
       if (path) return loadFiles('');
@@ -2093,6 +2140,8 @@ async function loadFiles(path) {
     }
     const data = await res.json();
     state.filesPath = data.path;
+    state.filesWritable = !!data.writable;
+    applyFilesWritable();
     renderFiles(data.entries);
   } catch (err) {
     listEl.innerHTML = `<div class="text-muted text-sm p-3 text-center">Could not load files</div>`;
@@ -2104,7 +2153,7 @@ function renderFiles(entries) {
   const listEl = document.getElementById('files-list');
 
   const parts = state.filesPath ? state.filesPath.split('/') : [];
-  let crumbs = `<span class="files-crumb" data-path="">Files</span>`;
+  let crumbs = `<span class="files-crumb" data-path="">${state.filesArea === 'shared' ? 'Shared' : 'My files'}</span>`;
   parts.forEach((part, i) => {
     const p = parts.slice(0, i + 1).join('/');
     crumbs += `<span class="files-crumb-sep">/</span><span class="files-crumb" data-path="${escapeHtml(p)}">${escapeHtml(part)}</span>`;
@@ -2126,7 +2175,7 @@ function renderFiles(entries) {
       const meta = f.is_dir ? when : `${formatBytes(f.size)}${when ? ' • ' + when : ''}`;
       const actions = f.is_dir
         ? ''
-        : `<a href="/api/files/download?path=${encodeURIComponent(f.path)}" class="pane-btn" title="Download" download>
+        : `<a href="/api/files/download?${filesQuery(f.path)}" class="pane-btn" title="Download" download>
              <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
            </a>
            ${sshPane ? `<button class="pane-btn" title="Send to SSH host" data-action="push" data-path="${p}">
@@ -2143,9 +2192,9 @@ function renderFiles(entries) {
           </div>
           <div class="files-item-actions">
             ${actions}
-            <button class="pane-btn files-delete" title="Delete" data-action="delete" data-path="${p}" data-dir="${f.is_dir ? '1' : ''}">
+            ${state.filesWritable ? `<button class="pane-btn files-delete" title="Delete" data-action="delete" data-path="${p}" data-dir="${f.is_dir ? '1' : ''}">
               <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-            </button>
+            </button>` : ''}
           </div>
         </div>`;
     })
@@ -2186,6 +2235,12 @@ function onFilesListClick(e) {
 }
 
 async function uploadFiles(files) {
+  if (!state.filesWritable && state.filesArea !== 'my') {
+    showToast('Shared is read-only; uploading to My files instead', 'warning');
+    state.filesArea = 'my';
+    state.filesPath = '';
+    document.querySelectorAll('[data-files-area]').forEach((b) => b.classList.toggle('active', b.dataset.filesArea === 'my'));
+  }
   const formData = new FormData();
   for (let i = 0; i < files.length; i++) {
     formData.append(`file_${i}`, files[i]);
@@ -2194,7 +2249,7 @@ async function uploadFiles(files) {
   showToast(`Uploading ${files.length} file(s)...`);
 
   try {
-    const res = await apiFetch(`/api/files/upload?path=${encodeURIComponent(state.filesPath)}`, {
+    const res = await apiFetch(`/api/files/upload?${filesQuery(state.filesPath)}`, {
       method: 'POST',
       body: formData,
     });
@@ -2205,7 +2260,7 @@ async function uploadFiles(files) {
     }
 
     const data = await res.json();
-    showToast(`Uploaded ${data.files.length} file(s) to Files`, 'success');
+    showToast(`Uploaded ${data.files.length} file(s) to ${state.filesArea === 'shared' ? 'Shared' : 'My files'}`, 'success');
     const drawer = document.getElementById('transfer-drawer');
     if (drawer.style.display === 'none') toggleTransferDrawer();
     else loadFiles(state.filesPath);
@@ -2230,7 +2285,7 @@ async function createFilesFolder() {
   try {
     const res = await apiFetch('/api/files/mkdir', {
       method: 'POST',
-      body: JSON.stringify({ path: state.filesPath, name: name.trim() }),
+      body: JSON.stringify({ path: state.filesPath, name: name.trim(), area: state.filesArea }),
     });
     if (!res.ok) {
       showToast(await readError(res, 'Could not create folder'), 'danger');
@@ -2251,7 +2306,7 @@ async function deleteFilesEntry(path, isDir) {
   try {
     const res = await apiFetch('/api/files/delete', {
       method: 'POST',
-      body: JSON.stringify({ path }),
+      body: JSON.stringify({ path, area: state.filesArea }),
     });
     if (!res.ok) {
       showToast(await readError(res, 'Delete failed'), 'danger');
@@ -2353,7 +2408,7 @@ async function pushFileToSftp(connectionId, filePath, remotePath) {
   try {
     const res = await apiFetch(`/api/transfers/sftp/${connectionId}/upload`, {
       method: 'POST',
-      body: JSON.stringify({ file_path: filePath, remote_path: remotePath }),
+      body: JSON.stringify({ file_path: filePath, remote_path: remotePath, area: state.filesArea }),
     });
 
     if (res.ok) {

@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Remote — High-Performance Remote Gateway</title>
   <link rel="stylesheet" href="app.css?v=__REMOTE_VERSION__" />
-  <link rel="icon" type="image/png" href="assets/Remoteiconsmall.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/remote-32.png" />
+  <link rel="apple-touch-icon" href="assets/icons/remote-180.png" />
   <!-- Bundled Nerd Fonts Preload -->
   <link rel="preload" href="assets/fonts/JetBrainsMonoNerdFont-Regular.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="assets/fonts/SymbolsNerdFontMono-Regular.ttf" as="font" type="font/ttf" crossorigin>
@@ -22,7 +23,7 @@
     <!-- Top Application Header (Matches CommanderDog) -->
     <header class="app-header">
       <div class="logo-area" style="display: flex; align-items: center; gap: 8px;">
-        <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 22px; width: auto; object-fit: contain; vertical-align: middle;" />
+        <img src="assets/icons/remote-160.webp" alt="Remote" style="height: 22px; width: auto; object-fit: contain; vertical-align: middle;" />
         <span class="app-logo-text" style="font-weight: 700;">Remote</span>
       </div>
 
@@ -173,7 +174,7 @@
         </div>
         <div class="pane-body" id="pane-1-body">
           <div class="pane-empty-state">
-            <div class="empty-icon"><img src="assets/Remoteiconsmall.png" alt="Remote" class="empty-brand-img" /></div>
+            <div class="empty-icon"><img src="assets/icons/remote-160.webp" alt="Remote" class="empty-brand-img" /></div>
             <h3>No Active Connection</h3>
             <p>Select a saved connection or launch a local terminal.</p>
             <button class="btn btn-primary" onclick="openConnectionsModal()">Open Connections</button>
@@ -321,19 +322,25 @@
         <button class="btn-close" onclick="toggleTransferDrawer()">&times;</button>
       </div>
       <div class="drawer-body">
+        <!-- Area switch -->
+        <div class="files-areas" role="tablist">
+          <button type="button" class="files-area-btn active" data-files-area="my" role="tab">My files</button>
+          <button type="button" class="files-area-btn" data-files-area="shared" role="tab">Shared</button>
+        </div>
+
         <!-- Upload Dropzone -->
         <div class="files-dropzone" id="drawer-dropzone" onclick="triggerFileInput()">
           <input type="file" id="file-input" multiple style="display:none;" onchange="handleFileInputChange(event)" />
           <svg class="icon-lg" viewBox="0 0 24 24"><path fill="currentColor" d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/></svg>
           <h4>Drop files here or click to upload</h4>
-          <p class="text-muted text-sm">Uploads go into the folder shown below. RDP sessions see this folder as \\tsclient\Files.</p>
+          <p class="text-muted text-sm" id="files-area-hint">Your private files. In RDP sessions: \\tsclient\Files.</p>
         </div>
 
         <!-- Files Browser -->
         <div class="section-title-flex mt-4">
           <div id="files-breadcrumb" class="files-breadcrumb"></div>
           <div class="files-toolbar">
-            <button class="pane-btn" title="New folder" onclick="createFilesFolder()">
+            <button class="pane-btn" id="files-new-folder" title="New folder" onclick="createFilesFolder()">
               <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-1 8h-3v3h-2v-3h-3v-2h3V9h2v3h3v2z"/></svg>
             </button>
             <button class="pane-btn" title="Refresh" onclick="loadFiles(state.filesPath)">
@@ -475,7 +482,7 @@
     <div class="modal-overlay login-screen-overlay" id="session-lock-screen" style="display: none;">
       <!-- Top-Left Corner Branding Logo -->
       <div class="login-corner-brand">
-        <img src="assets/Remoteiconsmall.png" alt="Remote" class="login-corner-logo" />
+        <img src="assets/icons/remote-160.webp" alt="Remote" class="login-corner-logo" />
         <span class="login-corner-name">Remote</span>
       </div>
 
@@ -524,7 +531,7 @@
     <div class="modal-overlay login-screen-overlay" id="login-modal">
       <!-- Top-Left Corner Branding Logo -->
       <div class="login-corner-brand">
-        <img src="assets/Remoteiconsmall.png" alt="Remote" class="login-corner-logo" />
+        <img src="assets/icons/remote-160.webp" alt="Remote" class="login-corner-logo" />
         <span class="login-corner-name">Remote</span>
       </div>
 
@@ -537,7 +544,7 @@
       <div class="login-card">
         <div class="login-card-header">
           <div class="login-brand-icon">
-            <img src="assets/Remoteiconsmall.png" alt="Remote" class="login-brand-img" />
+            <img src="assets/icons/remote-160.webp" alt="Remote" class="login-brand-img" />
           </div>
           <div class="login-header-text">
             <h2 class="login-title">Hello friend.</h2>
@@ -1105,7 +1112,7 @@
       <div class="modal-box" style="width: 580px; max-height: 85vh;">
         <div class="modal-header">
           <div style="display: flex; align-items: center; gap: 8px;">
-            <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 18px; width: auto; object-fit: contain; vertical-align: middle;">
+            <img src="assets/icons/remote-160.webp" alt="Remote" style="height: 18px; width: auto; object-fit: contain; vertical-align: middle;">
             <span style="font-weight: 700; font-size: 14px;">About Remote</span>
           </div>
           <button class="btn btn-icon" onclick="closeAboutModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
@@ -1113,7 +1120,7 @@
         <div class="modal-body" style="padding: 20px; overflow-y: auto;">
           <!-- Banner & Version Header -->
           <div style="text-align: center; margin-bottom: 18px; padding: 16px; background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px);">
-            <img src="assets/Remoteiconsmall.png" alt="Remote" style="height: 52px; width: auto; object-fit: contain; margin-bottom: 8px;">
+            <img src="assets/icons/remote-160.webp" alt="Remote" style="height: 52px; width: auto; object-fit: contain; margin-bottom: 8px;">
             <div style="font-size: 18px; font-weight: 800; color: var(--woofson-accent, #f59e0b); letter-spacing: 0.5px;">Remote</div>
             <div style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px;">Ultra-Low-Resource Remote Gateway — By Woofson</div>
             <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap;">

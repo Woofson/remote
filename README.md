@@ -1,4 +1,4 @@
-# <img src="assets/Remoteiconsmall.png" alt="Remote logo" height="40" style="vertical-align: -6px; margin-right: 8px;" /> Remote
+# <img src="assets/RemoteIcon-256.png" alt="Remote logo" height="40" style="vertical-align: -6px; margin-right: 8px;" /> Remote
 
 A browser-based remote access gateway for RDP, VNC, SSH, Telnet and local shells. One Rust binary with the web interface built in. No Java, Tomcat or `guacd`.
 
@@ -21,7 +21,7 @@ By Bolt J Woofson @ Woofsons Lab. Free and open source; if it is useful to you, 
 - Terminal based on xterm.js with a bundled JetBrainsMono Nerd Font.
 - Per-pane keyboard layout switcher (NO, US, GB, SE, DK, FI, DE, FR, ES, IT, Auto).
 - Clipboard drawer for pushing text to and pulling text from remote sessions.
-- **Files**: a shared folder you can browse, upload to, download from and organise in folders from the browser. RDP sessions with drive redirection see the same folder as `\\tsclient\Files`.
+- **Files**: every user has a private folder ("My files"), and there is a **Shared** folder everyone can read and only admins can change, e.g. for scripts and installers. Browse, upload, download and organise both from the browser. RDP sessions with drive redirection see them as `\\tsclient\Files` and `\\tsclient\Shared` (read-only for non-admins).
 
 **Users and access**
 - Local accounts in an embedded SQLite database, with Argon2id password hashing and JWT sessions.

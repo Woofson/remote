@@ -12,7 +12,7 @@ use crate::protocols::ssh::{
 };
 use crate::protocols::telnet::{handle_telnet_session, TelnetConnectionParams};
 use crate::protocols::vnc::{handle_vnc_session, VncConnectionParams};
-use crate::transfer::TransferManager;
+use crate::transfer::{Area, TransferManager};
 use axum::{
     body::Body,
     extract::{
@@ -439,7 +439,7 @@ pub async fn api_oidc_callback(
         <head><title>Remote OIDC Authenticated</title></head>
         <body style="background:#121214;color:#f59e0b;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
           <div style="text-align:center;">
-            <img src="/assets/Remoteiconsmall.png" alt="Remote" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
+            <img src="/assets/icons/remote-160.webp" alt="Remote" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
             <h2 style="margin:0;font-weight:700;color:#f4f4f5;">Remote Authenticated!</h2>
             <p style="color:#a1a1aa;margin-top:6px;">Redirecting to dashboard...</p>
           </div>
@@ -1326,6 +1326,20 @@ pub async fn api_test_connection(
     })))
 }
 
+/// RDP drives for a session: the user's own Files and the Shared folder
+/// (read-only unless the user is an admin).
+fn session_drives(state: &AppState, user: &User) -> Vec<crate::protocols::rdp_drive::DriveSpec> {
+    use crate::protocols::rdp_drive::DriveSpec;
+    let mut drives = Vec::new();
+    if let Ok(mine) = state.transfer_mgr.scope(Area::Mine, &user.id) {
+        drives.push(DriveSpec { device_id: 1, name: "Files".into(), path: mine.root, read_only: false });
+    }
+    if let Ok(shared) = state.transfer_mgr.scope(Area::Shared, &user.id) {
+        drives.push(DriveSpec { device_id: 2, name: "Shared".into(), path: shared.root, read_only: user.role != "admin" });
+    }
+    drives
+}
+
 // ================= Connection Assignments =================
 
 pub async fn api_get_connection_permissions(
@@ -1513,17 +1527,21 @@ fn deny_sftp(state: &AppState, a: &AuthorizedConnection, action: &str, reason: &
 #[derive(Deserialize)]
 pub struct FilesPathQuery {
     pub path: Option<String>,
+    /// "my" (default) or "shared".
+    pub area: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct FilesMkdirPayload {
     pub path: Option<String>,
+    pub area: Option<String>,
     pub name: String,
 }
 
 #[derive(Deserialize)]
 pub struct FilesDeletePayload {
     pub path: String,
+    pub area: Option<String>,
 }
 
 fn files_err(code: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Value>) {
@@ -1536,6 +1554,40 @@ fn require_files_writer(claims: &Claims) -> Result<(), (StatusCode, Json<Value>)
         return Err(files_err(StatusCode::FORBIDDEN, "Operator or Admin role required"));
     }
     Ok(())
+}
+
+/// May this user change files in this area? My files: Operator or Admin. Shared: Admin.
+fn area_writable(claims: &Claims, area: Area) -> bool {
+    match area {
+        Area::Mine => claims.role == "admin" || claims.role == "operator",
+        Area::Shared => claims.role == "admin",
+    }
+}
+
+/// The file manager for the requested area, refusing changes the user may not make.
+fn files_area(
+    state: &AppState,
+    claims: &Claims,
+    area: Option<&str>,
+    write: bool,
+) -> Result<(TransferManager, Area), (StatusCode, Json<Value>)> {
+    let area = Area::parse(area).ok_or_else(|| files_err(StatusCode::BAD_REQUEST, "Unknown file area"))?;
+    if write {
+        require_files_writer(claims)?;
+        if !area_writable(claims, area) {
+            return Err(files_err(StatusCode::FORBIDDEN, "Only admins can change the Shared folder"));
+        }
+    }
+    let scope = state
+        .transfer_mgr
+        .scope(area, &claims.sub)
+        .map_err(|e| files_err(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok((scope, area))
+}
+
+/// Audit label like "shared/scripts/setup.ps1".
+fn area_path(area: Area, rel: &str) -> String {
+    format!("{}/{}", area.label(), rel)
 }
 
 /// `Content-Disposition` value that is safe for any file name (ASCII fallback + UTF-8 name).
@@ -1556,14 +1608,19 @@ pub async fn api_files_list(
     headers: HeaderMap,
     Query(q): Query<FilesPathQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let _ = extract_claims(&state, &headers)?;
+    let claims = extract_claims(&state, &headers)?;
+    let (scope, area) = files_area(&state, &claims, q.area.as_deref(), false)?;
 
-    let (path, entries) = state
-        .transfer_mgr
+    let (path, entries) = scope
         .list(q.path.as_deref().unwrap_or(""))
         .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
 
-    Ok(Json(json!({ "path": path, "entries": entries })))
+    Ok(Json(json!({
+        "path": path,
+        "entries": entries,
+        "area": area.label(),
+        "writable": area_writable(&claims, area),
+    })))
 }
 
 pub async fn api_files_download(
@@ -1573,8 +1630,8 @@ pub async fn api_files_download(
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let claims = extract_claims(&state, &headers)?;
 
-    let file = state
-        .transfer_mgr
+    let (scope, area) = files_area(&state, &claims, q.area.as_deref(), false)?;
+    let file = scope
         .file(q.path.as_deref().unwrap_or(""))
         .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
 
@@ -1590,7 +1647,7 @@ pub async fn api_files_download(
 
     state
         .db
-        .log_transfer(None, Some(&claims.sub), &file.rel, size, "download", "completed");
+        .log_transfer(None, Some(&claims.sub), &area_path(area, &file.rel), size, "download", "completed");
 
     Response::builder()
         .status(StatusCode::OK)
@@ -1610,10 +1667,9 @@ pub async fn api_files_upload(
     use tokio::io::AsyncWriteExt;
 
     let claims = extract_claims(&state, &headers)?;
-    require_files_writer(&claims)?;
+    let (scope, area) = files_area(&state, &claims, q.area.as_deref(), true)?;
 
-    let dir = state
-        .transfer_mgr
+    let dir = scope
         .folder(q.path.as_deref().unwrap_or(""))
         .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?;
 
@@ -1648,14 +1704,14 @@ pub async fn api_files_upload(
             return Err(files_err(StatusCode::BAD_REQUEST, format!("Upload failed: {}", e)));
         }
 
-        let rel = state.transfer_mgr.finish_upload(&dir, &part, &name).map_err(|e| {
+        let rel = scope.finish_upload(&dir, &part, &name).map_err(|e| {
             let _ = std::fs::remove_file(&part);
             files_err(StatusCode::INTERNAL_SERVER_ERROR, e)
         })?;
 
         state
             .db
-            .log_transfer(None, Some(&claims.sub), &rel, size, "upload", "completed");
+            .log_transfer(None, Some(&claims.sub), &area_path(area, &rel), size, "upload", "completed");
         saved.push(json!({ "path": rel, "size": size }));
     }
 
@@ -1668,10 +1724,9 @@ pub async fn api_files_mkdir(
     Json(payload): Json<FilesMkdirPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let claims = extract_claims(&state, &headers)?;
-    require_files_writer(&claims)?;
+    let (scope, _) = files_area(&state, &claims, payload.area.as_deref(), true)?;
 
-    let rel = state
-        .transfer_mgr
+    let rel = scope
         .mkdir(payload.path.as_deref().unwrap_or(""), &payload.name)
         .map_err(|e| files_err(StatusCode::BAD_REQUEST, e))?;
 
@@ -1684,17 +1739,16 @@ pub async fn api_files_delete(
     Json(payload): Json<FilesDeletePayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let claims = extract_claims(&state, &headers)?;
-    require_files_writer(&claims)?;
+    let (scope, area) = files_area(&state, &claims, payload.area.as_deref(), true)?;
 
-    let (rel, was_dir) = state
-        .transfer_mgr
+    let (rel, was_dir) = scope
         .delete(&payload.path)
         .map_err(|e| files_err(StatusCode::BAD_REQUEST, e))?;
 
     state.db.log_transfer(
         None,
         Some(&claims.sub),
-        &rel,
+        &area_path(area, &rel),
         0,
         if was_dir { "delete_folder" } else { "delete" },
         "completed",
@@ -1778,8 +1832,10 @@ pub async fn api_sftp_list(
 
 #[derive(Deserialize)]
 pub struct SftpUploadStagedPayload {
-    /// File path inside the Files folder.
+    /// File path inside the file area.
     pub file_path: String,
+    /// "my" (default) or "shared".
+    pub area: Option<String>,
     pub remote_path: String,
 }
 
@@ -1810,8 +1866,8 @@ pub async fn api_sftp_upload_staged(
         return Err(deny_sftp(&state, &authz, "SFTP upload", reason));
     }
 
-    let local_path = state
-        .transfer_mgr
+    let (scope, _) = files_area(&state, &claims, payload.area.as_deref(), false)?;
+    let local_path = scope
         .file(&payload.file_path)
         .map_err(|e| files_err(StatusCode::NOT_FOUND, e))?
         .abs;
@@ -1957,7 +2013,7 @@ pub async fn ws_tunnel_handler(
     };
 
     let authz = authorize_connection(&state, &claims, &connection_id, "Connect")?;
-    let (user, conn_rec) = (authz.user, authz.conn);
+    let (user, conn_rec, conn_perms) = (authz.user, authz.conn, authz.perms);
 
     state.db.log_audit(
         Some(&user.id),
@@ -2069,7 +2125,7 @@ pub async fn ws_tunnel_handler(
                         font_smoothing = fs;
                     }
                     if let Some(edr) = settings.get("enable_drive_redirection").and_then(|v| v.as_bool()) {
-                        enable_drive_redirection = edr && conn_rec.allow_transfer != "disabled";
+                        enable_drive_redirection = edr && conn_perms.can_transfer;
                     }
                     if let Some(kl) = settings.get("keyboard_layout").and_then(|v| v.as_str()) {
                         if !kl.trim().is_empty() {
@@ -2097,8 +2153,11 @@ pub async fn ws_tunnel_handler(
                     disable_menu_animations,
                     disable_themes,
                     font_smoothing,
-                    staging_dir: Some(cfg.storage.staging_dir.clone()),
-                    enable_drive_redirection,
+                    drives: if enable_drive_redirection {
+                        session_drives(&state, &user)
+                    } else {
+                        Vec::new()
+                    },
                     keyboard_layout,
                 };
                 handle_rdp_session(socket, params).await;

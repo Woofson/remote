@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-Pane HTML5 Canvas & Woofson UI"

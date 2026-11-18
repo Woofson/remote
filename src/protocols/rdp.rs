@@ -35,8 +35,8 @@ pub struct RdpConnectionParams {
     pub disable_menu_animations: bool,
     pub disable_themes: bool,
     pub font_smoothing: bool,
-    pub staging_dir: Option<String>,
-    pub enable_drive_redirection: bool,
+    /// Drives offered as `\\tsclient\<name>`; empty disables drive redirection.
+    pub drives: Vec<super::rdp_drive::DriveSpec>,
     pub keyboard_layout: Option<String>,
 }
 
@@ -512,7 +512,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         }
     }
 
-    if params.enable_drive_redirection {
+    if !params.drives.is_empty() {
         // Windows only starts the RDPDR channel when the client also advertises RDPSND
         // (MS-RDPEFS, Appendix A). Register a silent RDPSND channel that offers no audio
         // formats, so no audio is streamed.
@@ -522,24 +522,19 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
             )))
         });
         config_builder = config_builder.with_rdpdr(true);
-        let staging_dir = params
-            .staging_dir
-            .clone()
-            .unwrap_or_else(|| "./data/staging".to_string());
-        let _ = std::fs::create_dir_all(&staging_dir);
-        let staging_dir_clone = staging_dir.clone();
-
-        info!(
-            "RDP Gateway: Enabling RDPDR drive redirection for Files folder '{}' as \\\\tsclient\\Files",
-            staging_dir
-        );
+        for d in &params.drives {
+            info!(
+                "RDP Gateway: offering drive \\\\tsclient\\{} ({}{})",
+                d.name,
+                d.path.display(),
+                if d.read_only { ", read-only" } else { "" }
+            );
+        }
+        let drives = params.drives.clone();
         config_builder = config_builder.with_static_channel(move |_ps| {
-            let backend = Box::new(ironrdp_rdpdr_native::backend::NixRdpdrBackend::new(
-                staging_dir_clone.clone(),
-            ));
-            let rdpdr = ironrdp_rdpdr::Rdpdr::new(backend, "Remote".to_owned())
-                .with_drives(Some(vec![(1, "Files".to_owned())]));
-            Some(rdpdr)
+            let backend = Box::new(super::rdp_drive::GuardedDriveBackend::new(&drives));
+            let names = drives.iter().map(|d| (d.device_id, d.name.clone())).collect();
+            Some(ironrdp_rdpdr::Rdpdr::new(backend, "Remote".to_owned()).with_drives(Some(names)))
         });
     }
 

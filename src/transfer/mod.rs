@@ -1,8 +1,9 @@
-//! The shared "Files" folder.
+//! File areas: each user's private folder ("My files", `\\tsclient\Files` in RDP) and
+//! the Shared folder (readable by everyone, changed by admins; `\\tsclient\Shared`).
 //!
-//! The same folder is offered to RDP sessions as the redirected drive `\\tsclient\Files`
-//! and is browsable from the web UI. Every client-supplied path goes through
-//! [`TransferManager::resolve`], which keeps it inside the folder.
+//! Layout under the configured root: `users/<user id>/` and `shared/`. A
+//! [`TransferManager`] scoped to one area is rooted in that folder, and every
+//! client-supplied path goes through [`TransferManager::resolve`] to stay inside it.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -35,12 +36,83 @@ pub struct Resolved {
     pub rel: String,
 }
 
+/// Which file area a request is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Area {
+    /// The calling user's private folder.
+    Mine,
+    /// The folder everyone can read and admins can change.
+    Shared,
+}
+
+impl Area {
+    pub fn parse(s: Option<&str>) -> Option<Self> {
+        match s.unwrap_or("my") {
+            "my" | "" => Some(Area::Mine),
+            "shared" => Some(Area::Shared),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Area::Mine => "my",
+            Area::Shared => "shared",
+        }
+    }
+}
+
+const SHARED_DIR: &str = "shared";
+const USERS_DIR: &str = "users";
+
 impl TransferManager {
+    /// The top-level Files root. Moves files left over from the single shared folder
+    /// (before per-user folders) into `shared/`.
     pub fn new<P: AsRef<Path>>(dir: P) -> Self {
         let path = dir.as_ref().to_path_buf();
         let _ = std::fs::create_dir_all(&path);
         let root = std::fs::canonicalize(&path).unwrap_or(path);
-        Self { root }
+        let mgr = Self { root };
+        mgr.migrate_loose_files();
+        mgr
+    }
+
+    fn migrate_loose_files(&self) {
+        let shared = self.root.join(SHARED_DIR);
+        let _ = std::fs::create_dir_all(&shared);
+        let _ = std::fs::create_dir_all(self.root.join(USERS_DIR));
+        let Ok(entries) = std::fs::read_dir(&self.root) else { return };
+        let mut moved = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name == SHARED_DIR || name == USERS_DIR || name.starts_with(PART_PREFIX) {
+                continue;
+            }
+            let target = unique_path(&shared, &name);
+            if std::fs::rename(entry.path(), &target).is_ok() {
+                moved += 1;
+            }
+        }
+        if moved > 0 {
+            tracing::info!("Files: moved {} item(s) from the old shared folder into Shared", moved);
+        }
+    }
+
+    /// A manager rooted in one area (folder created on demand).
+    pub fn scope(&self, area: Area, user_id: &str) -> Result<TransferManager, String> {
+        let dir = match area {
+            Area::Shared => self.root.join(SHARED_DIR),
+            Area::Mine => {
+                // User ids are generated UUIDs; refuse anything that could form a path.
+                if user_id.is_empty() || !user_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                    return Err("Invalid user".into());
+                }
+                self.root.join(USERS_DIR).join(user_id)
+            }
+        };
+        std::fs::create_dir_all(&dir).map_err(|e| format!("Cannot create folder: {}", e))?;
+        let root = std::fs::canonicalize(&dir).map_err(|e| format!("Cannot open folder: {}", e))?;
+        Ok(TransferManager { root })
     }
 
     /// Turn a client-supplied relative path into a path inside the root.
@@ -264,7 +336,25 @@ mod tests {
         std::os::unix::fs::symlink("/etc", dir.join("link")).unwrap();
         assert!(m.resolve("link/passwd").is_err());
         assert!(m.resolve("link").is_err());
-        assert!(m.list("").unwrap().1.is_empty());
+        assert!(m.list("").unwrap().1.iter().all(|e| e.name != "link"), "symlinks are hidden");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn areas_and_migration() {
+        let (_, dir) = temp_root();
+        std::fs::write(dir.join("old.txt"), b"x").unwrap();
+        let m = TransferManager::new(&dir); // migrates old.txt into shared/
+        assert!(dir.join("shared/old.txt").exists());
+        let shared = m.scope(Area::Shared, "u1").unwrap();
+        assert_eq!(shared.list("").unwrap().1[0].name, "old.txt");
+        let mine = m.scope(Area::Mine, "0b6f-user").unwrap();
+        assert!(mine.list("").unwrap().1.is_empty());
+        assert!(mine.resolve("../../shared/old.txt").is_err());
+        assert!(m.scope(Area::Mine, "../shared").is_err());
+        assert_eq!(Area::parse(None), Some(Area::Mine));
+        assert_eq!(Area::parse(Some("shared")), Some(Area::Shared));
+        assert_eq!(Area::parse(Some("other")), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
