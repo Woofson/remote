@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let router = create_router(app_state);
 
     let listener = tokio::net::TcpListener::bind(&config.server.bind_address).await?;
-    info!("🚀 Remote Server listening on http://{}", config.server.bind_address);
+    info!("Remote Server listening on http://{}", config.server.bind_address);
 
     axum::serve(listener, router).await?;
     Ok(())

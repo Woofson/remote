@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::{debug, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeDefinition {
@@ -103,7 +103,7 @@ pub fn load_themes(extra_dirs: &[&Path]) -> Vec<ThemeDefinition> {
         files.sort();
         for f in files {
             if let Ok(content) = std::fs::read_to_string(&f) {
-                info!("Themes: loading {}", f.display());
+                debug!("Themes: loading {}", f.display());
                 parse_into(&mut list, &content, &f.display().to_string());
             }
         }
