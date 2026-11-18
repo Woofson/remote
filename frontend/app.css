@@ -1187,7 +1187,7 @@ body, html {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 2000;
+  z-index: 100001;
 }
 
 .toast {
@@ -1215,6 +1215,63 @@ body, html {
 .toast.toast-danger {
   border-color: #ef4444;
   color: #fecaca;
+}
+
+/* Password forms */
+.pw-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--woofson-border, #3f3f46);
+}
+
+.pw-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.pw-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  margin: 2px 0;
+}
+
+.pw-check input {
+  accent-color: var(--woofson-accent, #f59e0b);
+}
+
+.pw-hint {
+  font-size: 11px;
+  color: var(--woofson-text-muted, #a1a1aa);
+  margin-top: 2px;
+}
+
+.pw-error {
+  font-size: 12px;
+  color: #f87171;
+  min-height: 0;
+}
+
+.pw-error:empty {
+  display: none;
+}
+
+/* Add-user dialog: let grid columns shrink instead of overflowing. */
+#user-edit-modal .form-group {
+  min-width: 0;
+}
+
+#user-edit-modal select.form-input {
+  width: 100%;
+}
+
+.modal-overlay.pw-required-overlay {
+  /* Above the login screen (99999): shown right after signing in. */
+  z-index: 100000;
+  background-color: rgba(0, 0, 0, 0.88);
 }
 
 /* In-app Dialog */

@@ -20,6 +20,34 @@ pub const PUBLIC_DEFAULT_SECRETS: &[&str] = &[
 
 pub const SECRET_FILE: &str = "secret.key";
 
+/// One-time note with the generated first admin password (removed when it is changed).
+pub const ADMIN_NOTE_FILE: &str = "initial_admin_credentials.txt";
+
+/// Write the first-login note, readable only by the owner. Returns its path.
+pub fn write_admin_note(data_dir: &Path, username: &str, password: &str) -> Result<std::path::PathBuf, String> {
+    let path = data_dir.join(ADMIN_NOTE_FILE);
+    let _ = std::fs::remove_file(&path);
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(&path)
+        .map_err(|e| format!("Cannot create {}: {}", path.display(), e))?;
+    let text = format!(
+        "Remote first admin login\n\nUsername: {}\nPassword: {}\n\n\
+         You will be asked to choose your own password after signing in.\n\
+         This file is deleted once you do.\n",
+        username, password
+    );
+    file.write_all(text.as_bytes())
+        .map_err(|e| format!("Cannot write {}: {}", path.display(), e))?;
+    Ok(std::fs::canonicalize(&path).unwrap_or(path))
+}
+
 /// Decide which secret this server uses, creating `secret.key` and re-encrypting
 /// saved credentials when moving away from a public default.
 pub fn resolve_master_secret(configured: &str, data_dir: &Path, db: &Database) -> Result<String, String> {

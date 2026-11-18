@@ -194,12 +194,20 @@ async function apiFetch(url, options = {}) {
   if (!headers['Content-Type'] && options.body && typeof options.body === 'string') {
     headers['Content-Type'] = 'application/json';
   }
-  return fetch(url, Object.assign({}, options, { headers }));
+  const res = await fetch(url, Object.assign({}, options, { headers }));
+  if (res.status === 403) {
+    res.clone().json().then((d) => {
+      if (d && d.code === 'password_change_required') showPasswordRequired();
+    }).catch(() => {});
+  }
+  return res;
 }
 
 // ================= Initialization & Lifecycle =================
 document.addEventListener('DOMContentLoaded', async () => {
   loadAppVersion();
+  loadPasswordPolicy();
+  setupPasswordDialogs();
   setupKeyboardShortcuts();
   setupGlobalDragAndDrop();
   initPaneStyles();
@@ -233,7 +241,11 @@ async function checkAuth() {
 
     if (res.ok) {
       state.currentUser = await res.json();
-      onAuthenticated();
+      if (state.currentUser.must_change_password) {
+        showPasswordRequired();
+      } else {
+        onAuthenticated();
+      }
     } else {
       showLoginModal();
     }
@@ -399,12 +411,15 @@ async function handleLoginSubmit() {
 
     const data = await res.json();
     if (res.ok) {
-      state.jwtToken = data.token;
+      setSessionToken(data.token);
       state.currentUser = data.user;
-      localStorage.setItem('remote_token', data.token);
-      localStorage.setItem('remotedog_token', data.token);
-      document.cookie = `remote_token=${data.token}; path=/; max-age=86400; SameSite=Lax`;
-      onAuthenticated();
+      if (data.must_change_password) {
+        state.currentUser.must_change_password = true;
+        state.loginPassword = password;
+        showPasswordRequired();
+      } else {
+        onAuthenticated();
+      }
     } else {
       errEl.textContent = data.error || 'Invalid username or password';
       errEl.style.display = 'block';
@@ -785,8 +800,15 @@ function openUserProfileModal() {
     if (dInput) dInput.value = state.currentUser.display_name || '';
     const eInput = document.getElementById('profile-email');
     if (eInput) eInput.value = state.currentUser.email || '';
-    const pwInput = document.getElementById('profile-new-password');
-    if (pwInput) pwInput.value = '';
+    ['profile-current-password', 'profile-new-password', 'profile-new-password-confirm'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    const pwSection = document.getElementById('profile-password-section');
+    if (pwSection) {
+      const canChange = state.currentUser.can_change_password ?? state.currentUser.auth_provider === 'local';
+      pwSection.style.display = canChange ? '' : 'none';
+    }
     const avatarInput = document.getElementById('profile-avatar-data');
     if (avatarInput) avatarInput.value = state.currentUser.avatar_data || '';
     const aPreview = document.getElementById('profile-modal-avatar');
@@ -808,9 +830,22 @@ async function handleUpdateProfile(e) {
   e.preventDefault();
   const displayName = document.getElementById('profile-display-name').value.trim();
   const email = document.getElementById('profile-email').value.trim();
+  const currentPassword = document.getElementById('profile-current-password').value;
   const newPassword = document.getElementById('profile-new-password').value;
+  const newPasswordAgain = document.getElementById('profile-new-password-confirm').value;
   const avatarData = document.getElementById('profile-avatar-data').value;
   const msgEl = document.getElementById('profile-modal-msg');
+
+  const changingPassword = !!(currentPassword || newPassword || newPasswordAgain);
+  if (changingPassword) {
+    const problem = !currentPassword
+      ? 'Enter your current password'
+      : passwordProblem(newPassword, newPasswordAgain, state.currentUser.username, currentPassword);
+    if (problem) {
+      showToast(problem, 'danger');
+      return;
+    }
+  }
 
   try {
     const payload = {
@@ -818,17 +853,22 @@ async function handleUpdateProfile(e) {
       email: email || null,
       avatar_data: avatarData || null,
     };
-    if (newPassword && newPassword.trim()) {
-      payload.password = newPassword;
-    }
     const res = await apiFetch(`/api/users/${state.currentUser.id}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
+    if (res.ok && changingPassword) {
+      const result = await changeOwnPassword(currentPassword, newPassword);
+      if (!result.ok) {
+        showToast(result.error, 'danger');
+        return;
+      }
+      showToast('Password changed. Other logins have been ended.', 'success');
+    }
     if (res.ok) {
       const data = await res.json();
       if (data.user) {
-        state.currentUser = data.user;
+        state.currentUser = Object.assign({}, state.currentUser, data.user);
       } else {
         state.currentUser.display_name = displayName || null;
         state.currentUser.email = email || null;
@@ -2368,6 +2408,7 @@ function renderUsersTable(users) {
         <td>
           <div style="display: flex; gap: 4px;">
             ${toggleBtn}
+            ${u.auth_provider === 'local' ? `<button class="btn btn-secondary btn-sm" data-reset-user="${escapeHtml(u.id)}" data-reset-name="${escapeHtml(u.username)}" title="Give this user a new password">Reset password</button>` : ''}
             <button class="btn btn-secondary btn-sm text-danger" onclick="deleteUser('${u.id}')">Delete</button>
           </div>
         </td>
@@ -2414,9 +2455,18 @@ async function handleSaveUser(e) {
   const displayName = document.getElementById('edit-user-displayname').value.trim();
   const email = document.getElementById('edit-user-email').value.trim();
   const password = document.getElementById('edit-user-password').value;
+  const passwordAgain = document.getElementById('edit-user-password-confirm').value;
+  const mustChange = document.getElementById('edit-user-must-change').checked;
   const role = document.getElementById('edit-user-role').value;
   const isActive = document.getElementById('edit-user-active') ? document.getElementById('edit-user-active').value === 'true' : true;
   const errEl = document.getElementById('add-user-error');
+
+  const problem = passwordProblem(password, passwordAgain, username);
+  if (problem) {
+    errEl.textContent = problem;
+    errEl.style.display = 'block';
+    return;
+  }
 
   try {
     const res = await fetch('/api/users', {
@@ -2432,6 +2482,7 @@ async function handleSaveUser(e) {
         password,
         role,
         is_active: isActive,
+        must_change_password: mustChange,
       }),
     });
 
@@ -2614,6 +2665,218 @@ function showToast(msg, type = 'info') {
   }, 3500);
 }
 
+// ================= Passwords =================
+let minPasswordLength = 12;
+
+async function loadPasswordPolicy() {
+  try {
+    const res = await fetch('/api/auth/providers');
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d.min_password_length) minPasswordLength = d.min_password_length;
+  } catch (e) {}
+  document.querySelectorAll('.pw-min-text').forEach((el) => {
+    el.textContent = `At least ${minPasswordLength} characters`;
+  });
+}
+
+function setSessionToken(token) {
+  state.jwtToken = token;
+  localStorage.setItem('remote_token', token);
+  localStorage.setItem('remotedog_token', token);
+  document.cookie = `remote_token=${token}; path=/; max-age=86400; SameSite=Lax`;
+}
+
+/** Client-side check matching the server's rules. Returns an error message or null. */
+function passwordProblem(password, again, username, current) {
+  if (!password) return 'Enter a password';
+  if (password !== again) return 'Passwords do not match';
+  if ([...password].length < minPasswordLength) return `Password must be at least ${minPasswordLength} characters`;
+  if (username && password.toLowerCase() === username.toLowerCase()) return 'Password must not be the username';
+  if (current && password === current) return 'New password must differ from the current one';
+  return null;
+}
+
+async function changeOwnPassword(current, next) {
+  try {
+    const res = await apiFetch('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: current, new_password: next }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: d.error || 'Could not change password' };
+    if (d.token) setSessionToken(d.token);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: 'Server connection error' };
+  }
+}
+
+function setupPasswordDialogs() {
+  makeDraggable(document.getElementById('pw-required-box'), document.getElementById('pw-required-header'));
+  makeDraggable(document.getElementById('pw-reset-box'), document.getElementById('pw-reset-header'));
+
+  document.getElementById('pw-required-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    submitPasswordRequired();
+  });
+  document.getElementById('pw-required-save').addEventListener('click', submitPasswordRequired);
+  document.getElementById('pw-required').addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitPasswordRequired();
+    }
+  });
+
+  document.getElementById('pw-reset-save').addEventListener('click', submitPasswordReset);
+  document.getElementById('pw-reset').addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') closePasswordReset();
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'password') {
+      e.preventDefault();
+      submitPasswordReset();
+    }
+  });
+
+  // Reset buttons live in the re-rendered users table.
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-reset-user]');
+    if (btn) openPasswordReset(btn.dataset.resetUser, btn.dataset.resetName);
+  });
+}
+
+function showPasswordRequired() {
+  const overlay = document.getElementById('pw-required');
+  if (!overlay || overlay.style.display === 'flex') return;
+  ['pw-required-current', 'pw-required-new', 'pw-required-confirm'].forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('pw-required-error').textContent = '';
+  document.getElementById('pw-required-current-group').style.display = state.loginPassword ? 'none' : '';
+  document.getElementById('pw-required-box').style.transform = '';
+  overlay.style.display = 'flex';
+  setTimeout(() => {
+    document.getElementById(state.loginPassword ? 'pw-required-new' : 'pw-required-current').focus();
+  }, 0);
+}
+
+async function submitPasswordRequired() {
+  const errEl = document.getElementById('pw-required-error');
+  const current = state.loginPassword || document.getElementById('pw-required-current').value;
+  const next = document.getElementById('pw-required-new').value;
+  const again = document.getElementById('pw-required-confirm').value;
+  const username = state.currentUser && state.currentUser.username;
+
+  const problem = !current ? 'Enter your current password' : passwordProblem(next, again, username, current);
+  if (problem) {
+    errEl.textContent = problem;
+    return;
+  }
+  errEl.textContent = '';
+  const result = await changeOwnPassword(current, next);
+  if (!result.ok) {
+    errEl.textContent = result.error;
+    if (/current password/i.test(result.error)) {
+      state.loginPassword = null;
+      document.getElementById('pw-required-current-group').style.display = '';
+    }
+    return;
+  }
+  state.loginPassword = null;
+  if (state.currentUser) state.currentUser.must_change_password = false;
+  document.getElementById('pw-required').style.display = 'none';
+  showToast('Password changed', 'success');
+  onAuthenticated();
+}
+
+let pwResetTarget = null;
+
+function openPasswordReset(userId, username) {
+  pwResetTarget = { id: userId, username };
+  document.getElementById('pw-reset-title').textContent = `Reset password for ${username}`;
+  document.querySelector('input[name="pw-reset-mode"][value="generate"]').checked = true;
+  document.getElementById('pw-reset-new').value = '';
+  document.getElementById('pw-reset-confirm').value = '';
+  document.getElementById('pw-reset-must-change').checked = true;
+  document.getElementById('pw-reset-error').textContent = '';
+  document.getElementById('pw-reset-box').style.transform = '';
+  updatePasswordResetMode();
+  document.getElementById('pw-reset').style.display = 'flex';
+  setTimeout(() => document.getElementById('pw-reset-save').focus(), 0);
+}
+
+function updatePasswordResetMode() {
+  const set = document.querySelector('input[name="pw-reset-mode"]:checked').value === 'set';
+  document.getElementById('pw-reset-fields').style.display = set ? '' : 'none';
+  if (set) setTimeout(() => document.getElementById('pw-reset-new').focus(), 0);
+}
+
+function closePasswordReset() {
+  document.getElementById('pw-reset').style.display = 'none';
+  document.getElementById('pw-reset-new').value = '';
+  document.getElementById('pw-reset-confirm').value = '';
+  pwResetTarget = null;
+}
+
+async function submitPasswordReset() {
+  if (!pwResetTarget) return;
+  const errEl = document.getElementById('pw-reset-error');
+  const set = document.querySelector('input[name="pw-reset-mode"]:checked').value === 'set';
+  const mustChange = document.getElementById('pw-reset-must-change').checked;
+  const body = { must_change_password: mustChange };
+  if (set) {
+    const pw = document.getElementById('pw-reset-new').value;
+    const problem = passwordProblem(pw, document.getElementById('pw-reset-confirm').value, pwResetTarget.username);
+    if (problem) {
+      errEl.textContent = problem;
+      return;
+    }
+    body.password = pw;
+  }
+  const target = pwResetTarget;
+  try {
+    const res = await apiFetch(`/api/users/${target.id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      errEl.textContent = d.error || 'Could not reset password';
+      return;
+    }
+    closePasswordReset();
+    if (d.password) {
+      await uiCopyDialog(
+        `New password for ${target.username}`,
+        `Give this password to ${target.username}. It is shown only once.` +
+          (mustChange ? ' They will be asked to choose their own at next login.' : ''),
+        d.password,
+      );
+    } else {
+      showToast(`Password for ${target.username} has been reset`, 'success');
+    }
+  } catch (e) {
+    errEl.textContent = 'Server connection error';
+  }
+}
+
+/** Make a dialog box draggable by its header (RULES 9: whole header is a drag handle). */
+function makeDraggable(box, header) {
+  if (!box || !header) return;
+  let drag = null;
+  header.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    const m = (box.style.transform.match(/-?[\d.]+/g) || [0, 0]).map(Number);
+    drag = { x: e.clientX - m[0], y: e.clientY - m[1] };
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (drag) box.style.transform = `translate(${e.clientX - drag.x}px, ${e.clientY - drag.y}px)`;
+  });
+  document.addEventListener('mouseup', () => { drag = null; });
+}
+
 // ================= In-app Dialog (replaces confirm/prompt/alert) =================
 let uiDialogResolve = null;
 let uiDialogMode = 'confirm';
@@ -2653,18 +2916,7 @@ function setupUiDialog() {
     }
   }, true);
 
-  // Whole header is a drag handle.
-  let drag = null;
-  header.addEventListener('mousedown', (e) => {
-    if (e.target.closest('button')) return;
-    const m = (box.style.transform.match(/-?[\d.]+/g) || [0, 0]).map(Number);
-    drag = { x: e.clientX - m[0], y: e.clientY - m[1] };
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (drag) box.style.transform = `translate(${e.clientX - drag.x}px, ${e.clientY - drag.y}px)`;
-  });
-  document.addEventListener('mouseup', () => { drag = null; });
+  makeDraggable(box, header);
 }
 
 function openUiDialog({ title, message = '', mode = 'confirm', value = '', placeholder = '', okText = 'OK', cancelText = 'Cancel', danger = false }) {

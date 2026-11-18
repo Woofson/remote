@@ -1,6 +1,6 @@
 use crate::auth::{
-    create_jwt, decrypt_secret, encrypt_secret, hash_password, verify_jwt, verify_password,
-    Claims, OidcService,
+    check_password_policy, create_jwt, decrypt_secret, encrypt_secret, generate_password,
+    hash_password, verify_jwt, verify_password, Claims, OidcService,
 };
 use crate::config::AppConfig;
 use crate::db::{ConnectionRecord, ConnectionSafe, ConnectionUserPerms, Database, Group, User, UserSafe};
@@ -64,6 +64,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
         // Users & Groups API
         .route("/api/users", get(api_list_users).post(api_create_user))
+        .route("/api/users/:id/reset-password", post(api_reset_user_password))
+        .route("/api/auth/change-password", post(api_change_password))
         .route(
             "/api/users/:id",
             put(api_update_user).delete(api_delete_user),
@@ -111,33 +113,71 @@ pub fn create_router(state: AppState) -> Router {
 
 // ================= Auth Helpers & Middlewares =================
 
-fn extract_claims(headers: &HeaderMap, secret: &str) -> Result<Claims, (StatusCode, Json<Value>)> {
-    if let Some(auth_header) = headers.get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if auth_str.starts_with("Bearer ") {
-                let token = &auth_str[7..];
-                return verify_jwt(token, secret)
-                    .map_err(|e| (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))));
-            }
+/// The login token from `Authorization: Bearer` or the `remote_token` cookie.
+fn token_from_headers(headers: &HeaderMap) -> Option<String> {
+    if let Some(auth) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = auth.strip_prefix("Bearer ") {
+            return Some(token.to_string());
         }
     }
+    let cookies = headers.get(header::COOKIE).and_then(|v| v.to_str().ok())?;
+    cookies.split(';').find_map(|c| {
+        let (name, value) = c.trim().split_once('=')?;
+        (name == "remote_token" || name == "remotedog_token").then(|| value.to_string())
+    })
+}
 
-    if let Some(cookie_header) = headers.get(header::COOKIE) {
-        if let Ok(cookies) = cookie_header.to_str() {
-            for c in cookies.split(';') {
-                let parts: Vec<&str> = c.trim().split('=').collect();
-                if parts.len() == 2 && (parts[0] == "remote_token" || parts[0] == "remotedog_token") {
-                    return verify_jwt(parts[1], secret)
-                        .map_err(|e| (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))));
-                }
-            }
-        }
+fn auth_err(code: StatusCode, msg: &str) -> (StatusCode, Json<Value>) {
+    (code, Json(json!({ "error": msg })))
+}
+
+/// Verify a login token and the account's live state: it must still exist, be active,
+/// and the login must not have been ended by a password change, reset, disable or role change.
+/// Unless `allow_pending`, a required password change blocks everything else.
+fn authenticate_token(state: &AppState, token: &str, allow_pending: bool) -> Result<Claims, (StatusCode, Json<Value>)> {
+    let secret = state.config.read().server.jwt_secret.clone();
+    let claims = verify_jwt(token, &secret).map_err(|e| auth_err(StatusCode::UNAUTHORIZED, &e))?;
+
+    let user = state
+        .db
+        .get_user_by_id(&claims.sub)
+        .map_err(|e| auth_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
+        .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Session is no longer valid, please log in again"))?;
+    if !user.is_active {
+        return Err(auth_err(StatusCode::FORBIDDEN, "Account is disabled"));
     }
 
-    Err((
-        StatusCode::UNAUTHORIZED,
-        Json(json!({ "error": "Authentication token missing or invalid" })),
-    ))
+    let (generation, must_change) = state
+        .db
+        .get_user_security(&user.id)
+        .map_err(|e| auth_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+    if claims.gen != generation {
+        return Err(auth_err(StatusCode::UNAUTHORIZED, "Session has ended, please log in again"));
+    }
+    if must_change && !allow_pending {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "You must choose a new password before continuing",
+                "code": "password_change_required",
+            })),
+        ));
+    }
+    Ok(claims)
+}
+
+fn extract_claims(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
+    let token = token_from_headers(headers)
+        .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Authentication token missing or invalid"))?;
+    authenticate_token(state, &token, false)
+}
+
+/// Like [`extract_claims`], but also lets through accounts that must change their password
+/// (only for: who am I, log out, change password).
+fn extract_claims_pending(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
+    let token = token_from_headers(headers)
+        .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Authentication token missing or invalid"))?;
+    authenticate_token(state, &token, true)
 }
 
 // ================= Auth Handlers =================
@@ -163,9 +203,11 @@ pub async fn api_login(
             )
         })?;
 
+    // Check the password first so the reply never reveals whether an account exists or is disabled.
+    let password = payload.password.unwrap_or_default();
     let user = match user_opt {
-        Some(u) => u,
-        None => {
+        Some(u) if u.auth_provider == "local" && verify_password(&password, &u.password_hash) => u,
+        _ => {
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(json!({ "error": "Invalid username or password" })),
@@ -180,24 +222,11 @@ pub async fn api_login(
         ));
     }
 
-    let password = payload.password.unwrap_or_default();
-    let mut is_valid = verify_password(&password, &user.password_hash);
-    if !is_valid && user.username == "admin" {
-        if (password == "remote" || password == "remotedog")
-            && (verify_password("remote", &user.password_hash) || verify_password("remotedog", &user.password_hash))
-        {
-            is_valid = true;
-        }
-    }
-
-    if !is_valid {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "Invalid username or password" })),
-        ));
-    }
-
-    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours)
+    let (generation, must_change) = state
+        .db
+        .get_user_security(&user.id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
     let _ = state.db.update_last_login(&user.id);
@@ -215,6 +244,7 @@ pub async fn api_login(
     Ok(Json(json!({
         "token": token,
         "user": safe_user,
+        "must_change_password": must_change,
     })))
 }
 
@@ -226,8 +256,7 @@ pub async fn api_me(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims_pending(&state, &headers)?;
 
     let user = state
         .db
@@ -252,8 +281,12 @@ pub async fn api_me(
         ));
     }
 
-    let safe_user: UserSafe = user.into();
-    Ok(Json(json!(safe_user)))
+    let (_, must_change) = state.db.get_user_security(&user.id).unwrap_or((0, false));
+    let can_change_password = user.auth_provider == "local";
+    let mut body = json!(UserSafe::from(user));
+    body["must_change_password"] = json!(must_change);
+    body["can_change_password"] = json!(can_change_password);
+    Ok(Json(body))
 }
 
 /// Public: the running version, from Cargo.toml (single source of truth).
@@ -266,6 +299,7 @@ pub async fn api_auth_providers(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "local": cfg.auth.allow_local_login,
         "pam": cfg.auth.allow_pam_login,
+        "min_password_length": cfg.auth.min_password_length,
         "oidc": {
             "enabled": cfg.oidc.enabled,
             "provider_name": cfg.oidc.provider_name,
@@ -386,7 +420,11 @@ pub async fn api_oidc_callback(
         }
     };
 
-    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours)
+    let (generation, _) = state
+        .db
+        .get_user_security(&user.id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
     let html = format!(
@@ -418,8 +456,7 @@ pub async fn api_list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<UserSafe>>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -443,6 +480,18 @@ pub struct CreateUserPayload {
     pub email: Option<String>,
     pub display_name: Option<String>,
     pub role: Option<String>,
+    /// Ask the user to choose their own password at first login (default: yes).
+    pub must_change_password: Option<bool>,
+}
+
+const ROLES: &[&str] = &["admin", "operator", "viewer"];
+
+fn validate_role(role: &str) -> Result<(), (StatusCode, Json<Value>)> {
+    if ROLES.contains(&role) {
+        Ok(())
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "Role must be admin, operator or viewer" }))))
+    }
 }
 
 pub async fn api_create_user(
@@ -450,8 +499,7 @@ pub async fn api_create_user(
     headers: HeaderMap,
     Json(payload): Json<CreateUserPayload>,
 ) -> Result<Json<UserSafe>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -459,16 +507,25 @@ pub async fn api_create_user(
         ));
     }
 
+    let username = payload.username.trim().to_string();
+    if username.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "Username is required" }))));
+    }
+    let role = payload.role.clone().unwrap_or_else(|| "operator".to_string());
+    validate_role(&role)?;
+    let min_len = state.config.read().auth.min_password_length;
+    check_password_policy(&payload.password, &username, None, min_len)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
     let pw_hash = hash_password(&payload.password)
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
 
     let new_user = User {
         id: Uuid::new_v4().to_string(),
-        username: payload.username,
+        username,
         password_hash: pw_hash,
         email: payload.email,
         display_name: payload.display_name,
-        role: payload.role.unwrap_or_else(|| "operator".to_string()),
+        role,
         is_active: true,
         auth_provider: "local".to_string(),
         oidc_sub: None,
@@ -484,6 +541,18 @@ pub async fn api_create_user(
         )
     })?;
 
+    if payload.must_change_password.unwrap_or(true) {
+        let _ = state.db.set_must_change_password(&new_user.id, true);
+    }
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "USER_CREATED",
+        None,
+        None,
+        Some(&format!("Created user '{}' ({})", new_user.username, new_user.role)),
+        None,
+    );
     Ok(Json(new_user.into()))
 }
 
@@ -505,8 +574,7 @@ pub async fn api_update_user(
     headers: HeaderMap,
     Json(payload): Json<UpdateUserPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" && claims.sub != id {
         return Err((
             StatusCode::FORBIDDEN,
@@ -560,20 +628,33 @@ pub async fn api_update_user(
         user.avatar_data = if av.trim().is_empty() { None } else { Some(av) };
     }
 
-    if claims.role == "admin" {
-        if let Some(r) = payload.role {
-            user.role = r;
-        }
-        if let Some(active) = payload.is_active {
-            user.is_active = active;
-        }
+    if payload.new_password.as_deref().or(payload.password.as_deref()).is_some_and(|p| !p.is_empty()) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Passwords are changed with Change password or, for admins, Reset password" })),
+        ));
     }
 
-    let pw_opt = payload.new_password.or(payload.password);
-    if let Some(pw) = pw_opt {
-        if !pw.trim().is_empty() {
-            user.password_hash = hash_password(&pw)
-                .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+    let mut end_logins = false;
+    if claims.role == "admin" {
+        if let Some(r) = payload.role {
+            validate_role(&r)?;
+            if r != user.role {
+                if claims.sub == id {
+                    return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "You cannot change your own role" }))));
+                }
+                user.role = r;
+                end_logins = true;
+            }
+        }
+        if let Some(active) = payload.is_active {
+            if !active && claims.sub == id {
+                return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "You cannot disable your own account" }))));
+            }
+            if user.is_active && !active {
+                end_logins = true;
+            }
+            user.is_active = active;
         }
     }
 
@@ -583,9 +664,130 @@ pub async fn api_update_user(
             Json(json!({ "error": e.to_string() })),
         )
     })?;
+    if end_logins {
+        let _ = state.db.bump_session_generation(&user.id);
+    }
 
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({ "message": "User updated successfully", "user": safe_user })))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordPayload {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+/// Change your own password. Allowed while a change is required. Ends all other logins
+/// and returns a fresh token so this browser stays logged in.
+pub async fn api_change_password(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<ChangePasswordPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims_pending(&state, &headers)?;
+    let cfg = state.config.read().clone();
+    let bad = |msg: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })));
+
+    let user = state
+        .db
+        .get_user_by_id(&claims.sub)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
+        .ok_or_else(|| bad("User not found"))?;
+    if user.auth_provider != "local" {
+        return Err(bad("This account's password is managed outside Remote"));
+    }
+    if !verify_password(&payload.current_password, &user.password_hash) {
+        state.db.log_audit(Some(&user.id), &user.username, "PASSWORD_CHANGE_FAILED", None, None, Some("Wrong current password"), None);
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Current password is incorrect" }))));
+    }
+    check_password_policy(&payload.new_password, &user.username, Some(&payload.current_password), cfg.auth.min_password_length)
+        .map_err(|e| bad(&e))?;
+
+    let hash = hash_password(&payload.new_password).map_err(|e| bad(&e))?;
+    state
+        .db
+        .set_user_password(&user.id, &hash, false)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    // The first-login note is no longer needed once the built-in admin picks a password.
+    if user.username == "admin" {
+        let note = std::path::Path::new(&cfg.server.data_dir).join(crate::secrets::ADMIN_NOTE_FILE);
+        if note.exists() && std::fs::remove_file(&note).is_ok() {
+            tracing::info!("Removed {} after the admin changed the password", note.display());
+        }
+    }
+    state.db.log_audit(Some(&user.id), &user.username, "PASSWORD_CHANGED", None, None, None, None);
+
+    let (generation, _) = state.db.get_user_security(&user.id).unwrap_or((0, false));
+    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
+    Ok(Json(json!({ "message": "Password changed", "token": token })))
+}
+
+#[derive(Deserialize)]
+pub struct ResetPasswordPayload {
+    /// New password; when omitted a random one is generated and returned once.
+    pub password: Option<String>,
+    /// Ask the user to choose their own password at next login (default: yes).
+    pub must_change_password: Option<bool>,
+}
+
+/// Admin: give a user a new password. Ends all of that user's logins.
+pub async fn api_reset_user_password(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<ResetPasswordPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    if claims.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Admin role required" }))));
+    }
+    let bad = |msg: &str| (StatusCode::BAD_REQUEST, Json(json!({ "error": msg })));
+    let user = state
+        .db
+        .get_user_by_id(&id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(json!({ "error": "User not found" }))))?;
+    if user.auth_provider != "local" {
+        return Err(bad("This account's password is managed outside Remote"));
+    }
+
+    let (password, generated) = match payload.password.filter(|p| !p.is_empty()) {
+        Some(p) => {
+            let min_len = state.config.read().auth.min_password_length;
+            check_password_policy(&p, &user.username, None, min_len).map_err(|e| bad(&e))?;
+            (p, false)
+        }
+        None => (generate_password(), true),
+    };
+    let must_change = payload.must_change_password.unwrap_or(true);
+    let hash = hash_password(&password).map_err(|e| bad(&e))?;
+    state
+        .db
+        .set_user_password(&user.id, &hash, must_change)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "PASSWORD_RESET",
+        None,
+        None,
+        Some(&format!(
+            "Reset password for '{}'{}",
+            user.username,
+            if must_change { " (must change at next login)" } else { "" }
+        )),
+        None,
+    );
+
+    Ok(Json(json!({
+        "message": "Password reset",
+        "password": if generated { Some(password) } else { None },
+        "must_change_password": must_change,
+    })))
 }
 
 pub async fn api_delete_user(
@@ -593,8 +795,7 @@ pub async fn api_delete_user(
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -625,8 +826,7 @@ pub async fn api_list_groups(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<Group>>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let _ = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let _ = extract_claims(&state, &headers)?;
     let groups = state.db.list_groups().map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -647,8 +847,7 @@ pub async fn api_create_group(
     headers: HeaderMap,
     Json(payload): Json<CreateGroupPayload>,
 ) -> Result<Json<Group>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -675,8 +874,7 @@ pub async fn api_list_connections(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<ConnectionSafe>>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
 
     let user = state
         .db
@@ -729,7 +927,7 @@ pub async fn api_create_connection(
     Json(payload): Json<SaveConnectionPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" && claims.role != "operator" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -817,7 +1015,7 @@ pub async fn api_update_connection(
     Json(payload): Json<SaveConnectionPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" && claims.role != "operator" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -907,8 +1105,7 @@ pub async fn api_delete_connection(
     AxumPath(id): AxumPath<String>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" && claims.role != "operator" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -964,8 +1161,7 @@ pub async fn api_test_connection(
     headers: HeaderMap,
     Json(payload): Json<TestConnectionPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" && claims.role != "operator" {
         return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Operator or Admin role required" }))));
     }
@@ -1110,8 +1306,7 @@ pub async fn api_files_list(
     headers: HeaderMap,
     Query(q): Query<FilesPathQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let _ = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let _ = extract_claims(&state, &headers)?;
 
     let (path, entries) = state
         .transfer_mgr
@@ -1126,8 +1321,7 @@ pub async fn api_files_download(
     headers: HeaderMap,
     Query(q): Query<FilesPathQuery>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
 
     let file = state
         .transfer_mgr
@@ -1165,8 +1359,7 @@ pub async fn api_files_upload(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     use tokio::io::AsyncWriteExt;
 
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     require_files_writer(&claims)?;
 
     let dir = state
@@ -1224,8 +1417,7 @@ pub async fn api_files_mkdir(
     headers: HeaderMap,
     Json(payload): Json<FilesMkdirPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     require_files_writer(&claims)?;
 
     let rel = state
@@ -1241,8 +1433,7 @@ pub async fn api_files_delete(
     headers: HeaderMap,
     Json(payload): Json<FilesDeletePayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     require_files_writer(&claims)?;
 
     let (rel, was_dir) = state
@@ -1274,7 +1465,7 @@ pub async fn api_sftp_list(
     Json(payload): Json<SftpListPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     let authz = authorize_connection(&state, &claims, &connection_id, "SFTP list")?;
 
     if authz.conn.protocol != "ssh" {
@@ -1349,7 +1540,7 @@ pub async fn api_sftp_upload_staged(
     Json(payload): Json<SftpUploadStagedPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     let authz = authorize_connection(&state, &claims, &connection_id, "SFTP upload")?;
 
     let reason = if authz.conn.protocol != "ssh" {
@@ -1441,8 +1632,7 @@ pub async fn api_list_audit_logs(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let cfg = state.config.read().clone();
-    let claims = extract_claims(&headers, &cfg.server.jwt_secret)?;
+    let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
             StatusCode::FORBIDDEN,
@@ -1511,10 +1701,9 @@ pub async fn ws_tunnel_handler(
 
     // Authenticate token either via query param or header/cookie
     let claims = if let Some(tok) = &query.token {
-        verify_jwt(tok, &cfg.server.jwt_secret)
-            .map_err(|e| (StatusCode::UNAUTHORIZED, Json(json!({ "error": e }))))?
+        authenticate_token(&state, tok, false)?
     } else {
-        extract_claims(&headers, &cfg.server.jwt_secret)?
+        extract_claims(&state, &headers)?
     };
 
     let authz = authorize_connection(&state, &claims, &connection_id, "Connect")?;

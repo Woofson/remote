@@ -61,6 +61,13 @@ pub struct AuthConfig {
     pub allow_local_login: bool,
     pub allow_pam_login: bool,
     pub default_role: String,
+    /// Minimum length for local account passwords.
+    #[serde(default = "default_min_password_length")]
+    pub min_password_length: usize,
+}
+
+fn default_min_password_length() -> usize {
+    12
 }
 
 impl Default for AuthConfig {
@@ -69,6 +76,7 @@ impl Default for AuthConfig {
             allow_local_login: true,
             allow_pam_login: false,
             default_role: "viewer".to_string(),
+            min_password_length: default_min_password_length(),
         }
     }
 }

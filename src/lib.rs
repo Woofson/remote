@@ -58,6 +58,44 @@ mod tests {
     }
 
     #[test]
+    fn test_password_policy_and_generator() {
+        use auth::{check_password_policy, generate_password};
+        let a = generate_password();
+        let b = generate_password();
+        assert_eq!(a.chars().count(), 20);
+        assert_ne!(a, b);
+        assert!(a.chars().all(|c| !"0O1lI".contains(c)), "no look-alike characters: {}", a);
+        assert!(check_password_policy(&a, "carol", None, 12).is_ok());
+        assert!(check_password_policy("short", "carol", None, 12).is_err());
+        assert!(check_password_policy("CarolCarolCarol", "carolcarolcarol", None, 12).is_err());
+        assert!(check_password_policy("same-old-password", "carol", Some("same-old-password"), 12).is_err());
+    }
+
+    #[test]
+    fn test_password_change_ends_logins_and_clears_flag() {
+        let db = Database::new_in_memory().unwrap();
+        let dave = test_user("dave", "operator");
+        db.create_user(&dave).unwrap();
+        assert_eq!(db.get_user_security(&dave.id).unwrap(), (0, false));
+
+        db.set_user_password(&dave.id, "hash1", true).unwrap();
+        assert_eq!(db.get_user_security(&dave.id).unwrap(), (1, true));
+
+        db.set_user_password(&dave.id, "hash2", false).unwrap();
+        assert_eq!(db.get_user_security(&dave.id).unwrap(), (2, false));
+        assert_eq!(db.get_user_by_id(&dave.id).unwrap().unwrap().password_hash, "hash2");
+
+        db.bump_session_generation(&dave.id).unwrap();
+        assert_eq!(db.get_user_security(&dave.id).unwrap().0, 3);
+
+        // Seeded admin starts with a required change.
+        let fresh = Database::new_in_memory().unwrap();
+        assert!(fresh.seed_initial_admin("h").unwrap());
+        let admin = fresh.get_user_by_username("admin").unwrap().unwrap();
+        assert!(fresh.get_user_security(&admin.id).unwrap().1);
+    }
+
+    #[test]
     fn test_explicit_grants_decide_access() {
         use db::ConnectionUserPerms;
         let db = Database::new_in_memory().unwrap();

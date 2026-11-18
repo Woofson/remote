@@ -20,6 +20,9 @@ pub struct Claims {
     pub auth_provider: String,
     pub exp: usize,
     pub iat: usize,
+    /// The user's session generation when issued; a newer generation ends this login.
+    #[serde(default)]
+    pub gen: i64,
 }
 
 pub fn hash_password(password: &str) -> Result<String, String> {
@@ -29,6 +32,41 @@ pub fn hash_password(password: &str) -> Result<String, String> {
         .hash_password(password.as_bytes(), &salt)
         .map(|hash| hash.to_string())
         .map_err(|e| format!("Password hashing failed: {}", e))
+}
+
+/// A random 20-character password (same alphabet as Brum: no look-alike characters).
+pub fn generate_password() -> String {
+    const CHARSET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*";
+    let mut out = String::with_capacity(20);
+    let mut buf = [0u8; 1];
+    while out.len() < 20 {
+        getrandom::getrandom(&mut buf).expect("OS random source");
+        // Rejection sampling keeps every character equally likely.
+        let limit = 256 - (256 % CHARSET.len());
+        if (buf[0] as usize) < limit {
+            out.push(CHARSET[buf[0] as usize % CHARSET.len()] as char);
+        }
+    }
+    out
+}
+
+/// Password rules for local accounts.
+pub fn check_password_policy(
+    password: &str,
+    username: &str,
+    previous: Option<&str>,
+    min_length: usize,
+) -> Result<(), String> {
+    if password.chars().count() < min_length {
+        return Err(format!("Password must be at least {} characters", min_length));
+    }
+    if password.eq_ignore_ascii_case(username) {
+        return Err("Password must not be the username".into());
+    }
+    if previous == Some(password) {
+        return Err("New password must differ from the current one".into());
+    }
+    Ok(())
 }
 
 pub fn verify_password(password: &str, hash: &str) -> bool {
@@ -41,7 +79,7 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-pub fn create_jwt(user: &User, secret: &str, expiry_hours: i64) -> Result<String, String> {
+pub fn create_jwt(user: &User, secret: &str, expiry_hours: i64, gen: i64) -> Result<String, String> {
     let now = Utc::now();
     let exp = (now + Duration::hours(expiry_hours)).timestamp() as usize;
     let iat = now.timestamp() as usize;
@@ -53,6 +91,7 @@ pub fn create_jwt(user: &User, secret: &str, expiry_hours: i64) -> Result<String
         auth_provider: user.auth_provider.clone(),
         exp,
         iat,
+        gen,
     };
 
     encode(

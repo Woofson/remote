@@ -1,6 +1,6 @@
 use chrono::Utc;
 use parking_lot::Mutex;
-use rusqlite::{params, Connection as SqliteConnection, Result as SqlResult};
+use rusqlite::{params, Connection as SqliteConnection, OptionalExtension, Result as SqlResult};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -313,6 +313,18 @@ impl Database {
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_transfer TEXT NOT NULL DEFAULT 'full';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN view_only INTEGER NOT NULL DEFAULT 0;", []);
 
+        // Per-user login security, kept apart from `users` (same approach as Brum):
+        // a newer session_generation ends older logins; must_change_password gates the account.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS user_security (
+                user_id TEXT PRIMARY KEY,
+                session_generation INTEGER NOT NULL DEFAULT 0,
+                must_change_password INTEGER NOT NULL DEFAULT 0,
+                password_changed_at TEXT
+            )",
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -336,12 +348,70 @@ impl Database {
                 params![conn_id, id, now],
             )?;
 
+            conn.execute(
+                "INSERT INTO user_security (user_id, must_change_password) VALUES (?1, 1)",
+                params![id],
+            )?;
+
             info!("Created default administrator user 'admin' and initial connection template");
             return Ok(true);
-        } else {
-            let _ = conn.execute("UPDATE users SET is_active = 1 WHERE username = 'admin';", []);
         }
         Ok(false)
+    }
+
+    // ================= Login Security =================
+
+    /// (session_generation, must_change_password) for a user; defaults when no row exists.
+    pub fn get_user_security(&self, user_id: &str) -> SqlResult<(i64, bool)> {
+        let conn = self.conn.lock();
+        let row = conn
+            .query_row(
+                "SELECT session_generation, must_change_password FROM user_security WHERE user_id = ?1",
+                params![user_id],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)? != 0)),
+            )
+            .optional()?;
+        Ok(row.unwrap_or((0, false)))
+    }
+
+    /// End every existing login of this user.
+    pub fn bump_session_generation(&self, user_id: &str) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "INSERT INTO user_security (user_id, session_generation) VALUES (?1, 1)
+             ON CONFLICT(user_id) DO UPDATE SET session_generation = session_generation + 1",
+            params![user_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_must_change_password(&self, user_id: &str, must_change: bool) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "INSERT INTO user_security (user_id, must_change_password) VALUES (?1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET must_change_password = ?2",
+            params![user_id, must_change as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Store a new password hash, end all existing logins and set the change-on-next-login flag.
+    pub fn set_user_password(&self, user_id: &str, password_hash: &str, must_change: bool) -> SqlResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("UPDATE users SET password_hash = ?1 WHERE id = ?2", params![password_hash, user_id])?;
+        tx.execute(
+            "INSERT INTO user_security (user_id, session_generation, must_change_password, password_changed_at)
+             VALUES (?1, 1, ?2, ?3)
+             ON CONFLICT(user_id) DO UPDATE SET
+                session_generation = session_generation + 1,
+                must_change_password = ?2,
+                password_changed_at = ?3",
+            params![user_id, must_change as i64, Utc::now().to_rfc3339()],
+        )?;
+        tx.commit()
+    }
+
+    pub fn count_users(&self) -> SqlResult<i64> {
+        self.conn.lock().query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
     }
 
     // ================= User Operations =================
@@ -511,6 +581,7 @@ impl Database {
     pub fn delete_user(&self, id: &str) -> SqlResult<()> {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM users WHERE id = ?1", params![id])?;
+        conn.execute("DELETE FROM user_security WHERE user_id = ?1", params![id])?;
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use parking_lot::RwLock;
-use remoted::auth::{hash_password, OidcService};
+use remoted::auth::{generate_password, hash_password, verify_password, OidcService};
 use remoted::config::AppConfig;
-use remoted::db::Database;
+use remoted::db::{Database, User};
 use remoted::server::{create_router, AppState};
 use remoted::transfer::TransferManager;
 use std::path::Path;
@@ -43,17 +43,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     config.server.jwt_secret =
         remoted::secrets::resolve_master_secret(&config.server.jwt_secret, db_dir, &db)?;
 
-    // Seed initial admin user if no users exist
-    let default_admin_pw = "remote";
-    let initial_hash = hash_password(default_admin_pw)?;
-    let seeded = db.seed_initial_admin(&initial_hash)?;
-    if seeded {
-        info!("============================================================");
-        info!(" Default Admin User Created: 'admin'");
-        info!(" Default Initial Password:   'remote'");
-        info!(" Please change this password upon first login!");
-        info!("============================================================");
+    match std::env::args().nth(1).as_deref() {
+        None => {}
+        Some("reset-admin-password") => {
+            reset_admin_password(&db, db_dir)?;
+            return Ok(());
+        }
+        Some(other) => {
+            eprintln!("Unknown command '{}'.\n", other);
+            eprintln!("Usage:");
+            eprintln!("    remoted                        Start the server");
+            eprintln!("    remoted reset-admin-password   Give the built-in admin a new password (run on the Remote machine)");
+            std::process::exit(2);
+        }
     }
+
+    bootstrap_admin(&db, db_dir)?;
 
     let transfer_mgr = TransferManager::new(&config.storage.staging_dir);
     let oidc_service = Arc::new(OidcService::new(config.oidc.clone()));
@@ -71,5 +76,103 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("🚀 Remote Server listening on http://{}", config.server.bind_address);
 
     axum::serve(listener, router).await?;
+    Ok(())
+}
+
+const ADMIN_USER: &str = "admin";
+
+fn print_admin_box(title: &str, password: &str, note: Option<&Path>) {
+    println!("\n================================================================================");
+    println!(" {}", title);
+    println!("    Username : {}", ADMIN_USER);
+    println!("    Password : {}", password);
+    if let Some(p) = note {
+        println!("    Saved in : {}", p.display());
+    }
+    println!("    You will be asked to choose your own password after signing in.");
+    if note.is_some() {
+        println!("    The file is removed once you do.");
+    }
+    println!("================================================================================\n");
+}
+
+/// First start: create the admin with a generated password (shown on screen and in a one-time
+/// note, never in the log). Later starts: flag an admin still using a published default password.
+fn bootstrap_admin(db: &Database, data_dir: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if db.count_users()? == 0 {
+        let password = generate_password();
+        db.seed_initial_admin(&hash_password(&password)?)?;
+        let note = remoted::secrets::write_admin_note(data_dir, ADMIN_USER, &password).ok();
+        print_admin_box("FIRST ADMIN LOGIN", &password, note.as_deref());
+        match &note {
+            Some(p) => info!("Created the first admin login '{}'. Its password is in: {}", ADMIN_USER, p.display()),
+            None => info!("Created the first admin login '{}'; its password is shown above", ADMIN_USER),
+        }
+        return Ok(());
+    }
+
+    if let Some(admin) = db.get_user_by_username(ADMIN_USER)? {
+        // Older installs used one of these published defaults ("remotedog" from the RemoteDog days).
+        let default_in_use = if admin.auth_provider == "local" {
+            ["remote", "remotedog"].into_iter().find(|p| verify_password(p, &admin.password_hash))
+        } else {
+            None
+        };
+        if let Some(default) = default_in_use {
+            db.set_must_change_password(&admin.id, true)?;
+            tracing::warn!(
+                "The '{}' account still uses the published default password '{}'; it must be changed at next login",
+                ADMIN_USER,
+                default
+            );
+        }
+    }
+    let note = data_dir.join(remoted::secrets::ADMIN_NOTE_FILE);
+    if note.exists() {
+        info!(
+            "The first-login note is still at {}; it is removed once the admin changes the password",
+            note.display()
+        );
+    }
+    Ok(())
+}
+
+/// `remoted reset-admin-password`: new generated password for the built-in admin, re-enabled,
+/// role admin, must change at next login, all its logins ended. Creates the account if it is gone.
+fn reset_admin_password(db: &Database, data_dir: &Path) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let password = generate_password();
+    let hash = hash_password(&password)?;
+    match db.get_user_by_username(ADMIN_USER)? {
+        Some(admin) if admin.auth_provider != "local" => {
+            return Err(format!("'{}' is not a local account; its password is managed elsewhere", ADMIN_USER).into());
+        }
+        Some(mut admin) => {
+            admin.is_active = true;
+            admin.role = "admin".into();
+            db.update_user(&admin)?;
+            db.set_user_password(&admin.id, &hash, true)?;
+        }
+        None => {
+            let admin = User {
+                id: uuid::Uuid::new_v4().to_string(),
+                username: ADMIN_USER.into(),
+                password_hash: hash,
+                email: None,
+                display_name: Some(ADMIN_USER.into()),
+                role: "admin".into(),
+                is_active: true,
+                auth_provider: "local".into(),
+                oidc_sub: None,
+                created_at: chrono::Utc::now().to_rfc3339(),
+                last_login: None,
+                avatar_data: None,
+            };
+            db.create_user(&admin)?;
+            db.set_must_change_password(&admin.id, true)?;
+        }
+    }
+    let note = remoted::secrets::write_admin_note(data_dir, ADMIN_USER, &password).ok();
+    print_admin_box("ADMIN PASSWORD RESET", &password, note.as_deref());
+    info!("Password for built-in admin '{}' was reset from the command line", ADMIN_USER);
     Ok(())
 }

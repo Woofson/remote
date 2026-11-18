@@ -24,6 +24,8 @@ allow_local_login = true
 allow_pam_login = true
 # Default role for newly registered or auto-provisioned users ("admin", "operator", "viewer")
 default_role = "viewer"
+# Minimum length for local account passwords
+min_password_length = 12
 
 [oidc]
 # OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)
