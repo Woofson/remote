@@ -2036,6 +2036,18 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     });
   }
 
+  // Tell the server the real size as soon as the connection is open. Behind a slow proxy the
+  // early size messages are sent before that and dropped, and the shell would keep a rough
+  // first guess: full-screen programs (tmux, editors) then draw outside the visible area.
+  ws.addEventListener('open', () => {
+    try {
+      if (fitAddon) fitAddon.fit();
+    } catch (e) {}
+    lastSentCols = 0;
+    lastSentRows = 0;
+    sendTerminalResize(term.cols, term.rows);
+  });
+
   // Initial resize notification and focus after render
   setTimeout(() => {
     if (fitAddon) {

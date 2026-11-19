@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.13.0"
+version = "0.13.1"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "Web gateway for remote access: RDP, VNC, SSH, Telnet and local shells in the browser, in one Rust binary"
