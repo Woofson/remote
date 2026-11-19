@@ -10,6 +10,8 @@ homepage = "https://github.com/Woofson/remote"
 readme = "README.md"
 keywords = ["remote", "rdp", "vnc", "ssh", "gateway"]
 categories = ["network-programming", "command-line-utilities", "web-programming"]
+# Pictures for the README and source artwork are not needed to build Remote
+exclude = ["/*.png", "assets/*.png", "assets/screenshots/"]
 
 [lib]
 name = "remoted"

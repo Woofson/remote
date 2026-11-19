@@ -4,6 +4,48 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.13.1] - 2026-11-19
+
+Covers everything since 0.8.1 (versions 0.9.0 to 0.13.0 were pushed to git without a release).
+
+### Upgrading from 0.8.1: read first
+- **Login lifetime moves to Admin > Security.** `token_expiry_hours` in `config.toml` is now only the starting value; change it in the web interface.
+- **Logging out now ends the login on the server.** A copied login token stops working at log out.
+- **The lock screen is enforced by the server.** While locked, nothing new can be opened; running sessions keep going.
+- **Cross-site access (CORS) is switched off.** Remote's own pages are unaffected; scripts on other websites can no longer call Remote's API from a browser.
+- **The login cookie is limited to Remote's own path** and marked secure on HTTPS. You may need to sign in once.
+- **New optional settings** in `config.toml`: `base_path` and `trusted_proxies` under `[server]`, and `[auth.header_login]`. Without them Remote behaves as before; see `config.example.toml` and `docs/reverse-proxy.md`.
+
+### Security
+- **Two-factor authentication** (TOTP) for local accounts: setup with a QR code in Settings > Security, one-time recovery codes, codes cannot be reused, secrets encrypted at rest.
+- **Admin session rules** (Admin > Security): require 2FA per role, login lifetime, idle timeout that locks the screen or signs out, optional 2FA code on the lock screen.
+- Repeated wrong passwords or codes are slowed down, per account and per address.
+- Failed sign-ins, 2FA changes, policy changes and email settings changes are recorded in the activity log, now with the visitor's IP address.
+- Admins can reset a user's 2FA (lost phone), which also ends that user's logins.
+- Local shells no longer inherit SSH and tmux markers from the Remote server process.
+
+### Added
+- **Email** (Admin > Email): SMTP settings with a test email; "Forgot password?" on the login screen with a single-use link (30 minutes); admins can email set-your-password links; users are told when their password or 2FA settings change.
+- **Reverse proxy support**: hosting under a sub-path, keepalive pings so proxies do not close idle sessions, automatic reconnect for dropped RDP/VNC sessions, real client IPs from trusted proxies, optional sign-in from Authelia/Authentik forward-auth headers, `/api/health` and `/api/ready`. Guide with tested Nginx, Caddy, Traefik and HAProxy examples: `docs/reverse-proxy.md`.
+- **Shell choice** for local shell connections (fish, bash, zsh and other installed login shells).
+- **Layout menu** in the header, like Brum's; the last layout is remembered on your account.
+- Settings follow you between devices (stored on your account).
+- New app icon; README with screenshots.
+
+### Changed
+- Toasts appear top-centre with a themed glass look.
+- Pane header buttons and the pane badge match Brum's style; outline icons throughout.
+- The pane settings popup sizes itself to the window instead of scrolling.
+- Pane headers show "Local shell" instead of LOCAL_PTY.
+- Plain wording in the About dialog, page title and package description.
+
+### Fixed
+- Terminal sizing for full-screen programs (tmux, editors, Claude Code): no stretched text, correct rows and columns, font measured after loading.
+- Behind a slow proxy, the shell was told a rough first guess of the terminal size, garbling tmux and similar programs; the real size is now sent once the session connects.
+- The built-in "Local Host Terminal" on fresh installs was refused after the shell-choice change.
+
+---
+
 ## [0.8.1] - 2026-11-18
 
 ### Docker
