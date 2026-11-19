@@ -4,7 +4,9 @@ Remote is a web gateway for remote access. You open RDP and VNC desktops, SSH an
 
 It is a single Rust program with the web interface built in and an embedded SQLite database. There is no Java, Tomcat or `guacd` to set up.
 
-By Bolt J Woofson @ Woofsons Lab. Free and open source (MIT). If it is useful to you, you can [support development on Ko-fi](https://ko-fi.com/J7P327BXTR).
+By Bolt J Woofson @ Woofsons Lab. Free and open source (MIT).
+
+<a href="https://ko-fi.com/J7P327BXTR"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=kofi&logoColor=white" alt="Support on Ko-fi" /></a>
 
 ![Two local shells side by side, one running tmux](assets/screenshots/workspace.webp)
 
@@ -138,6 +140,14 @@ frontend/            Web interface (index.html, app.js, app.css), built into the
 Planned work and known bugs are tracked in [GitHub Issues](https://github.com/Woofson/remote/issues); the overall direction is in [ROADMAP.md](ROADMAP.md).
 
 Release history: [CHANGELOG.md](CHANGELOG.md).
+
+---
+
+## Support & Contributions
+
+Remote is made by one person in their spare time. If it has been useful to you, and only if you feel like it, you're very welcome to buy me a coffee. Thank you!
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/J7P327BXTR)
 
 ---
 
