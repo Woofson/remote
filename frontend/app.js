@@ -217,6 +217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupGlobalDragAndDrop();
   initPaneStyles();
   initAllPaneKbdBadges();
+  try { restoreLayout(localStorage.getItem(LAYOUT_KEY)); } catch (e) {}
   await checkAuth();
 });
 
@@ -454,6 +455,7 @@ function logout() {
   sessionStorage.removeItem('remote_session_locked');
   localStorage.removeItem('remote_token');
   localStorage.removeItem('remotedog_token');
+  localStorage.removeItem(LAYOUT_KEY);
   document.cookie = 'remote_token=; path=/; max-age=0; SameSite=Lax';
   document.cookie = 'remotedog_token=; path=/; max-age=0; SameSite=Lax';
   window.location.reload();
@@ -549,8 +551,28 @@ async function submitUnlockSession() {
   }
 }
 
+function toggleLayoutMenu(e) {
+  if (e) e.stopPropagation();
+  const profile = document.getElementById('profile-dropdown-menu');
+  if (profile) { profile.classList.remove('active'); profile.style.display = 'none'; }
+  document.getElementById('layout-dropdown-menu')?.classList.toggle('active');
+}
+
+function closeLayoutMenu() {
+  document.getElementById('layout-dropdown-menu')?.classList.remove('active');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#layout-dropdown-wrapper')) closeLayoutMenu();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeLayoutMenu();
+});
+
 function toggleProfileMenu(e) {
   if (e) e.stopPropagation();
+  closeLayoutMenu();
   const menu = document.getElementById('profile-dropdown-menu');
   if (menu) {
     const isVisible = menu.classList.contains('active') || menu.style.display === 'block';
@@ -701,17 +723,56 @@ function togglePaneScaling(paneIndex) {
 }
 
 // ================= Multi-Pane Layout Controls =================
-function setPaneLayout(layout) {
+const LAYOUT_KEY = 'remote_pane_layout';
+const VALID_LAYOUTS = ['1', '2', '2h', '3', '4'];
+const isPhoneWidth = () => window.innerWidth < 600;
+
+/** Turn a stored value back into a layout id, or null if it is not one. */
+function normalizeLayout(v) {
+  const str = String(v);
+  if (!VALID_LAYOUTS.includes(str)) return null;
+  return str === '2h' ? '2h' : parseInt(str, 10);
+}
+
+/** Remember the layout for this user (server) and this browser (instant restore). */
+let layoutPrefTimer = null;
+function saveLayoutPref(layout) {
+  try { localStorage.setItem(LAYOUT_KEY, String(layout)); } catch (e) {}
+  clearTimeout(layoutPrefTimer);
+  layoutPrefTimer = setTimeout(() => {
+    if (!state.jwtToken) return;
+    apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ layout: String(layout) }) }).catch(() => {});
+  }, 400);
+}
+
+/** Apply a saved layout without saving it again. Phones stay on a single pane. */
+function restoreLayout(v) {
+  const layout = normalizeLayout(v);
+  if (layout === null || isPhoneWidth()) return;
+  if (String(layout) !== String(state.paneLayout)) setPaneLayout(layout, { save: false });
+}
+
+function setPaneLayout(layout, opts = {}) {
   state.paneLayout = layout;
+  if (opts.save !== false && !isPhoneWidth()) saveLayoutPref(layout);
   const grid = document.getElementById('viewport-grid');
   if (grid) {
     grid.className = `viewport-grid layout-${layout}`;
   }
 
-  // Update layout button styles
+  // Update layout menu highlight and the header button's icon/tooltip
   ['1', '2v', '2h', '3', '4'].forEach(id => {
-    const btn = document.getElementById(`layout-${id}`);
-    if (btn) btn.classList.toggle('active', String(layout) === id || (layout === 2 && id === '2v'));
+    const item = document.getElementById(`layout-${id}`);
+    if (!item) return;
+    const isActive = String(layout) === id || (layout === 2 && id === '2v');
+    item.classList.toggle('active', isActive);
+    if (isActive) {
+      const menuBtn = document.getElementById('btn-layout-menu');
+      const icon = item.querySelector('.layout-item-icon');
+      const label = item.querySelector('.layout-item-label');
+      if (menuBtn && icon) menuBtn.innerHTML = icon.innerHTML;
+      if (menuBtn && label) menuBtn.title = `Layout: ${label.textContent} (Alt+1 to Alt+4)`;
+    }
   });
 
   const maxPanes = (layout === 1) ? 1 : (layout === 2 || layout === '2v' || layout === '2h') ? 2 : (layout === 3) ? 3 : 4;
@@ -727,14 +788,9 @@ function setPaneLayout(layout) {
         if (pane && pane.fitAddon && pane.terminal) {
           setTimeout(() => {
             try {
+              // A size change is reported to the server by the terminal's
+              // own resize handler.
               pane.fitAddon.fit();
-              if (pane.socket && pane.socket.readyState === WebSocket.OPEN) {
-                pane.socket.send(JSON.stringify({
-                  type: 'resize',
-                  cols: pane.terminal.cols,
-                  rows: pane.terminal.rows,
-                }));
-              }
             } catch (e) {}
           }, 60);
         }
@@ -900,7 +956,7 @@ function activatePane(index) {
   }
   const activeInfo = document.getElementById('active-pane-info');
   if (activeInfo) {
-    activeInfo.textContent = `Active Pane: [ ${index} ]`;
+    activeInfo.textContent = `Active Pane: ${index}`;
   }
 
   const activePane = state.panes[index];
@@ -1103,6 +1159,7 @@ function openAddConnectionModal() {
   const certEl = document.getElementById('conn-ssh-certificate');
   if (certEl) certEl.value = '';
   document.getElementById('conn-tags').value = '';
+  fillLocalShellSelect('');
 
   const isAdm = state.currentUser && state.currentUser.role === 'admin';
   const scopeEl = document.getElementById('conn-is-global');
@@ -1161,6 +1218,7 @@ function openEditConnectionModal(id) {
 
   const editCertEl = document.getElementById('conn-ssh-certificate');
   if (editCertEl) editCertEl.value = settings.ssh_certificate || settings.certificate || '';
+  fillLocalShellSelect(settings.shell || '');
 
   const isAdm = state.currentUser && state.currentUser.role === 'admin';
   const scopeEl = document.getElementById('conn-is-global');
@@ -1247,6 +1305,35 @@ function onRdpPresetChanged() {
   }
 }
 
+/** Fill the local shell's Shell list from the server and select `current`. */
+let localShellsCache = null;
+async function fillLocalShellSelect(current) {
+  const sel = document.getElementById('conn-local-shell');
+  if (!sel) return;
+  const render = (shells) => {
+    const list = [...shells];
+    if (current && !list.includes(current)) list.push(current);
+    sel.innerHTML = '<option value="">Server default</option>' + list
+      .map((path) => {
+        const name = path.split('/').pop();
+        const missing = !shells.includes(path) ? ' (not available)' : '';
+        return `<option value="${escapeHtml(path)}">${escapeHtml(name)}${missing} — ${escapeHtml(path)}</option>`;
+      })
+      .join('');
+    sel.value = current || '';
+  };
+  render(localShellsCache || []);
+  if (!localShellsCache) {
+    try {
+      const res = await apiFetch('/api/shells');
+      if (res.ok) {
+        localShellsCache = (await res.json()).shells || [];
+        render(localShellsCache);
+      }
+    } catch (e) {}
+  }
+}
+
 function onProtocolChanged() {
   const proto = document.getElementById('conn-protocol').value;
   const isLocal = proto === 'local_pty';
@@ -1258,6 +1345,8 @@ function onProtocolChanged() {
   document.getElementById('group-port').style.display = isLocal ? 'none' : 'block';
   document.getElementById('group-auth-user').style.display = isLocal ? 'none' : 'grid';
   document.getElementById('group-ssh-key').style.display = isSsh ? 'block' : 'none';
+  const shellGroup = document.getElementById('group-local-shell');
+  if (shellGroup) shellGroup.style.display = isLocal ? 'block' : 'none';
   const sshCertGroup = document.getElementById('group-ssh-cert');
   if (sshCertGroup) sshCertGroup.style.display = isSsh ? 'block' : 'none';
 
@@ -1349,6 +1438,9 @@ async function handleSaveConnection(e) {
     font_smoothing: document.getElementById('conn-rdp-font-smoothing') ? document.getElementById('conn-rdp-font-smoothing').checked : true,
     enable_drive_redirection: document.getElementById('conn-rdp-drive-redirection') ? document.getElementById('conn-rdp-drive-redirection').checked : true,
     enable_audio: document.getElementById('conn-rdp-audio') ? document.getElementById('conn-rdp-audio').checked : false,
+    shell: document.getElementById('conn-protocol').value === 'local_pty'
+      ? (document.getElementById('conn-local-shell')?.value || null)
+      : null,
   };
 
   const payload = {
@@ -1553,23 +1645,55 @@ function connectToTarget(connectionId) {
   }
 }
 
+const TERMINAL_FONT_FAMILY = '"JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font Mono", "Fira Code", monospace';
+
+function terminalFontLoaded() {
+  try {
+    return document.fonts.check('13px "JetBrainsMono Nerd Font"') &&
+      document.fonts.check('13px "Symbols Nerd Font Mono"');
+  } catch (e) {
+    return true;
+  }
+}
+
+let terminalFontPromise = null;
+function loadTerminalFont() {
+  if (!terminalFontPromise) {
+    try {
+      terminalFontPromise = Promise.all([
+        document.fonts.load('13px "JetBrainsMono Nerd Font"'),
+        document.fonts.load('13px "Symbols Nerd Font Mono"'),
+      ]).catch(() => {});
+    } catch (e) {
+      terminalFontPromise = Promise.resolve();
+    }
+  }
+  return terminalFontPromise;
+}
+// Start fetching the terminal font right away so it is usually ready
+// before the first terminal opens.
+loadTerminalFont();
+
 function setupTerminalProtocol(pane, ws, bodyEl) {
   const container = document.createElement('div');
   container.className = 'pane-terminal-container';
   bodyEl.appendChild(container);
 
   // Initialize xterm.js
+  const fontReadyAtOpen = terminalFontLoaded();
   const term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'block',
     fontSize: 13,
-    fontFamily: '"JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font Mono", "Fira Code", monospace',
+    fontFamily: TERMINAL_FONT_FAMILY,
     lineHeight: 1.2,
     letterSpacing: 0,
     allowProposedApi: true,
     scrollback: 10000,
     theme: terminalThemeFor(currentThemeDef()),
-    convertEol: true,
+    // The PTY already turns line feeds into CR+LF where needed; rewriting
+    // them again breaks cursor movement in full-screen apps (tmux, editors).
+    convertEol: false,
   });
 
   // Fit Addon
@@ -1597,9 +1721,15 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     } catch (e) {}
   }
 
-  // Send window resize event to WebSocket
+  // Send window resize event to WebSocket (only when the size really changed,
+  // so full-screen apps are not asked to redraw for nothing)
+  let lastSentCols = 0;
+  let lastSentRows = 0;
   function sendTerminalResize(cols, rows) {
     if (ws.readyState !== WebSocket.OPEN) return;
+    if (cols === lastSentCols && rows === lastSentRows) return;
+    lastSentCols = cols;
+    lastSentRows = rows;
     ws.send(JSON.stringify({
       type: 'resize',
       cols: cols,
@@ -1692,6 +1822,22 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
 
   resizeObserver.observe(bodyEl);
   pane.resizeObserver = resizeObserver;
+
+  // If the terminal font finished loading after the terminal opened, the
+  // character size was measured with a fallback font. Re-measure and refit.
+  if (!fontReadyAtOpen) {
+    loadTerminalFont().then(() => {
+      if (pane.terminal !== term) return;
+      try {
+        term.options.fontFamily = TERMINAL_FONT_FAMILY + ' ';
+        term.options.fontFamily = TERMINAL_FONT_FAMILY;
+        if (fitAddon) {
+          fitAddon.fit();
+          sendTerminalResize(term.cols, term.rows);
+        }
+      } catch (e) {}
+    });
+  }
 
   // Initial resize notification and focus after render
   setTimeout(() => {
@@ -3111,6 +3257,7 @@ async function loadUserTheme() {
       pref = prefs.theme || null;
       sessions = prefs.sessions || null;
       if (prefs.panes) applyServerPanePrefs(prefs.panes);
+      if (prefs.layout) restoreLayout(prefs.layout);
     }
   } catch (e) {}
   applySessionPrefs(sessions);
@@ -3239,16 +3386,26 @@ function setupKeyboardShortcuts() {
 }
 
 // ================= Toast Notifications & Helpers =================
+const TOAST_ICONS = {
+  info: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  success: '<polyline points="6 12.5 10 16.5 18 8"/>',
+  warning: '<path d="M12 4 3 20h18L12 4z"/><line x1="12" y1="10" x2="12" y2="14"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  danger: '<line x1="8" y1="8" x2="16" y2="16"/><line x1="16" y1="8" x2="8" y2="16"/>',
+};
+
 function showToast(msg, type = 'info') {
   const container = document.getElementById('toast-container');
+  if (!container) return;
+  const kind = TOAST_ICONS[type] ? type : 'info';
   const toast = document.createElement('div');
-  toast.className = `toast toast-${type}`;
-  toast.innerHTML = `<span>${escapeHtml(msg)}</span>`;
+  toast.className = `toast toast-${kind}`;
+  toast.setAttribute('role', kind === 'danger' ? 'alert' : 'status');
+  toast.innerHTML = `<span class="toast-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">${TOAST_ICONS[kind]}</svg></span><span class="toast-msg">${escapeHtml(msg)}</span>`;
   container.appendChild(toast);
 
   setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 200);
+    toast.classList.add('toast-leaving');
+    setTimeout(() => toast.remove(), 220);
   }, 3500);
 }
 
@@ -4143,6 +4300,7 @@ function applyPaneStyle(paneIndex) {
   } else {
     props.forEach((p) => paneEl.style.removeProperty(p));
   }
+  paneEl.classList.toggle('pane-colored', !!pair.c1);
 
   paneEl.style.borderWidth = bw;
   paneEl.classList.toggle('borderless-pane', bw === '0px');
@@ -4151,7 +4309,7 @@ function applyPaneStyle(paneIndex) {
   const dot = document.getElementById(`pane-dot-${paneIndex}`);
   if (dot) dot.style.background = pair.c1 ? `linear-gradient(135deg, ${pair.c1}, ${pair.c2})` : 'var(--woofson-accent)';
   const label = document.getElementById(`pane-label-${paneIndex}`);
-  if (label) label.textContent = `[ ${name} ]`;
+  if (label) label.textContent = name;
 }
 
 function initPaneStyles() {
@@ -4182,6 +4340,22 @@ function updatePaneGradientPreview(paneIndex) {
   const angle = localStorage.getItem(PANE_KEYS.angle) || '45deg';
   const prev = document.getElementById(`pane-gradient-preview-${paneIndex}`);
   if (prev) prev.style.background = `linear-gradient(${angle}, ${c1}, ${c2})`;
+}
+
+/** Keep the pane settings popup on screen; scroll its body only if the window is too short. */
+function fitPaneSettingsPopup(popup) {
+  if (!popup.isConnected) return;
+  const body = popup.querySelector('.pane-settings-body');
+  const margin = 10;
+  const top = parseFloat(popup.style.top) || margin;
+  const fullHeight = popup.getBoundingClientRect().height;
+  // Move it up if it would run past the bottom, but never above the top margin
+  const newTop = Math.max(margin, Math.min(top, window.innerHeight - fullHeight - margin));
+  popup.style.top = `${newTop}px`;
+  if (body) {
+    const head = popup.getBoundingClientRect().height - body.getBoundingClientRect().height;
+    body.style.maxHeight = `${Math.max(120, window.innerHeight - newTop - margin - head)}px`;
+  }
 }
 
 function openPaneSettingsMenu(e, paneIndex) {
@@ -4318,6 +4492,7 @@ function openPaneSettingsMenu(e, paneIndex) {
     popup.style.top = `${Math.min(rect.bottom + 4, window.innerHeight - 80)}px`;
     popup.style.left = `${Math.min(window.innerWidth - 310, Math.max(10, rect.left))}px`;
   }
+  fitPaneSettingsPopup(popup);
   const closeHandler = (evt) => {
     if (!popup.isConnected) {
       document.removeEventListener('click', closeHandler);

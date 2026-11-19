@@ -8,7 +8,64 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-pub async fn handle_local_pty_session(mut socket: WebSocket, initial_cols: u16, initial_rows: u16) {
+/// Login shells installed on this server, from /etc/shells. Only existing
+/// files are listed, each once (by its real path). Empty where there is no
+/// /etc/shells (Windows).
+pub fn available_shells() -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string("/etc/shells") else {
+        return Vec::new();
+    };
+    let mut shells: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || !line.starts_with('/') {
+            continue;
+        }
+        let Ok(real) = std::fs::canonicalize(line) else { continue };
+        if !real.is_file() {
+            continue;
+        }
+        let real = real.to_string_lossy().to_string();
+        if !shells.contains(&real) {
+            shells.push(real);
+        }
+    }
+    shells
+}
+
+/// The shell to start: the connection's chosen one if it is an installed login
+/// shell, otherwise an error message. `None` means the server default.
+fn resolve_shell(requested: Option<&str>) -> Result<Option<String>, String> {
+    let Some(req) = requested.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let real = std::fs::canonicalize(req)
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|_| format!("The shell '{}' is not installed on this server", req))?;
+    if available_shells().contains(&real) {
+        Ok(Some(real))
+    } else {
+        Err(format!("The shell '{}' is not an allowed login shell (see /etc/shells)", req))
+    }
+}
+
+pub async fn handle_local_pty_session(
+    mut socket: WebSocket,
+    initial_cols: u16,
+    initial_rows: u16,
+    shell: Option<String>,
+) {
+    let chosen_shell = match resolve_shell(shell.as_deref()) {
+        Ok(s) => s,
+        Err(msg) => {
+            warn!("Local shell refused: {}", msg);
+            let _ = socket
+                .send(Message::Text(serde_json::json!({ "type": "error", "message": msg }).to_string()))
+                .await;
+            return;
+        }
+    };
+
     let pty_system = native_pty_system();
     let size = PtySize {
         rows: if initial_rows == 0 { 24 } else { initial_rows },
@@ -37,6 +94,9 @@ pub async fn handle_local_pty_session(mut socket: WebSocket, initial_cols: u16, 
     let default_shell = "powershell.exe";
     #[cfg(not(target_os = "windows"))]
     let default_shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    #[cfg(target_os = "windows")]
+    let default_shell = default_shell.to_string();
+    let default_shell = chosen_shell.unwrap_or(default_shell);
 
     let mut cmd = CommandBuilder::new(&default_shell);
     cmd.env("TERM", "xterm-256color");
@@ -44,6 +104,21 @@ pub async fn handle_local_pty_session(mut socket: WebSocket, initial_cols: u16, 
 
     if let Ok(home) = std::env::var("HOME") {
         cmd.cwd(home);
+    }
+
+    // Remote may itself have been started from an SSH login or inside tmux;
+    // a local shell must not inherit those markers (wrong prompt, nested tmux).
+    // SSH_AUTH_SOCK is kept so the agent's keys remain usable.
+    for var in [
+        "SSH_CONNECTION",
+        "SSH_CLIENT",
+        "SSH_TTY",
+        "TMUX",
+        "TMUX_PANE",
+        "TERM_PROGRAM",
+        "TERM_PROGRAM_VERSION",
+    ] {
+        cmd.env_remove(var);
     }
 
     let mut child = match pair.slave.spawn_command(cmd) {

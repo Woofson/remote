@@ -128,6 +128,88 @@ body, html {
   align-items: center;
 }
 
+/* Panel Layouts dropdown (matches Brum's layout switcher) */
+.layout-dropdown-wrapper {
+  position: relative;
+  display: inline-flex;
+}
+
+.layout-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 210px;
+  padding: 4px;
+  background: var(--woofson-bg-header, #202024);
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  z-index: 1200;
+  display: none;
+}
+
+.layout-dropdown-menu.active {
+  display: flex;
+  flex-direction: column;
+}
+
+.layout-dropdown-title {
+  padding: 6px 8px 4px;
+  margin-bottom: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--woofson-text-muted, #a1a1aa);
+  border-bottom: 1px solid var(--woofson-border, #3f3f46);
+}
+
+.layout-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 6px);
+  color: var(--woofson-text-main, #f4f4f5);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.layout-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.layout-dropdown-item.active {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: var(--woofson-accent, #f59e0b);
+  font-weight: 600;
+}
+
+.layout-dropdown-item .layout-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--woofson-accent, #f59e0b);
+}
+
+.layout-dropdown-item .layout-item-label {
+  flex: 1;
+}
+
+.layout-dropdown-item .layout-item-key {
+  font-size: 10px;
+  color: var(--woofson-text-muted, #a1a1aa);
+}
+
 /* Buttons System (Matches CommanderDog) */
 .btn {
   background-color: var(--woofson-bg-panel, #18181b);
@@ -535,7 +617,7 @@ body, html {
 
 .pane-settings-body {
   padding: 10px 12px;
-  max-height: min(520px, calc(100vh - 120px));
+  max-height: calc(100vh - 20px);
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -676,7 +758,8 @@ body, html {
 }
 
 .pane-header {
-  height: 32px;
+  height: 34px;
+  flex-shrink: 0;
   background: var(--woofson-bg-header);
   border-bottom: 1px solid var(--pane-custom-border, var(--woofson-border));
   display: flex;
@@ -691,36 +774,66 @@ body, html {
   gap: 6px;
 }
 
+/* Pane number & settings badge (matches Brum's pane-badge-btn) */
 .pane-index {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--pane-custom-color, var(--woofson-accent));
-  cursor: pointer;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--pane-custom-border, rgba(255, 255, 255, 0.1));
-  transition: background 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 8px;
+  background: var(--woofson-bg-panel);
+  border: 1px solid var(--woofson-border);
+  border-radius: 4px;
+  color: var(--woofson-text-main);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
 }
 
 .pane-index:hover {
-  background: rgba(255, 255, 255, 0.1);
-  transform: scale(1.05);
-  border-color: var(--pane-custom-color, var(--woofson-accent));
+  background: var(--woofson-bg-active);
+  border-color: var(--woofson-accent);
+  color: var(--woofson-accent);
+}
+
+/* A pane with its own colour tints its badge, as in Brum */
+.remote-pane.pane-colored .pane-index {
+  border-color: var(--pane-custom-border);
+  color: var(--pane-custom-color);
+  background: color-mix(in srgb, var(--pane-custom-color) 12%, transparent);
+}
+
+.remote-pane.pane-colored .pane-index:hover {
+  border-color: var(--pane-custom-color);
+}
+
+.pane-badge-text {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pane-color-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: var(--pane-custom-color, var(--woofson-accent));
-  border: 1px solid rgba(255, 255, 255, 0.3);
   flex-shrink: 0;
+  background: var(--pane-custom-color, var(--woofson-accent));
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-pane-glow="off"] .remote-pane:not(.active) .pane-color-dot {
+  opacity: 0.3;
+  box-shadow: none;
 }
 
 /* Pane Settings Popup (CommanderDog Parity) */
@@ -772,12 +885,53 @@ body, html {
   background: var(--woofson-bg-active);
 }
 
+/* Pane header buttons: Brum's 26px bordered squares with 14px outline icons */
+.pane-header .pane-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--woofson-bg-panel);
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  color: var(--woofson-text-muted);
+  line-height: 1;
+  box-sizing: border-box;
+  transition: all 0.15s ease;
+}
+
+.pane-header .pane-btn:hover {
+  background: var(--woofson-bg-active);
+  color: var(--woofson-text-main);
+  border-color: var(--woofson-accent);
+}
+
+.pane-header .pane-btn .icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.pane-header .pane-header-right {
+  gap: 4px;
+}
+
+/* Keyboard layout button: same height and frame, but sized to its label */
+.pane-header .pane-btn[id$="-kbd-btn"] {
+  width: auto;
+  padding: 0 7px !important;
+}
+
 /* Pane close button: subtle by default, red on hover; style chosen in Settings > Sessions. */
 .pane-close-btn { opacity: 0.7; }
-.pane-close-btn:hover {
+.pane-close-btn:hover,
+.pane-header .pane-close-btn:hover {
   opacity: 1;
   color: var(--woofson-danger, #ef4444);
   background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
 }
 body.close-btn-red .pane-close-btn { color: var(--woofson-danger, #ef4444); opacity: 1; }
 body.close-btn-hidden .pane-close-btn { display: none; }
@@ -808,22 +962,20 @@ body.close-btn-hidden .pane-close-btn { display: none; }
 .pane-terminal-container {
   width: 100%;
   height: 100%;
-  padding: 6px 8px;
+  padding: 0;
   background: var(--woofson-term-bg, #090a0d);
   box-sizing: border-box;
   overflow: hidden;
   position: relative;
 }
 
+/* Padding sits on the terminal element itself so the fit calculation
+   subtracts it; the screen keeps xterm's own exact cell-grid size. */
 .pane-terminal-container .xterm {
   height: 100%;
   width: 100%;
-  padding: 0;
-}
-
-.pane-terminal-container .xterm-screen {
-  width: 100% !important;
-  height: 100% !important;
+  padding: 6px 8px;
+  box-sizing: border-box;
 }
 
 .pane-terminal-container .xterm-viewport {
@@ -1412,41 +1564,95 @@ body.close-btn-hidden .pane-close-btn { display: none; }
 }
 
 /* Toast Notifications */
+/* Toasts: top-centre, frosted glass tinted by the active theme.
+   --toast-tone is the accent colour for each kind of message. */
 .toast-container {
   position: fixed;
-  bottom: 32px;
-  right: 16px;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 8px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  pointer-events: none;
   z-index: 100001;
 }
 
 .toast {
-  background: var(--woofson-bg-panel);
-  border: 1px solid var(--woofson-accent);
-  color: var(--woofson-text-main);
-  padding: 10px 14px;
-  border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-panel);
+  --toast-tone: var(--woofson-accent);
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  max-width: 100%;
+  padding: 9px 16px 9px 12px;
+  overflow: hidden;
+  color: var(--woofson-text-main);
+  font-size: 12.5px;
   font-weight: 500;
-  animation: toastFade 0.2s ease;
+  line-height: 1.4;
+  border-radius: 10px;
+  /* Fallback for browsers without color-mix: solid panel colour */
+  background: var(--woofson-bg-panel);
+  border: 1px solid var(--woofson-border);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0) 60%),
+    color-mix(in srgb, var(--woofson-bg-panel) 74%, transparent);
+  border: 1px solid color-mix(in srgb, var(--toast-tone) 42%, var(--woofson-border));
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.35),
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 0 18px color-mix(in srgb, var(--toast-tone) 16%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  animation: toastIn 0.28s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+  transition: opacity 0.2s ease, transform 0.2s ease;
 }
 
-.toast.toast-success {
-  border-color: #10b981;
+/* Thin coloured bar on the left edge */
+.toast::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--toast-tone);
+  box-shadow: 0 0 10px var(--toast-tone);
 }
 
-.toast.toast-warning {
-  border-color: #f59e0b;
+.toast-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  color: var(--toast-tone);
+  background: color-mix(in srgb, var(--toast-tone) 16%, transparent);
 }
 
-.toast.toast-danger {
-  border-color: #ef4444;
-  color: #fecaca;
+.toast-msg {
+  overflow-wrap: anywhere;
+}
+
+.toast.toast-leaving {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+}
+
+.toast.toast-success { --toast-tone: var(--woofson-success, #10b981); }
+.toast.toast-warning { --toast-tone: #f59e0b; }
+.toast.toast-danger  { --toast-tone: var(--woofson-danger, #ef4444); }
+
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; transition: opacity 0.2s ease; }
+  .toast.toast-leaving { transform: none; }
 }
 
 /* Admin Control Panel & Settings (Brum-style panels) */
@@ -1985,9 +2191,9 @@ kbd {
   border-top: 1px solid var(--woofson-border, #3f3f46);
 }
 
-@keyframes toastFade {
-  from { transform: translateY(10px); opacity: 0; }
-  to { transform: translateY(0); opacity: 1; }
+@keyframes toastIn {
+  from { transform: translateY(-12px) scale(0.97); opacity: 0; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
 }
 
 /* Utilities */

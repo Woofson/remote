@@ -4,7 +4,7 @@ use crate::auth::{
 };
 use crate::config::AppConfig;
 use crate::db::{ConnectionRecord, ConnectionSafe, ConnectionUserPerms, Database, Group, User, UserSafe};
-use crate::protocols::local_pty::handle_local_pty_session;
+use crate::protocols::local_pty::{available_shells, handle_local_pty_session};
 use crate::protocols::rdp::{handle_rdp_session, RdpConnectionParams};
 use crate::protocols::ssh::{
     create_ssh_session, handle_ssh_session, sftp_list_directory,
@@ -62,6 +62,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/me", get(api_me))
         .route("/api/auth/providers", get(api_auth_providers))
         .route("/api/version", get(api_version))
+        .route("/api/shells", get(api_list_shells))
         .route("/api/auth/oidc/login", get(api_oidc_login))
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
         // Users & Groups API
@@ -308,6 +309,15 @@ pub async fn api_me(
 }
 
 /// Public: the running version, from Cargo.toml (single source of truth).
+/// Login shells installed on the server, for the local shell's Shell choice.
+pub async fn api_list_shells(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    extract_claims(&state, &headers)?;
+    Ok(Json(json!({ "shells": available_shells() })))
+}
+
 pub async fn api_version() -> Json<Value> {
     Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
 }
@@ -2254,7 +2264,10 @@ pub async fn ws_tunnel_handler(
     Ok(ws.on_upgrade(move |mut socket| async move {
         match conn_rec.protocol.as_str() {
             "local_pty" => {
-                handle_local_pty_session(socket, cols, rows).await;
+                let shell = serde_json::from_str::<Value>(&conn_rec.settings_json)
+                    .ok()
+                    .and_then(|s| s.get("shell").and_then(|v| v.as_str()).map(|v| v.to_string()));
+                handle_local_pty_session(socket, cols, rows, shell).await;
             }
             "ssh" => {
                 let certificate = if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
