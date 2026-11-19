@@ -222,6 +222,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   initPaneStyles();
   initAllPaneKbdBadges();
   try { restoreLayout(localStorage.getItem(LAYOUT_KEY)); } catch (e) {}
+  const resetMatch = /^#reset=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  if (resetMatch) {
+    // Keep the secret out of the address bar and history.
+    history.replaceState(null, '', location.pathname + location.search);
+    showLoginModal();
+    openEmailReset(resetMatch[1]);
+    return;
+  }
   await checkAuth();
 });
 
@@ -379,6 +387,7 @@ function showLoginModal() {
   modal.style.display = 'flex';
   state.login2fa = null;
   showLogin2faStep(false);
+  document.getElementById('login-error').classList.remove('login-ok-msg');
   const reason = sessionStorage.getItem('remote_logout_reason');
   if (reason) {
     sessionStorage.removeItem('remote_logout_reason');
@@ -405,6 +414,9 @@ async function fetchAuthProviders() {
       }
       const hl = document.getElementById('header-login-section');
       if (hl) hl.style.display = data.header_login && !state.login2fa ? 'block' : 'none';
+      state.emailReady = !!data.password_reset;
+      const fl = document.getElementById('login-forgot-link');
+      if (fl) fl.style.display = data.password_reset && !state.login2fa && !state.loginForgot ? '' : 'none';
     }
   } catch (e) {}
 }
@@ -438,10 +450,12 @@ async function tryHeaderLogin(manual = false) {
 
 async function handleLoginSubmit() {
   if (state.login2fa) return submitLogin2fa();
+  if (state.loginForgot) return submitForgotPassword();
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
   errEl.style.display = 'none';
+  errEl.classList.remove('login-ok-msg');
 
   if (!username) {
     errEl.textContent = 'Please enter your username';
@@ -505,6 +519,8 @@ function showLogin2faStep(on) {
   show('login-2fa-group', on);
   show('oidc-login-section', false);
   show('header-login-section', false);
+  show('login-forgot-group', false);
+  state.loginForgot = false;
   const code = document.getElementById('login-2fa-code');
   if (code) code.value = '';
   const btn = document.querySelector('#btn-submit-login span');
@@ -2920,6 +2936,7 @@ async function pushFileToSftp(connectionId, filePath, remotePath) {
 
 // ================= Users & RBAC Modal =================
 async function openUsersModal() {
+  fetch('api/auth/providers').then((r) => r.json()).then((d) => { state.emailReady = !!d.password_reset; }).catch(() => {});
   showPanel('admin-panel', 'users');
   try {
     const res = await fetch('api/users', {
@@ -2977,7 +2994,7 @@ function renderUsersTable(users) {
         <td>
           <div style="display: flex; gap: 4px;">
             ${toggleBtn}
-            ${u.auth_provider === 'local' ? `<button class="btn btn-secondary btn-sm" data-reset-user="${escapeHtml(u.id)}" data-reset-name="${escapeHtml(u.username)}" title="Give this user a new password">Reset password</button>` : ''}
+            ${u.auth_provider === 'local' ? `<button class="btn btn-secondary btn-sm" data-reset-user="${escapeHtml(u.id)}" data-reset-name="${escapeHtml(u.username)}" data-reset-email="${escapeHtml(u.email || '')}" title="Give this user a new password">Reset password</button>` : ''}
             ${u.two_factor ? `<button class="btn btn-secondary btn-sm" onclick="resetUserTwoFactor('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')" title="Turn off two-factor authentication (lost phone)">Reset 2FA</button>` : ''}
             <button class="btn btn-secondary btn-sm text-danger" onclick="deleteUser('${u.id}')">Delete</button>
           </div>
@@ -3008,8 +3025,22 @@ async function toggleUserStatus(userId, newActive) {
   }
 }
 
+function updateAddUserPasswordMode() {
+  const link = document.getElementById('edit-user-email-link').checked;
+  document.getElementById('group-edit-user-pw').style.display = link ? 'none' : 'grid';
+  document.getElementById('edit-user-must-change-row').style.display = link ? 'none' : '';
+}
+
+function randomPassword() {
+  const chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%^&*';
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return [...bytes].map((b) => chars[b % chars.length]).join('');
+}
+
 function openAddUserModal() {
   document.getElementById('user-edit-form').reset();
+  document.getElementById('edit-user-email-link-row').style.display = state.emailReady ? '' : 'none';
+  updateAddUserPasswordMode();
   const errEl = document.getElementById('add-user-error');
   if (errEl) errEl.style.display = 'none';
   document.getElementById('user-edit-modal').style.display = 'flex';
@@ -3024,14 +3055,16 @@ async function handleSaveUser(e) {
   const username = document.getElementById('edit-user-username').value.trim();
   const displayName = document.getElementById('edit-user-displayname').value.trim();
   const email = document.getElementById('edit-user-email').value.trim();
-  const password = document.getElementById('edit-user-password').value;
-  const passwordAgain = document.getElementById('edit-user-password-confirm').value;
-  const mustChange = document.getElementById('edit-user-must-change').checked;
+  const emailLink = document.getElementById('edit-user-email-link').checked;
+  // With an emailed link the user picks their own password; the one set here is random and never shown.
+  const password = emailLink ? randomPassword() : document.getElementById('edit-user-password').value;
+  const passwordAgain = emailLink ? password : document.getElementById('edit-user-password-confirm').value;
+  const mustChange = emailLink ? false : document.getElementById('edit-user-must-change').checked;
   const role = document.getElementById('edit-user-role').value;
   const isActive = document.getElementById('edit-user-active') ? document.getElementById('edit-user-active').value === 'true' : true;
   const errEl = document.getElementById('add-user-error');
 
-  const problem = passwordProblem(password, passwordAgain, username);
+  const problem = emailLink && !email ? 'Enter an email address to send the link to' : passwordProblem(password, passwordAgain, username);
   if (problem) {
     errEl.textContent = problem;
     errEl.style.display = 'block';
@@ -3057,8 +3090,15 @@ async function handleSaveUser(e) {
     });
 
     if (res.ok) {
-      showToast('User account created successfully!', 'success');
+      const created = await res.json().catch(() => ({}));
       closeUserEditModal();
+      if (emailLink && created.id) {
+        const lr = await apiFetch(`api/users/${created.id}/password-link`, { method: 'POST' });
+        const ld = await lr.json().catch(() => ({}));
+        showToast(lr.ok ? `User created. ${ld.message || 'Link sent'}` : `User created, but the email failed: ${ld.error || 'unknown error'}`, lr.ok ? 'success' : 'warning');
+      } else {
+        showToast('User account created', 'success');
+      }
       openUsersModal();
     } else {
       const data = await res.json();
@@ -3103,6 +3143,7 @@ const panelLoaders = {
     connections: () => loadAdminConnections(),
     activity: () => loadActivityLog(),
     security: () => loadAdminSecurity(),
+    email: () => loadAdminEmail(),
     server: () => loadServerPage(),
   },
   'settings-panel': {
@@ -3313,6 +3354,13 @@ async function loadServerPage() {
       `${st.local_users_without_2fa.length} local account(s) without two-factor authentication: ${st.local_users_without_2fa.map(escapeHtml).join(', ')}. See Security.`));
   } else {
     items.push(item('', 'Every local account uses two-factor authentication.'));
+  }
+  if (!st.email_ready) {
+    items.push(item('warn', 'Email is not set up, so people cannot reset a forgotten password themselves. See Email.'));
+  } else if (st.local_users_without_email && st.local_users_without_email.length) {
+    items.push(item('warn', `${st.local_users_without_email.length} local account(s) without an email address cannot reset their password: ${st.local_users_without_email.map(escapeHtml).join(', ')}.`));
+  } else {
+    items.push(item('', 'Email is set up and every local account has an address.'));
   }
   if (st.admin_must_change) items.push(item('warn', 'The built-in <code>admin</code> account must still choose its own password.'));
   if (st.admin_note_present) items.push(item('warn', 'The first-login note <code>initial_admin_credentials.txt</code> still exists in the data folder.'));
@@ -4040,7 +4088,7 @@ function setupPasswordDialogs() {
   // Reset buttons live in the re-rendered users table.
   document.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-reset-user]');
-    if (btn) openPasswordReset(btn.dataset.resetUser, btn.dataset.resetName);
+    if (btn) openPasswordReset(btn.dataset.resetUser, btn.dataset.resetName, btn.dataset.resetEmail);
   });
 }
 
@@ -4090,8 +4138,12 @@ async function submitPasswordRequired() {
 
 let pwResetTarget = null;
 
-function openPasswordReset(userId, username) {
-  pwResetTarget = { id: userId, username };
+function openPasswordReset(userId, username, email) {
+  pwResetTarget = { id: userId, username, email };
+  const emailOpt = document.getElementById('pw-reset-email-option');
+  if (emailOpt) emailOpt.style.display = state.emailReady && email ? '' : 'none';
+  const emailTo = document.getElementById('pw-reset-email-to');
+  if (emailTo) emailTo.textContent = email ? `(${email})` : '';
   document.getElementById('pw-reset-title').textContent = `Reset password for ${username}`;
   document.querySelector('input[name="pw-reset-mode"][value="generate"]').checked = true;
   document.getElementById('pw-reset-new').value = '';
@@ -4105,8 +4157,15 @@ function openPasswordReset(userId, username) {
 }
 
 function updatePasswordResetMode() {
-  const set = document.querySelector('input[name="pw-reset-mode"]:checked').value === 'set';
+  const mode = document.querySelector('input[name="pw-reset-mode"]:checked').value;
+  const set = mode === 'set';
+  const email = mode === 'email';
   document.getElementById('pw-reset-fields').style.display = set ? '' : 'none';
+  document.getElementById('pw-reset-must-change-row').style.display = email ? 'none' : '';
+  document.getElementById('pw-reset-hint').textContent = email
+    ? 'Their current password keeps working until they choose a new one with the link (valid 72 hours).'
+    : "All of this user's current logins end.";
+  document.getElementById('pw-reset-save').textContent = email ? 'Send link' : 'Reset password';
   if (set) setTimeout(() => document.getElementById('pw-reset-new').focus(), 0);
 }
 
@@ -4120,6 +4179,17 @@ function closePasswordReset() {
 async function submitPasswordReset() {
   if (!pwResetTarget) return;
   const errEl = document.getElementById('pw-reset-error');
+  if (document.querySelector('input[name="pw-reset-mode"]:checked').value === 'email') {
+    const res = await apiFetch(`api/users/${pwResetTarget.id}/password-link`, { method: 'POST' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      errEl.textContent = d.error || 'Could not send the link';
+      return;
+    }
+    closePasswordReset();
+    showToast(d.message || 'Link sent', 'success');
+    return;
+  }
   const set = document.querySelector('input[name="pw-reset-mode"]:checked').value === 'set';
   const mustChange = document.getElementById('pw-reset-must-change').checked;
   const body = { must_change_password: mustChange };
@@ -5238,3 +5308,214 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape' && !tfSetup.forced && !tfSetup.codes.length) closeTwoFactorSetup();
   });
 });
+
+
+// ================= Email: forgot password, reset links, admin settings (#27) =================
+
+// A reset link pasted into a tab where Remote is already open only changes the "#" part.
+window.addEventListener('hashchange', () => {
+  const m = /^#reset=([A-Za-z0-9_-]+)$/.exec(location.hash);
+  if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  showLoginModal();
+  openEmailReset(m[1]);
+});
+
+function showLoginForgot(on) {
+  state.loginForgot = on;
+  const show = (id, visible) => { const el = document.getElementById(id); if (el) el.style.display = visible ? '' : 'none'; };
+  show('login-user-group', !on);
+  show('login-pass-group', !on);
+  show('login-forgot-group', on);
+  show('oidc-login-section', false);
+  show('header-login-section', false);
+  const btn = document.querySelector('#btn-submit-login span');
+  if (btn) btn.textContent = on ? 'Send link' : 'Log In';
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  errEl.classList.remove('login-ok-msg');
+  if (on) {
+    const input = document.getElementById('login-forgot-input');
+    input.value = document.getElementById('login-username').value.trim();
+    setTimeout(() => input.focus(), 30);
+  } else {
+    fetchAuthProviders();
+  }
+}
+
+async function submitForgotPassword() {
+  const login = document.getElementById('login-forgot-input').value.trim();
+  const errEl = document.getElementById('login-error');
+  errEl.classList.remove('login-ok-msg');
+  if (!login) {
+    errEl.textContent = 'Enter your username or email address';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    const res = await fetch('api/auth/forgot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ login }) });
+    const d = await res.json().catch(() => ({}));
+    errEl.textContent = res.ok ? d.message : (d.error || 'Could not send the link');
+    if (res.ok) errEl.classList.add('login-ok-msg');
+    errEl.style.display = 'block';
+  } catch (e) {
+    errEl.textContent = 'Server connection error. Please try again.';
+    errEl.style.display = 'block';
+  }
+}
+
+let emailResetToken = null;
+
+async function openEmailReset(token) {
+  emailResetToken = token;
+  const overlay = document.getElementById('email-reset');
+  document.getElementById('email-reset-fields').style.display = 'none';
+  document.getElementById('email-reset-error').textContent = '';
+  document.getElementById('email-reset-save').style.display = 'none';
+  document.getElementById('email-reset-title').textContent = 'Choose a new password';
+  document.getElementById('email-reset-message').textContent = 'Checking the link…';
+  overlay.style.display = 'flex';
+  try {
+    const d = await fetch(`api/auth/reset/check?token=${encodeURIComponent(token)}`).then((r) => r.json());
+    if (!d.valid) {
+      document.getElementById('email-reset-message').textContent = 'This link has expired or was already used. Use "Forgot password?" on the sign-in page to get a new one.';
+      return;
+    }
+    emailResetToken = token;
+    state.resetUsername = d.username;
+    if (d.invite) document.getElementById('email-reset-title').textContent = 'Choose your password';
+    document.getElementById('email-reset-message').textContent = `Account: ${d.username}`;
+    document.getElementById('email-reset-fields').style.display = '';
+    document.getElementById('email-reset-save').style.display = '';
+    setTimeout(() => document.getElementById('email-reset-new').focus(), 30);
+  } catch (e) {
+    document.getElementById('email-reset-message').textContent = 'Server connection error. Please try the link again.';
+  }
+}
+
+function closeEmailReset() {
+  emailResetToken = null;
+  document.getElementById('email-reset').style.display = 'none';
+  ['email-reset-new', 'email-reset-confirm'].forEach((id) => { document.getElementById(id).value = ''; });
+}
+
+async function submitEmailReset() {
+  const errEl = document.getElementById('email-reset-error');
+  const pw = document.getElementById('email-reset-new').value;
+  const problem = passwordProblem(pw, document.getElementById('email-reset-confirm').value, state.resetUsername);
+  if (problem) {
+    errEl.textContent = problem;
+    return;
+  }
+  errEl.textContent = '';
+  const res = await fetch('api/auth/reset', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: emailResetToken, password: pw }) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errEl.textContent = d.error || 'Could not save the password';
+    return;
+  }
+  closeEmailReset();
+  // Every login of this account has ended; sign in with the new password.
+  state.jwtToken = '';
+  localStorage.removeItem('remote_token');
+  localStorage.removeItem('remotedog_token');
+  showLoginModal();
+  document.getElementById('login-username').value = d.username || '';
+  const msg = document.getElementById('login-error');
+  msg.textContent = d.message || 'Password saved. You can sign in now.';
+  msg.classList.add('login-ok-msg');
+  msg.style.display = 'block';
+  setTimeout(() => document.getElementById('login-password').focus(), 30);
+}
+
+// ---- Admin > Email ----
+async function loadAdminEmail() {
+  const body = document.getElementById('admin-email-body');
+  if (!body) return;
+  const res = await apiFetch('api/admin/email');
+  if (!res.ok) return;
+  const s = await res.json();
+  const v = (x) => escapeHtml(x == null ? '' : String(x));
+  body.innerHTML = `
+    <p class="pw-hint" style="margin:0 0 6px;">With email set up, people can reset a forgotten password themselves, admins can send set-your-password links, and users are told about important changes to their account.</p>
+    <div class="sec-row">
+      <div class="sec-label">Email<div class="pw-hint">${s.ready ? 'Set up and switched on.' : 'Off until switched on here.'}</div></div>
+      <label class="pw-check"><input type="checkbox" id="mail-enabled" ${s.enabled ? 'checked' : ''}/> <span>Send email</span></label>
+    </div>
+    <div class="settings-section-title">Mail server</div>
+    <div class="sec-row">
+      <div class="sec-label">Server and port<div class="pw-hint">For example smtp.gmail.com, or your provider's SMTP server.</div></div>
+      <div class="sec-field"><input type="text" id="mail-host" class="form-input mail-wide" value="${v(s.host)}" placeholder="smtp.example.com" spellcheck="false"/><input type="number" id="mail-port" class="form-input" value="${s.port || ''}" placeholder="587" min="1" max="65535"/></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Encryption<div class="pw-hint">STARTTLS normally uses port 587, TLS port 465.</div></div>
+      <select id="mail-security" class="form-input sec-select">
+        <option value="starttls" ${s.security === 'starttls' ? 'selected' : ''}>STARTTLS</option>
+        <option value="tls" ${s.security === 'tls' ? 'selected' : ''}>TLS</option>
+        <option value="none" ${s.security === 'none' ? 'selected' : ''}>None (local relay only)</option>
+      </select>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Login<div class="pw-hint">Leave empty if the server needs no login. The password is stored encrypted.</div></div>
+      <div class="sec-field"><input type="text" id="mail-user" class="form-input mail-wide" value="${v(s.username)}" placeholder="Username" autocomplete="off" spellcheck="false"/><input type="password" id="mail-pass" class="form-input mail-wide" placeholder="${s.has_password ? 'Saved (leave empty to keep)' : 'Password'}" autocomplete="new-password"/></div>
+    </div>
+    <div class="settings-section-title">Sender and links</div>
+    <div class="sec-row">
+      <div class="sec-label">From</div>
+      <div class="sec-field"><input type="text" id="mail-from-name" class="form-input mail-wide" value="${v(s.from_name)}" placeholder="Remote"/><input type="email" id="mail-from" class="form-input mail-wide" value="${v(s.from_address)}" placeholder="remote@example.com"/></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Remote's public address<div class="pw-hint">The address people open Remote at; links in emails point here.</div></div>
+      <input type="url" id="mail-public-url" class="form-input" value="${v(s.public_url)}" placeholder="https://remote.example.com" spellcheck="false"/>
+    </div>
+    <div class="sec-actions">
+      <span class="pw-error" id="mail-error"></span>
+      <button type="button" class="btn btn-accent btn-sm" onclick="saveEmailSettings()">Save</button>
+    </div>
+    <div class="settings-section-title">Test</div>
+    <div class="sec-row">
+      <div class="sec-label">Send a test email<div class="pw-hint">Save first. Leave empty to send to your own address.</div></div>
+      <div class="sec-field"><input type="email" id="mail-test-to" class="form-input mail-wide" placeholder="${v(state.currentUser && state.currentUser.email) || 'you@example.com'}"/><button type="button" class="btn btn-secondary btn-sm" id="mail-test-btn" onclick="sendTestEmail()">Send test</button></div>
+    </div>`;
+}
+
+async function saveEmailSettings() {
+  const errEl = document.getElementById('mail-error');
+  const pass = document.getElementById('mail-pass').value;
+  const body = {
+    enabled: document.getElementById('mail-enabled').checked,
+    host: document.getElementById('mail-host').value.trim(),
+    port: parseInt(document.getElementById('mail-port').value, 10) || 0,
+    security: document.getElementById('mail-security').value,
+    username: document.getElementById('mail-user').value.trim(),
+    password: pass ? pass : null,
+    from_name: document.getElementById('mail-from-name').value.trim(),
+    from_address: document.getElementById('mail-from').value.trim(),
+    public_url: document.getElementById('mail-public-url').value.trim(),
+  };
+  if (!body.username) body.password = '';
+  errEl.textContent = '';
+  const res = await apiFetch('api/admin/email', { method: 'PUT', body: JSON.stringify(body) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errEl.textContent = d.error || 'Could not save';
+    return;
+  }
+  state.emailReady = !!d.ready;
+  showToast('Email settings saved', 'success');
+  loadAdminEmail();
+}
+
+async function sendTestEmail() {
+  const btn = document.getElementById('mail-test-btn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const res = await apiFetch('api/admin/email/test', { method: 'POST', body: JSON.stringify({ to: document.getElementById('mail-test-to').value.trim() || null }) });
+    const d = await res.json().catch(() => ({}));
+    showToast(res.ok ? d.message : (d.error || 'Sending failed'), res.ok ? 'success' : 'danger');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send test';
+  }
+}

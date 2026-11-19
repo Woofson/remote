@@ -272,6 +272,7 @@ pub async fn api_2fa_disable(State(state): State<AppState>, headers: HeaderMap, 
     verify_identity(&state, &user, &p.password, Some(&p.code), "TWO_FACTOR_DISABLE", &ip)?;
     state.db.disable_totp(&user.id).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "TWO_FACTOR_DISABLED", None, None, None, None);
+    super::email::notify_user(&state, &user, "Two-factor authentication was turned off", "Two-factor authentication was turned off");
     Ok(Json(json!({ "enabled": false })))
 }
 
@@ -282,6 +283,7 @@ pub async fn api_2fa_recovery_codes(State(state): State<AppState>, headers: Head
     let (codes, hashes) = totp::generate_recovery_codes();
     state.db.set_recovery_codes(&user.id, &hashes).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "RECOVERY_CODES_RENEWED", None, None, None, None);
+    super::email::notify_user(&state, &user, "New two-factor recovery codes", "New two-factor recovery codes were made (the old ones no longer work)");
     Ok(Json(json!({ "recovery_codes": codes })))
 }
 
@@ -307,6 +309,7 @@ pub async fn api_reset_user_2fa(
         Some(&format!("2FA turned off for {}", target.username)),
         None,
     );
+    super::email::notify_user(&state, &target, "Two-factor authentication was reset", "An administrator turned off two-factor authentication");
     Ok(Json(json!({ "message": format!("Two-factor authentication turned off for {}", target.username) })))
 }
 

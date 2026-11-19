@@ -47,7 +47,8 @@ By Bolt J Woofson @ Woofsons Lab. Free and open source (MIT). If it is useful to
 **Security**
 - **Two-factor authentication** with an authenticator app (Aegis, 2FAS, Google Authenticator, 1Password and others), with one-time recovery codes.
 - Admins can require two-factor authentication per role, set how long a login lasts, and lock or sign out sessions after a period without activity.
-- Repeated wrong passwords or codes are slowed down. Sign-ins, failures and security changes are recorded in the activity log.
+- Repeated wrong passwords or codes are slowed down. Sign-ins, failures and security changes are recorded in the activity log, with the visitor's address.
+- **Email** (optional): people reset a forgotten password themselves with a single-use link, admins can email new users a link to choose their own password, and users are told when their password or two-factor settings change. Works with any SMTP server; set up under Admin > Email.
 - **Admin Control Panel**: users and groups, all connections, the activity log, security settings and a server status checklist.
 
 ---
@@ -93,7 +94,7 @@ Settings live in `config.toml` in the working directory. Start from `config.exam
 | `[clipboard]` | `default_mode` (`bidirectional`, `server_to_client`, `client_to_server`, `disabled`), `max_text_size_bytes` |
 | `[logging]` | `level` |
 
-Two-factor requirements, login lifetime and idle timeout are set in the web interface under **Admin > Security** and stored in the database.
+Two-factor requirements, login lifetime and idle timeout are set under **Admin > Security**, and the mail server under **Admin > Email**. Both are stored in the database.
 
 ### Behind a reverse proxy
 
@@ -107,7 +108,8 @@ On first start Remote creates a random secret in `data/secret.key` (readable onl
 
 ### Passwords and logins
 
-- Admins can reset a user's password (generate one, shown once, or set one) and require a new password at the next sign-in. New users choose their own password at first sign-in by default.
+- With email set up, "Forgot password?" on the sign-in page emails a link that works once, for 30 minutes. Two-factor authentication still applies afterwards.
+- Admins can reset a user's password (generate one, shown once, set one, or email a link) and require a new password at the next sign-in. New users choose their own password at first sign-in by default.
 - If a user loses their phone, an admin can turn off their two-factor authentication from the Users page.
 - A password change, reset, disable or role change ends that user's other logins straight away.
 
@@ -133,8 +135,7 @@ frontend/            Web interface (index.html, app.js, app.css), built into the
 
 ## Status and roadmap
 
-Planned work and known bugs are tracked in [GitHub Issues](https://github.com/Woofson/remote/issues); the overall direction is in [ROADMAP.md](ROADMAP.md). Known gaps:
-- No email yet, so there is no self-service password reset ([#27](https://github.com/Woofson/remote/issues/27)).
+Planned work and known bugs are tracked in [GitHub Issues](https://github.com/Woofson/remote/issues); the overall direction is in [ROADMAP.md](ROADMAP.md).
 
 Release history: [CHANGELOG.md](CHANGELOG.md).
 

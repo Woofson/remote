@@ -450,6 +450,34 @@
       </div>
     </div>
 
+    <!-- Choose a new password from an email link (#reset=...) -->
+    <div id="email-reset" class="modal-overlay ui-dialog-overlay" style="display:none;">
+      <div class="modal-box ui-dialog-box" id="email-reset-box" role="dialog" aria-modal="true" aria-labelledby="email-reset-title">
+        <div class="ui-dialog-header" id="email-reset-header">
+          <span id="email-reset-title" class="modal-title">Choose a new password</span>
+        </div>
+        <form class="ui-dialog-body" id="email-reset-form" autocomplete="off">
+          <p class="ui-dialog-message" id="email-reset-message">Checking the link…</p>
+          <div id="email-reset-fields" style="display:none;">
+            <div class="form-group">
+              <label for="email-reset-new" style="font-size: 11px; font-weight: 600;">New password</label>
+              <input type="password" id="email-reset-new" class="form-input" autocomplete="new-password" />
+            </div>
+            <div class="form-group">
+              <label for="email-reset-confirm" style="font-size: 11px; font-weight: 600;">New password again</label>
+              <input type="password" id="email-reset-confirm" class="form-input" autocomplete="new-password" />
+            </div>
+            <div class="pw-hint"><span class="pw-min-text">At least 12 characters</span>, not your username.</div>
+          </div>
+          <div class="pw-error" id="email-reset-error"></div>
+        </form>
+        <div class="ui-dialog-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeEmailReset()">Cancel</button>
+          <button type="button" class="btn btn-accent" id="email-reset-save" onclick="submitEmailReset()">Save password</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Confirm with password + 2FA code (turn off, new recovery codes) -->
     <div id="tf-confirm" class="modal-overlay ui-dialog-overlay" style="display:none;">
       <div class="modal-box ui-dialog-box" id="tf-confirm-box" role="dialog" aria-modal="true" aria-labelledby="tf-confirm-title">
@@ -529,6 +557,10 @@
             <input type="radio" name="pw-reset-mode" value="set" onchange="updatePasswordResetMode()" />
             <span>Set a password</span>
           </label>
+          <label class="pw-check" id="pw-reset-email-option" style="display:none;">
+            <input type="radio" name="pw-reset-mode" value="email" onchange="updatePasswordResetMode()" />
+            <span>Email a link to choose a new password <span class="text-muted" id="pw-reset-email-to"></span></span>
+          </label>
           <div id="pw-reset-fields" style="display:none;">
             <div class="form-group">
               <label style="font-size: 11px; font-weight: 600;">New password</label>
@@ -540,11 +572,11 @@
             </div>
             <div class="pw-hint"><span class="pw-min-text">At least 12 characters</span>, not the username.</div>
           </div>
-          <label class="pw-check">
+          <label class="pw-check" id="pw-reset-must-change-row">
             <input type="checkbox" id="pw-reset-must-change" checked />
             <span>Must choose a new password at next login</span>
           </label>
-          <div class="pw-hint">All of this user's current logins end.</div>
+          <div class="pw-hint" id="pw-reset-hint">All of this user's current logins end.</div>
           <div class="pw-error" id="pw-reset-error"></div>
         </div>
         <div class="ui-dialog-footer">
@@ -670,6 +702,16 @@
               <div class="login-input-wrapper">
                 <input type="password" id="login-password" class="login-input" autocomplete="current-password" />
               </div>
+              <button type="button" class="login-link-btn" id="login-forgot-link" style="display:none;" onclick="showLoginForgot(true)">Forgot password?</button>
+            </div>
+            <!-- Forgot password: ask for a reset link by email -->
+            <div class="login-form-group" id="login-forgot-group" style="display: none;">
+              <label for="login-forgot-input" class="login-label"><svg class="login-label-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-10 6L2 7"/></svg> Username or email address</label>
+              <div class="login-input-wrapper">
+                <input type="text" id="login-forgot-input" class="login-input" autocomplete="username" spellcheck="false" />
+              </div>
+              <p class="login-hint">We will email a link to choose a new password, if the account has an email address.</p>
+              <button type="button" class="login-link-btn" onclick="showLoginForgot(false)">Back to sign in</button>
             </div>
             <!-- Second step when two-factor authentication is on -->
             <div class="login-form-group" id="login-2fa-group" style="display: none;">
@@ -1043,6 +1085,7 @@
             <button type="button" class="panel-nav-btn" data-panel-page="connections" data-keywords="connections global private owner assigned assignment shared local terminal scope">Connections</button>
             <button type="button" class="panel-nav-btn" data-panel-page="activity" data-keywords="activity audit log access denied login password history">Activity Log</button>
             <button type="button" class="panel-nav-btn" data-panel-page="security" data-keywords="security two-factor 2fa totp authenticator session timeout idle lock lifetime expiry policy">Security</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="email" data-keywords="email mail smtp password reset forgot notifications sender public address">Email</button>
             <button type="button" class="panel-nav-btn" data-panel-page="server" data-keywords="server settings secret key backup oidc sso password policy upload config status version">Server</button>
           </nav>
           <div class="panel-content">
@@ -1114,6 +1157,10 @@
             <section class="panel-page" data-page="security">
               <div class="panel-page-header"><h3>Security</h3></div>
               <div id="admin-security-body"></div>
+            </section>
+            <section class="panel-page" data-page="email">
+              <div class="panel-page-header"><h3>Email</h3></div>
+              <div id="admin-email-body"></div>
             </section>
             <section class="panel-page" data-page="server">
               <div class="panel-page-header"><h3>Server</h3><span class="text-muted text-sm" id="server-version"></span></div>
@@ -1294,7 +1341,11 @@
                 <input type="password" id="edit-user-password-confirm" class="form-input" placeholder="••••••••" autocomplete="new-password" />
               </div>
             </div>
-            <label class="pw-check">
+            <label class="pw-check" id="edit-user-email-link-row" style="display:none;">
+              <input type="checkbox" id="edit-user-email-link" onchange="updateAddUserPasswordMode()" />
+              <span>Email them a link to choose their own password</span>
+            </label>
+            <label class="pw-check" id="edit-user-must-change-row">
               <input type="checkbox" id="edit-user-must-change" checked />
               <span>Must choose a new password at first login</span>
             </label>

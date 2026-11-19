@@ -33,6 +33,7 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+mod email;
 mod proxy;
 mod security;
 
@@ -104,6 +105,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/health", get(proxy::api_health))
         .route("/api/ready", get(proxy::api_ready))
         .route("/api/auth/header-login", post(proxy::api_header_login))
+        .route("/api/auth/forgot", post(email::api_forgot_password))
+        .route("/api/auth/reset/check", get(email::api_reset_check))
+        .route("/api/auth/reset", post(email::api_reset_password))
+        .route("/api/users/:id/password-link", post(email::api_send_password_link))
+        .route("/api/admin/email", get(email::api_get_email_settings).put(email::api_set_email_settings))
+        .route("/api/admin/email/test", post(email::api_test_email))
         .route("/api/shells", get(api_list_shells))
         .route("/api/auth/oidc/login", get(api_oidc_login))
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
@@ -477,6 +484,7 @@ pub async fn api_auth_providers(State(state): State<AppState>) -> Json<Value> {
             "provider_name": cfg.oidc.provider_name,
         },
         "header_login": cfg.auth.header_login.enabled,
+        "password_reset": email::EmailSettings::load(&state.db).ready(),
     }))
 }
 
@@ -904,6 +912,7 @@ pub async fn api_change_password(
         }
     }
     state.db.log_audit(Some(&user.id), &user.username, "PASSWORD_CHANGED", None, None, None, None);
+    email::notify_user(&state, &user, "Your Remote password was changed", "The password was changed");
 
     let (generation, _) = state.db.get_user_security(&user.id).unwrap_or((0, false));
     let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
@@ -969,6 +978,7 @@ pub async fn api_reset_user_password(
         None,
     );
 
+    email::notify_user(&state, &user, "Your Remote password was reset", "An administrator reset the password");
     Ok(Json(json!({
         "message": "Password reset",
         "password": if generated { Some(password) } else { None },
@@ -2256,6 +2266,10 @@ pub async fn api_get_settings(
             "global_local_shell": global_local_shell,
             "themes": state.themes.len(),
             "local_users_without_2fa": security::local_users_without_2fa(&state),
+            "email_ready": email::EmailSettings::load(&state.db).ready(),
+            "local_users_without_email": state.db.list_users().unwrap_or_default().into_iter()
+                .filter(|u| u.is_active && u.auth_provider == "local" && u.email.as_deref().map(|e| !e.trim().is_empty()) != Some(true))
+                .map(|u| u.username).collect::<Vec<_>>(),
             "require_2fa_roles": state.policy.read().require_2fa_roles.clone(),
         },
         "auth": {

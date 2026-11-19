@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "Web gateway for remote access: RDP, VNC, SSH, Telnet and local shells in the browser, in one Rust binary"
@@ -55,6 +55,8 @@ hmac = "0.13"
 sha1 = "0.11"
 data-encoding = "2.6"
 qrcodegen = "1.8"
+# Email (#27): SMTP over rustls (no OpenSSL), trusting the system's certificate store
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1-rustls", "ring", "rustls-native-certs"] }
 tempfile = "3.16"
 libc = "0.2"
 dirs = "5.0"

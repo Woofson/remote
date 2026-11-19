@@ -22,6 +22,7 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 - Per-pane keyboard layouts, RDP dynamic resolution and performance presets.
 - Full window mode and session lock screen.
 - Terminal sizing for full-screen programs (tmux, editors), shell choice per local shell, layout menu with the last layout remembered per user ([#4](https://github.com/Woofson/remote/issues/4)).
+- Email: SMTP settings, "Forgot password?" with single-use links, set-your-password invitations, security notices ([#27](https://github.com/Woofson/remote/issues/27)).
 - Reverse proxy support: sub-path hosting, session keepalive and reconnect, trusted proxies and real client IPs, forward-auth sign-in, health checks, tested Nginx/Caddy/Traefik/HAProxy examples ([#3](https://github.com/Woofson/remote/issues/3)).
 - Two-factor authentication (TOTP) with recovery codes; admin session rules: 2FA per role, login lifetime, idle lock or sign-out, server-enforced lock screen ([#26](https://github.com/Woofson/remote/issues/26)).
 
@@ -35,12 +36,6 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 
 - Tabs: several sessions inside one pane ([#7](https://github.com/Woofson/remote/issues/7)).
 - Floating session windows ([#8](https://github.com/Woofson/remote/issues/8)).
-
-## Next: Email and password reset ([#27](https://github.com/Woofson/remote/issues/27))
-
-- SMTP settings in the admin panel, with a test email.
-- "Forgot password?" on the login screen with a single-use, short-lived reset link.
-- Security notifications: password changed, two-factor turned off or reset.
 
 ## Then: VDI
 

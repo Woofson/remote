@@ -362,6 +362,18 @@ impl Database {
         let _ = conn.execute("ALTER TABLE user_security ADD COLUMN totp_pending_enc TEXT", []);
         let _ = conn.execute("ALTER TABLE user_security ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0", []);
         let _ = conn.execute("ALTER TABLE user_security ADD COLUMN recovery_codes TEXT", []);
+        // Password reset and set-your-password links (#27). Only a hash of each link's
+        // secret is stored; a link works once and expires.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS password_resets (
+                token_hash TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                purpose TEXT NOT NULL DEFAULT 'reset',
+                created_at TEXT NOT NULL
+            )",
+            [],
+        )?;
 
         Ok(())
     }
@@ -494,6 +506,36 @@ impl Database {
         Ok(ids)
     }
 
+    /// Store a new reset link for a user, replacing any older ones.
+    pub fn create_password_reset(&self, token_hash: &str, user_id: &str, expires_at: i64, purpose: &str) -> SqlResult<()> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM password_resets WHERE user_id = ?1 OR expires_at < ?2", params![user_id, Utc::now().timestamp()])?;
+        tx.execute(
+            "INSERT INTO password_resets (token_hash, user_id, expires_at, purpose, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![token_hash, user_id, expires_at, purpose, Utc::now().to_rfc3339()],
+        )?;
+        tx.commit()
+    }
+
+    /// The user a valid (unexpired) reset link belongs to, with the link's purpose.
+    pub fn find_password_reset(&self, token_hash: &str) -> SqlResult<Option<(String, String)>> {
+        self.conn
+            .lock()
+            .query_row(
+                "SELECT user_id, purpose FROM password_resets WHERE token_hash = ?1 AND expires_at >= ?2",
+                params![token_hash, Utc::now().timestamp()],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+    }
+
+    /// Forget all reset links of a user (after one is used, or a password change).
+    pub fn delete_password_resets(&self, user_id: &str) -> SqlResult<()> {
+        self.conn.lock().execute("DELETE FROM password_resets WHERE user_id = ?1", params![user_id])?;
+        Ok(())
+    }
+
     /// Whether the database answers (for the readiness check).
     pub fn ping(&self) -> bool {
         self.conn.lock().query_row("SELECT 1", [], |r| r.get::<_, i64>(0)).is_ok()
@@ -549,6 +591,8 @@ impl Database {
                 password_changed_at = ?3",
             params![user_id, must_change as i64, Utc::now().to_rfc3339()],
         )?;
+        // A new password makes any outstanding reset link useless.
+        tx.execute("DELETE FROM password_resets WHERE user_id = ?1", params![user_id])?;
         tx.commit()
     }
 
