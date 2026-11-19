@@ -1,14 +1,21 @@
 # <img src="assets/RemoteIcon-256.png" alt="Remote logo" height="40" style="vertical-align: -6px; margin-right: 8px;" /> Remote
 
+<div align="center">
+  <img src="assets/screenshots/workspace.webp" alt="Remote with two local shells side by side, one running tmux" width="800" />
+  <p><em>Your remote desktops and terminals in one browser workspace — By Woofson</em></p>
+  <p>
+    <a href="https://github.com/Woofson/remote/releases/latest"><img src="https://img.shields.io/github/v/release/Woofson/remote?style=flat-square&color=f59e0b&label=version" alt="Version" /></a>
+    <a href="https://crates.io/crates/remoted"><img src="https://img.shields.io/crates/v/remoted?style=flat-square&color=f59e0b" alt="Crates.io" /></a>
+    <img src="https://img.shields.io/badge/rust-2021_edition-orange?style=flat-square" alt="Rust 2021" />
+    <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License MIT" />
+    <a href="https://ghcr.io/woofson/remote"><img src="https://img.shields.io/badge/docker_ghcr-linux%2Famd64-cyan?style=flat-square" alt="Docker GHCR" /></a>
+    <a href="https://ko-fi.com/J7P327BXTR"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=kofi&logoColor=white" alt="Support on Ko-fi" /></a>
+  </p>
+</div>
+
 Remote is a web gateway for remote access. You open RDP and VNC desktops, SSH and Telnet terminals, and shells on the server itself in your browser, side by side in one workspace. Nothing needs to be installed on the computer you work from.
 
-It is a single Rust program with the web interface built in and an embedded SQLite database. There is no Java, Tomcat or `guacd` to set up.
-
-By Bolt J Woofson @ Woofsons Lab. Free and open source (MIT).
-
-<a href="https://ko-fi.com/J7P327BXTR"><img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=flat-square&logo=kofi&logoColor=white" alt="Support on Ko-fi" /></a>
-
-![Two local shells side by side, one running tmux](assets/screenshots/workspace.webp)
+It is a single Rust program with the web interface built in and an embedded SQLite database.
 
 | Connections directory | Themes |
 | :---: | :---: |
@@ -145,7 +152,7 @@ Release history: [CHANGELOG.md](CHANGELOG.md).
 
 ## Support & Contributions
 
-Remote is made by one person in their spare time. If it has been useful to you, and only if you feel like it, you're very welcome to buy me a coffee. Thank you!
+I am very humbled for your support. If you find Remote worthy of a ko-fi, I would be very very grateful. Thank you.
 
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/J7P327BXTR)
 
