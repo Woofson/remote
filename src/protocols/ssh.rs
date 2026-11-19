@@ -256,6 +256,7 @@ pub async fn handle_ssh_session(
     sess.set_blocking(false);
 
     let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(512);
+    super::spawn_keepalive(&ws_sender_tx);
     let (ssh_cmd_tx, mut ssh_cmd_rx) = mpsc::channel::<SshChannelCommand>(512);
     let is_running = Arc::new(AtomicBool::new(true));
 

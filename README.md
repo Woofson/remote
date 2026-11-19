@@ -86,14 +86,20 @@ Settings live in `config.toml` in the working directory. Start from `config.exam
 
 | Section | Settings |
 | :--- | :--- |
-| `[server]` | `bind_address` (default `0.0.0.0:8088`), `data_dir`, `token_expiry_hours` (starting value for the login lifetime, later changed under Admin > Security), optional `jwt_secret` |
+| `[server]` | `bind_address` (default `0.0.0.0:8088`), `data_dir`, `token_expiry_hours` (starting value for the login lifetime, later changed under Admin > Security), optional `jwt_secret`, `base_path` and `trusted_proxies` (see below) |
 | `[storage]` | `staging_dir`, `max_upload_size_mb`, `auto_cleanup_hours` |
-| `[auth]` | `allow_local_login`, `default_role` (default `viewer`), `min_password_length` (default `12`) |
+| `[auth]` | `allow_local_login`, `default_role` (default `viewer`), `min_password_length` (default `12`); `[auth.header_login]` for signing in through a reverse proxy |
 | `[oidc]` | `enabled`, `issuer_url`, `client_id`, `client_secret`, `redirect_uri`, `scopes`, `auto_provision_users`, `admin_group`, `operator_group` |
 | `[clipboard]` | `default_mode` (`bidirectional`, `server_to_client`, `client_to_server`, `disabled`), `max_text_size_bytes` |
 | `[logging]` | `level` |
 
 Two-factor requirements, login lifetime and idle timeout are set in the web interface under **Admin > Security** and stored in the database.
+
+### Behind a reverse proxy
+
+Remote works behind Nginx, Caddy, Traefik, HAProxy and Cloudflare Tunnel, at its own address or under a sub-path such as `https://example.com/remote/`. Open sessions stay connected through proxy idle limits, the activity log shows visitors' real addresses, and Remote can sign people in from Authelia or Authentik forward-auth headers. Settings and tested example configurations: [docs/reverse-proxy.md](docs/reverse-proxy.md).
+
+Health checks for monitoring and load balancers: `/api/health` and `/api/ready`.
 
 ### Secret key and backups
 
@@ -128,7 +134,6 @@ frontend/            Web interface (index.html, app.js, app.css), built into the
 ## Status and roadmap
 
 Planned work and known bugs are tracked in [GitHub Issues](https://github.com/Woofson/remote/issues); the overall direction is in [ROADMAP.md](ROADMAP.md). Known gaps:
-- Running behind a reverse proxy is not fully supported yet ([#3](https://github.com/Woofson/remote/issues/3)).
 - No email yet, so there is no self-service password reset ([#27](https://github.com/Woofson/remote/issues/27)).
 
 Release history: [CHANGELOG.md](CHANGELOG.md).

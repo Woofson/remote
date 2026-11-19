@@ -83,19 +83,19 @@ fn check_second_factor(state: &AppState, user: &User, input: &str) -> Result<Str
 }
 
 /// Password (and, when asked, second factor) check with the attempt brake and audit log.
-fn verify_identity(state: &AppState, user: &User, password: &str, code: Option<&str>, action: &str) -> ApiResult<()> {
+fn verify_identity(state: &AppState, user: &User, password: &str, code: Option<&str>, action: &str, ip: &ClientIp) -> ApiResult<()> {
     if let Some(wait) = state.limiter.blocked_for(&user.username) {
         return Err(too_many_attempts(wait));
     }
     if user.auth_provider != "local" || !verify_password(password, &user.password_hash) {
         state.limiter.record_failure(&user.username);
-        state.db.log_audit(Some(&user.id), &user.username, &format!("{}_FAILED", action), None, None, Some("Wrong password"), None);
+        state.db.log_audit(Some(&user.id), &user.username, &format!("{}_FAILED", action), None, None, Some("Wrong password"), ip.as_opt());
         return Err(err(StatusCode::UNAUTHORIZED, "Wrong password"));
     }
     if let Some(code) = code {
         if let Err(e) = check_second_factor(state, user, code) {
             state.limiter.record_failure(&user.username);
-            state.db.log_audit(Some(&user.id), &user.username, &format!("{}_FAILED", action), None, None, Some("Wrong 2FA code"), None);
+            state.db.log_audit(Some(&user.id), &user.username, &format!("{}_FAILED", action), None, None, Some("Wrong 2FA code"), ip.as_opt());
             return Err(err(StatusCode::UNAUTHORIZED, &e));
         }
     }
@@ -111,7 +111,7 @@ pub struct Login2faPayload {
     pub code: String,
 }
 
-pub async fn api_login_2fa(State(state): State<AppState>, Json(p): Json<Login2faPayload>) -> ApiResult<Json<Value>> {
+pub async fn api_login_2fa(State(state): State<AppState>, ip: ClientIp, Json(p): Json<Login2faPayload>) -> ApiResult<Json<Value>> {
     let secret = jwt_secret(&state);
     let (user_id, gen) = verify_2fa_challenge(&p.challenge, &secret).map_err(|e| err(StatusCode::UNAUTHORIZED, &e))?;
     let user = load_user(&state, &user_id)?;
@@ -126,7 +126,7 @@ pub async fn api_login_2fa(State(state): State<AppState>, Json(p): Json<Login2fa
         Ok(n) => n,
         Err(e) => {
             state.limiter.record_failure(&user.username);
-            state.db.log_audit(Some(&user.id), &user.username, "TWO_FACTOR_FAILED", None, None, Some("Wrong code at sign-in"), None);
+            state.db.log_audit(Some(&user.id), &user.username, "TWO_FACTOR_FAILED", None, None, Some("Wrong code at sign-in"), ip.as_opt());
             return Err(err(StatusCode::UNAUTHORIZED, &e));
         }
     };
@@ -141,7 +141,7 @@ pub async fn api_login_2fa(State(state): State<AppState>, Json(p): Json<Login2fa
         None,
         None,
         Some(&format!("User logged in via local auth with 2FA ({})", note)),
-        None,
+        ip.as_opt(),
     );
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({
@@ -166,7 +166,7 @@ pub struct UnlockPayload {
     pub code: Option<String>,
 }
 
-pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<UnlockPayload>) -> ApiResult<Json<Value>> {
+pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<UnlockPayload>) -> ApiResult<Json<Value>> {
     let claims = extract_claims_pending(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
     if user.auth_provider != "local" {
@@ -180,7 +180,7 @@ pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, Json(
             Json(json!({ "error": "Enter the code from your authenticator app", "code": "two_factor_required" })),
         ));
     }
-    verify_identity(&state, &user, &p.password, if needs_code { p.code.as_deref() } else { None }, "UNLOCK")?;
+    verify_identity(&state, &user, &p.password, if needs_code { p.code.as_deref() } else { None }, "UNLOCK", &ip)?;
     state.sessions.unlock(&claims.sid);
     Ok(Json(json!({ "unlocked": true })))
 }
@@ -263,22 +263,22 @@ pub struct ConfirmPayload {
     pub code: String,
 }
 
-pub async fn api_2fa_disable(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<ConfirmPayload>) -> ApiResult<Json<Value>> {
+pub async fn api_2fa_disable(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<ConfirmPayload>) -> ApiResult<Json<Value>> {
     let claims = extract_claims(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
     if state.policy.read().requires_2fa(&user.role) {
         return Err(err(StatusCode::FORBIDDEN, "Two-factor authentication is required for your role and cannot be turned off"));
     }
-    verify_identity(&state, &user, &p.password, Some(&p.code), "TWO_FACTOR_DISABLE")?;
+    verify_identity(&state, &user, &p.password, Some(&p.code), "TWO_FACTOR_DISABLE", &ip)?;
     state.db.disable_totp(&user.id).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "TWO_FACTOR_DISABLED", None, None, None, None);
     Ok(Json(json!({ "enabled": false })))
 }
 
-pub async fn api_2fa_recovery_codes(State(state): State<AppState>, headers: HeaderMap, Json(p): Json<ConfirmPayload>) -> ApiResult<Json<Value>> {
+pub async fn api_2fa_recovery_codes(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<ConfirmPayload>) -> ApiResult<Json<Value>> {
     let claims = extract_claims(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
-    verify_identity(&state, &user, &p.password, Some(&p.code), "RECOVERY_CODES")?;
+    verify_identity(&state, &user, &p.password, Some(&p.code), "RECOVERY_CODES", &ip)?;
     let (codes, hashes) = totp::generate_recovery_codes();
     state.db.set_recovery_codes(&user.id, &hashes).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "RECOVERY_CODES_RENEWED", None, None, None, None);

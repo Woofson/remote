@@ -3059,7 +3059,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remoted"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "aes-gcm 0.10.3",
  "argon2",
@@ -3111,6 +3111,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tower",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",

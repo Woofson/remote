@@ -30,11 +30,14 @@ use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+mod proxy;
 mod security;
+
+pub use proxy::strip_base_path;
+use proxy::ClientIp;
 
 #[derive(RustEmbed)]
 #[folder = "frontend/"]
@@ -98,6 +101,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/auth/me", get(api_me))
         .route("/api/auth/providers", get(api_auth_providers))
         .route("/api/version", get(api_version))
+        .route("/api/health", get(proxy::api_health))
+        .route("/api/ready", get(proxy::api_ready))
+        .route("/api/auth/header-login", post(proxy::api_header_login))
         .route("/api/shells", get(api_list_shells))
         .route("/api/auth/oidc/login", get(api_oidc_login))
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
@@ -161,7 +167,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws/tunnel/:connection_id", get(ws_tunnel_handler))
         // Static Frontend Files
         .fallback(static_file_handler)
-        .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -302,6 +307,7 @@ pub struct LoginPayload {
 
 pub async fn api_login(
     State(state): State<AppState>,
+    ip: ClientIp,
     Json(payload): Json<LoginPayload>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
@@ -315,7 +321,7 @@ pub async fn api_login(
             )
         })?;
 
-    if let Some(wait) = state.limiter.blocked_for(&payload.username) {
+    if let Some(wait) = state.limiter.blocked_for(&payload.username).or_else(|| state.limiter.blocked_for(&ip.limiter_key())) {
         return Err(security::too_many_attempts(wait));
     }
 
@@ -325,6 +331,7 @@ pub async fn api_login(
         Some(u) if u.auth_provider == "local" && verify_password(&password, &u.password_hash) => u,
         other => {
             state.limiter.record_failure(&payload.username);
+            state.limiter.record_failure(&ip.limiter_key());
             state.db.log_audit(
                 other.as_ref().map(|u| u.id.as_str()),
                 &payload.username,
@@ -332,7 +339,7 @@ pub async fn api_login(
                 None,
                 None,
                 Some("Wrong username or password"),
-                None,
+                ip.as_opt(),
             );
             return Err((
                 StatusCode::UNAUTHORIZED,
@@ -361,6 +368,7 @@ pub async fn api_login(
     }
 
     state.limiter.record_success(&user.username);
+    state.limiter.record_success(&ip.limiter_key());
     let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
@@ -372,7 +380,7 @@ pub async fn api_login(
         None,
         None,
         Some("User logged in via local auth"),
-        None,
+        ip.as_opt(),
     );
 
     let setup_required = state.policy.read().requires_2fa(&user.role);
@@ -467,7 +475,8 @@ pub async fn api_auth_providers(State(state): State<AppState>) -> Json<Value> {
         "oidc": {
             "enabled": cfg.oidc.enabled,
             "provider_name": cfg.oidc.provider_name,
-        }
+        },
+        "header_login": cfg.auth.header_login.enabled,
     }))
 }
 
@@ -591,24 +600,27 @@ pub async fn api_oidc_callback(
     let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
+    // Links use the configured sub-path so this page also works behind a proxy.
+    let base = cfg.server.base();
     let html = format!(
         r#"<!DOCTYPE html>
         <html>
-        <head><title>Remote OIDC Authenticated</title></head>
+        <head><title>Remote</title></head>
         <body style="background:#121214;color:#f59e0b;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;">
           <div style="text-align:center;">
-            <img src="/assets/icons/remote-160.webp" alt="Remote" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
-            <h2 style="margin:0;font-weight:700;color:#f4f4f5;">Remote Authenticated!</h2>
-            <p style="color:#a1a1aa;margin-top:6px;">Redirecting to dashboard...</p>
+            <img src="{base}/assets/icons/remote-160.webp" alt="Remote" style="height:44px;margin-bottom:12px;vertical-align:middle;" />
+            <h2 style="margin:0;font-weight:700;color:#f4f4f5;">Signed in</h2>
+            <p style="color:#a1a1aa;margin-top:6px;">Opening Remote…</p>
           </div>
           <script>
-            localStorage.setItem('remote_token', '{}');
-            document.cookie = 'remote_token={}; path=/; max-age=86400; SameSite=Lax';
-            window.location.href = '/';
+            localStorage.setItem('remote_token', '{token}');
+            document.cookie = 'remote_token={token}; path={base}/; max-age=86400; SameSite=Lax' + (location.protocol === 'https:' ? '; Secure' : '');
+            window.location.href = '{base}/';
           </script>
         </body>
         </html>"#,
-        token, token
+        base = base,
+        token = token
     );
 
     Ok(Html(html).into_response())
@@ -2375,6 +2387,7 @@ pub async fn ws_tunnel_handler(
     AxumPath(connection_id): AxumPath<String>,
     Query(query): Query<WsQuery>,
     headers: HeaderMap,
+    ip: ClientIp,
     ws: WebSocketUpgrade,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let cfg = state.config.read().clone();
@@ -2396,7 +2409,7 @@ pub async fn ws_tunnel_handler(
         Some(&conn_rec.id),
         Some(&conn_rec.name),
         Some(&format!("Protocol: {}", conn_rec.protocol)),
-        None,
+        ip.as_opt(),
     );
 
     let cols = query.cols.unwrap_or(100);

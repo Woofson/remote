@@ -494,6 +494,11 @@ impl Database {
         Ok(ids)
     }
 
+    /// Whether the database answers (for the readiness check).
+    pub fn ping(&self) -> bool {
+        self.conn.lock().query_row("SELECT 1", [], |r| r.get::<_, i64>(0)).is_ok()
+    }
+
     /// A server-wide setting stored in the database (JSON text), if set.
     pub fn get_setting(&self, key: &str) -> SqlResult<Option<String>> {
         self.conn

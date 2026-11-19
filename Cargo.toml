@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "Web gateway for remote access: RDP, VNC, SSH, Telnet and local shells in the browser, in one Rust binary"
@@ -22,7 +22,9 @@ path = "src/main.rs"
 [dependencies]
 axum = { version = "0.7", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.5", features = ["trace", "fs"] }
+# Already part of axum; used directly to strip the sub-path before routing (#3)
+tower = { version = "0.5", default-features = false, features = ["util"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 mime_guess = "2.0"
 serde = { version = "1.0", features = ["derive"] }

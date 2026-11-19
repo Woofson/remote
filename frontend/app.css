@@ -3190,3 +3190,11 @@ kbd {
   .tf-qr-row { flex-direction: column; align-items: flex-start; }
   .sec-row { grid-template-columns: 1fr; gap: 8px; }
 }
+
+/* Automatic reconnect notice on a dropped remote desktop (#3) */
+.reconnect-note {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--woofson-accent);
+}

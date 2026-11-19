@@ -36,7 +36,8 @@ pub fn available_shells() -> Vec<String> {
 /// The shell to start: the connection's chosen one if it is an installed login
 /// shell, otherwise an error message. `None` means the server default.
 fn resolve_shell(requested: Option<&str>) -> Result<Option<String>, String> {
-    let Some(req) = requested.map(str::trim).filter(|s| !s.is_empty()) else {
+    // Empty or "default" (the built-in connection's value) mean the server default.
+    let Some(req) = requested.map(str::trim).filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("default")) else {
         return Ok(None);
     };
     let real = std::fs::canonicalize(req)
@@ -157,6 +158,7 @@ pub async fn handle_local_pty_session(
     };
 
     let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(256);
+    super::spawn_keepalive(&ws_sender_tx);
     let is_running = Arc::new(AtomicBool::new(true));
 
     // Task 1: Read from PTY -> Send to WebSocket
@@ -257,4 +259,21 @@ pub async fn handle_local_pty_session(
     let _ = ws_send_handle.abort();
     let _ = pty_read_handle.abort();
     info!("Local PTY session closed");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_shell_values_mean_server_default() {
+        assert_eq!(resolve_shell(None), Ok(None));
+        assert_eq!(resolve_shell(Some("")), Ok(None));
+        assert_eq!(resolve_shell(Some("default")), Ok(None));
+        assert!(resolve_shell(Some("/no/such/shell")).is_err());
+        // Installed, but not a login shell: refused.
+        if std::path::Path::new("/usr/bin/python3").exists() {
+            assert!(resolve_shell(Some("/usr/bin/python3")).is_err());
+        }
+    }
 }

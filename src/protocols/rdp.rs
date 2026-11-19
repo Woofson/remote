@@ -463,6 +463,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let (ws_out_tx, mut ws_out_rx) = mpsc::channel::<Message>(512);
+    super::spawn_keepalive(&ws_out_tx);
 
     let shared_input_tx = Arc::new(parking_lot::Mutex::new(None::<mpsc::UnboundedSender<RdpInputEvent>>));
     let shared_local_clipboard = Arc::new(parking_lot::Mutex::new(None::<String>));

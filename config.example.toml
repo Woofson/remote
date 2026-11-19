@@ -9,6 +9,13 @@ data_dir = "./data"
 # on first start. Back that file up with the database: it unlocks saved connection
 # passwords. Only set jwt_secret here to supply your own private value.
 token_expiry_hours = 24
+# Behind a reverse proxy under a sub-path (https://example.com/remote/): set it here.
+# Works whether or not the proxy strips the prefix. Leave empty when served at "/".
+base_path = ""
+# Reverse proxies whose X-Forwarded-For / X-Real-IP headers are believed, as IP
+# addresses or ranges. Needed for real client IPs in the activity log and the
+# attempt brake, and for header sign-in. Example: ["127.0.0.1", "172.16.0.0/12"]
+trusted_proxies = []
 
 [storage]
 # Files folder: shared with RDP sessions as \\tsclient\Files and browsable in the web UI
@@ -25,6 +32,18 @@ allow_pam_login = true
 default_role = "viewer"
 # Minimum length for local account passwords
 min_password_length = 12
+
+[auth.header_login]
+# Sign users in from headers set by a reverse proxy that already checked them
+# (Authelia, Authentik forward auth). Only requests from server.trusted_proxies count,
+# so the proxy must remove these headers from what visitors send. Off by default.
+enabled = false
+username_header = "Remote-User"
+email_header = "Remote-Email"
+name_header = "Remote-Name"
+groups_header = "Remote-Groups"
+admin_group = "Remote-Admins"
+operator_group = "Remote-Operators"
 
 [oidc]
 # OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)

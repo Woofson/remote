@@ -99,7 +99,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let listener = tokio::net::TcpListener::bind(&config.server.bind_address).await?;
     info!("Remote Server listening on http://{}", config.server.bind_address);
 
-    axum::serve(listener, router).await?;
+    // Serve under `base_path` too (works whether or not the proxy strips it), and pass
+    // the peer address on so the real client IP can be worked out behind a proxy.
+    let base = config.server.base();
+    if !base.is_empty() {
+        info!("Also answering under the sub-path {}/", base);
+    }
+    let app = tower::Layer::layer(&axum::middleware::from_fn_with_state(base, remoted::server::strip_base_path), router);
+    axum::serve(
+        listener,
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<std::net::SocketAddr>(app),
+    )
+    .await?;
     Ok(())
 }
 

@@ -1266,6 +1266,7 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
         .await;
 
     let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(512);
+    super::spawn_keepalive(&ws_sender_tx);
     let (vnc_write_tx, mut vnc_write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let is_running = Arc::new(AtomicBool::new(true));
 

@@ -228,7 +228,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Version badges read the version from the server (Cargo.toml is the single source of truth).
 async function loadAppVersion() {
   try {
-    const res = await fetch('/api/version');
+    const res = await fetch('api/version');
     if (!res.ok) return;
     const { version } = await res.json();
     document.querySelectorAll('.app-version').forEach((el) => {
@@ -240,19 +240,19 @@ async function loadAppVersion() {
 // ================= Authentication =================
 async function checkAuth() {
   if (!state.jwtToken) {
-    showLoginModal();
+    if (!(await tryHeaderLogin())) showLoginModal();
     return;
   }
 
   try {
-    const res = await fetch('/api/auth/me', {
+    const res = await fetch('api/auth/me', {
       headers: { Authorization: `Bearer ${state.jwtToken}` },
     });
 
     if (res.ok) {
       state.currentUser = await res.json();
       continueAfterLogin();
-    } else {
+    } else if (!(await tryHeaderLogin())) {
       showLoginModal();
     }
   } catch (err) {
@@ -394,7 +394,7 @@ function showLoginModal() {
 
 async function fetchAuthProviders() {
   try {
-    const res = await fetch('/api/auth/providers');
+    const res = await fetch('api/auth/providers');
     if (res.ok) {
       const data = await res.json();
       if (data.oidc && data.oidc.enabled) {
@@ -403,8 +403,37 @@ async function fetchAuthProviders() {
       } else {
         document.getElementById('oidc-login-section').style.display = 'none';
       }
+      const hl = document.getElementById('header-login-section');
+      if (hl) hl.style.display = data.header_login && !state.login2fa ? 'block' : 'none';
     }
   } catch (e) {}
+}
+
+/** Behind Authelia/Authentik forward auth: sign in as the user the proxy already checked.
+ *  Returns true when signed in. After an explicit log out it waits for a click. */
+async function tryHeaderLogin(manual = false) {
+  if (!manual && sessionStorage.getItem('remote_no_header_login')) return false;
+  try {
+    const prov = await fetch('api/auth/providers').then((r) => r.json());
+    if (!prov.header_login) return false;
+    const res = await fetch('api/auth/header-login', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (manual) {
+        const errEl = document.getElementById('login-error');
+        errEl.textContent = data.error || 'Sign-in through the proxy failed';
+        errEl.style.display = 'block';
+      }
+      return false;
+    }
+    sessionStorage.removeItem('remote_no_header_login');
+    const modal = document.getElementById('login-modal');
+    if (modal) { modal.classList.remove('active'); modal.style.display = 'none'; }
+    finishLogin(data);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function handleLoginSubmit() {
@@ -421,7 +450,7 @@ async function handleLoginSubmit() {
   }
 
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch('api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
@@ -475,6 +504,7 @@ function showLogin2faStep(on) {
   show('login-pass-group', !on);
   show('login-2fa-group', on);
   show('oidc-login-section', false);
+  show('header-login-section', false);
   const code = document.getElementById('login-2fa-code');
   if (code) code.value = '';
   const btn = document.querySelector('#btn-submit-login span');
@@ -501,7 +531,7 @@ async function submitLogin2fa() {
     return;
   }
   try {
-    const res = await fetch('/api/auth/login/2fa', {
+    const res = await fetch('api/auth/login/2fa', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ challenge: state.login2fa.challenge, code }),
@@ -546,13 +576,14 @@ const handleLogin = (e) => {
 };
 
 function loginWithOidc() {
-  window.location.href = '/api/auth/oidc/login';
+  window.location.href = 'api/auth/oidc/login';
 }
 
 function logout() {
   stopIdleWatch();
+  sessionStorage.setItem('remote_no_header_login', '1');
   if (state.jwtToken) {
-    fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
+    fetch('api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
   }
   for (let i = 1; i <= 4; i++) {
     disconnectPane(i);
@@ -563,14 +594,16 @@ function logout() {
   localStorage.removeItem('remote_token');
   localStorage.removeItem('remotedog_token');
   localStorage.removeItem(LAYOUT_KEY);
-  document.cookie = 'remote_token=; path=/; max-age=0; SameSite=Lax';
-  document.cookie = 'remotedog_token=; path=/; max-age=0; SameSite=Lax';
+  for (const path of new Set([cookiePath(), '/'])) {
+    document.cookie = `remote_token=; path=${path}; max-age=0; SameSite=Lax`;
+    document.cookie = `remotedog_token=; path=${path}; max-age=0; SameSite=Lax`;
+  }
   window.location.reload();
 }
 
 function lockSession(serverLocked = false) {
   if (!serverLocked && state.jwtToken) {
-    apiFetch('/api/auth/lock', { method: 'POST' }).catch(() => {});
+    apiFetch('api/auth/lock', { method: 'POST' }).catch(() => {});
   }
   const lockEl = document.getElementById('session-lock-screen');
   const alreadyShown = lockEl && lockEl.style.display === 'flex';
@@ -625,7 +658,7 @@ async function submitUnlockSession() {
   const codeInput = document.getElementById('lock-2fa-code');
   const code = codeInput ? codeInput.value.trim() : '';
   try {
-    const res = await apiFetch('/api/auth/unlock', {
+    const res = await apiFetch('api/auth/unlock', {
       method: 'POST',
       body: JSON.stringify({ password, code: code || null }),
     });
@@ -862,7 +895,7 @@ function saveLayoutPref(layout) {
   clearTimeout(layoutPrefTimer);
   layoutPrefTimer = setTimeout(() => {
     if (!state.jwtToken) return;
-    apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ layout: String(layout) }) }).catch(() => {});
+    apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ layout: String(layout) }) }).catch(() => {});
   }, 400);
 }
 
@@ -1034,7 +1067,7 @@ async function handleUpdateProfile(e) {
       email: email || null,
       avatar_data: avatarData || null,
     };
-    const res = await apiFetch(`/api/users/${state.currentUser.id}`, {
+    const res = await apiFetch(`api/users/${state.currentUser.id}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
     });
@@ -1090,7 +1123,7 @@ function activatePane(index) {
 // ================= Connection Management =================
 async function loadConnections() {
   try {
-    const res = await fetch('/api/connections', {
+    const res = await fetch('api/connections', {
       headers: { Authorization: `Bearer ${state.jwtToken}` },
     });
     if (res.ok) {
@@ -1124,8 +1157,8 @@ const PROTOCOL_LABELS = { rdp: 'RDP', vnc: 'VNC', ssh: 'SSH', telnet: 'Telnet', 
 function iconUrl(ref) {
   if (!ref) return null;
   const [kind, val] = ref.split(':');
-  if (kind === 'selfhst' && /^[a-z0-9-]+$/.test(val || '')) return `/api/icons/selfhst/${val}.png`;
-  if (kind === 'upload' && /^[0-9a-f]{64}$/.test(val || '')) return `/api/icons/upload/${val}.png`;
+  if (kind === 'selfhst' && /^[a-z0-9-]+$/.test(val || '')) return `api/icons/selfhst/${val}.png`;
+  if (kind === 'upload' && /^[0-9a-f]{64}$/.test(val || '')) return `api/icons/upload/${val}.png`;
   return null;
 }
 
@@ -1431,6 +1464,7 @@ let localShellsCache = null;
 async function fillLocalShellSelect(current) {
   const sel = document.getElementById('conn-local-shell');
   if (!sel) return;
+  if (current === 'default') current = '';
   const render = (shells) => {
     const list = [...shells];
     if (current && !list.includes(current)) list.push(current);
@@ -1446,7 +1480,7 @@ async function fillLocalShellSelect(current) {
   render(localShellsCache || []);
   if (!localShellsCache) {
     try {
-      const res = await apiFetch('/api/shells');
+      const res = await apiFetch('api/shells');
       if (res.ok) {
         localShellsCache = (await res.json()).shells || [];
         render(localShellsCache);
@@ -1529,7 +1563,7 @@ async function testConnectionTarget() {
   }
   out.textContent = 'Testing…';
   try {
-    const res = await apiFetch('/api/connections/test', { method: 'POST', body: JSON.stringify({ host, port }) });
+    const res = await apiFetch('api/connections/test', { method: 'POST', body: JSON.stringify({ host, port }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) out.innerHTML = `<span class="bad">${escapeHtml(d.error || 'Test failed')}</span>`;
     else if (d.reachable) out.innerHTML = `<span class="ok">Reachable: ${escapeHtml(host)}:${port} answers</span>`;
@@ -1586,7 +1620,7 @@ async function handleSaveConnection(e) {
     if (owner) payload.owner_id = owner;
   }
 
-  const url = id ? `/api/connections/${id}` : '/api/connections';
+  const url = id ? `api/connections/${id}` : 'api/connections';
   const method = id ? 'PUT' : 'POST';
 
   try {
@@ -1621,7 +1655,7 @@ async function handleSaveConnection(e) {
 async function deleteConnection(id) {
   if (!(await uiConfirm('Are you sure you want to delete this connection?', { title: 'Delete connection', okText: 'Delete', danger: true }))) return;
   try {
-    const res = await fetch(`/api/connections/${id}`, {
+    const res = await fetch(`api/connections/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${state.jwtToken}` },
     });
@@ -1671,8 +1705,10 @@ function connectToTarget(connectionId) {
   const cols = Math.max(20, Math.floor(initW / 9)) || 120;
   const rows = Math.max(5, Math.floor(initH / 18)) || 32;
 
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${location.host}/ws/tunnel/${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}`;
+  // Relative to the page, so it also works under a sub-path behind a proxy.
+  const wsBase = new URL('ws/tunnel/', location.href);
+  wsBase.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${wsBase.href}${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}`;
 
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
@@ -1681,6 +1717,9 @@ function connectToTarget(connectionId) {
   const startTime = Date.now();
 
   ws.onopen = () => {
+    ws.openedAt = Date.now();
+    // A session that stays up for a minute earns back its automatic reconnects.
+    setTimeout(() => { if (pane.socket === ws) pane.autoReconnects = 0; }, 60000);
     const latency = Date.now() - startTime;
     statsEl.textContent = `${latency} ms`;
     showToast(`Connected to ${conn.name} [Pane ${paneIndex}]`);
@@ -1699,7 +1738,11 @@ function connectToTarget(connectionId) {
     showToast(`Connection error on ${conn.name}`, 'danger');
   };
 
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    // Dropped by the network or a proxy (not closed by either side) after the desktop was up:
+    // reconnect a few times on its own; Windows and VNC keep the desktop running meanwhile.
+    const dropped = ev && ev.code === 1006 && pane.socket === ws && ws.openedAt && Date.now() - ws.openedAt > 10000;
+    const retry = dropped && (conn.protocol === 'rdp' || conn.protocol === 'vnc') && (pane.autoReconnects || 0) < 3;
     if (pane.authPending) {
       pane.authPending = false;
       closeUiDialog(null);
@@ -1756,6 +1799,23 @@ function connectToTarget(connectionId) {
         </div>
       </div>
     `;
+
+    if (retry) {
+      pane.autoReconnects = (pane.autoReconnects || 0) + 1;
+      const delay = [2, 5, 10][pane.autoReconnects - 1];
+      const note = document.createElement('p');
+      note.className = 'reconnect-note';
+      note.textContent = `Connection lost. Reconnecting in ${delay} s (attempt ${pane.autoReconnects} of 3)…`;
+      bodyEl.querySelector('.pane-empty-state')?.prepend(note);
+      setTimeout(() => {
+        // Only if the pane is still showing this disconnected session.
+        if (pane.socket || pane.conn !== conn || !document.body.contains(note)) return;
+        const prev = state.activePaneIndex;
+        state.activePaneIndex = paneIndex;
+        connectToTarget(conn.id);
+        state.activePaneIndex = prev;
+      }, delay * 1000);
+    }
   };
 
   // Branch by Protocol
@@ -2277,7 +2337,7 @@ function applySessionPrefs(p) {
 }
 
 function saveSessionPrefs() {
-  apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ sessions: sessionPrefs }) }).catch(() => {});
+  apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ sessions: sessionPrefs }) }).catch(() => {});
 }
 
 document.addEventListener('change', (e) => {
@@ -2567,7 +2627,7 @@ function applyFilesWritable() {
 async function loadFiles(path) {
   const listEl = document.getElementById('files-list');
   try {
-    const res = await apiFetch(`/api/files/list?${filesQuery(path)}`);
+    const res = await apiFetch(`api/files/list?${filesQuery(path)}`);
     if (!res.ok) {
       // Folder vanished (e.g. deleted from inside Windows): fall back to the top level.
       if (path) return loadFiles('');
@@ -2611,7 +2671,7 @@ function renderFiles(entries) {
       const meta = f.is_dir ? when : `${formatBytes(f.size)}${when ? ' • ' + when : ''}`;
       const actions = f.is_dir
         ? ''
-        : `<a href="/api/files/download?${filesQuery(f.path)}" class="pane-btn" title="Download" download>
+        : `<a href="api/files/download?${filesQuery(f.path)}" class="pane-btn" title="Download" download>
              <svg class="icon" viewBox="0 0 24 24"><path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
            </a>
            ${sshPane ? `<button class="pane-btn" title="Send to SSH host" data-action="push" data-path="${p}">
@@ -2685,7 +2745,7 @@ async function uploadFiles(files) {
   showToast(`Uploading ${files.length} file(s)...`);
 
   try {
-    const res = await apiFetch(`/api/files/upload?${filesQuery(state.filesPath)}`, {
+    const res = await apiFetch(`api/files/upload?${filesQuery(state.filesPath)}`, {
       method: 'POST',
       body: formData,
     });
@@ -2719,7 +2779,7 @@ async function createFilesFolder() {
   const name = await uiPrompt('', { title: 'New folder', placeholder: 'Folder name', okText: 'Create' });
   if (!name || !name.trim()) return;
   try {
-    const res = await apiFetch('/api/files/mkdir', {
+    const res = await apiFetch('api/files/mkdir', {
       method: 'POST',
       body: JSON.stringify({ path: state.filesPath, name: name.trim(), area: state.filesArea }),
     });
@@ -2740,7 +2800,7 @@ async function deleteFilesEntry(path, isDir) {
     : `Delete "${name}"?`;
   if (!(await uiConfirm(question, { title: isDir ? 'Delete folder' : 'Delete file', okText: 'Delete', danger: true }))) return;
   try {
-    const res = await apiFetch('/api/files/delete', {
+    const res = await apiFetch('api/files/delete', {
       method: 'POST',
       body: JSON.stringify({ path, area: state.filesArea }),
     });
@@ -2759,7 +2819,7 @@ async function loadSftpDirectory(paneIndex, path) {
   if (!pane || !pane.conn || pane.conn.protocol !== 'ssh') return;
 
   try {
-    const res = await fetch(`/api/transfers/sftp/${pane.conn.id}/list`, {
+    const res = await fetch(`api/transfers/sftp/${pane.conn.id}/list`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2842,7 +2902,7 @@ function renderSftpFiles(paneIndex, entries, currentPath) {
 async function pushFileToSftp(connectionId, filePath, remotePath) {
   showToast('Transferring file to remote server via SFTP...');
   try {
-    const res = await apiFetch(`/api/transfers/sftp/${connectionId}/upload`, {
+    const res = await apiFetch(`api/transfers/sftp/${connectionId}/upload`, {
       method: 'POST',
       body: JSON.stringify({ file_path: filePath, remote_path: remotePath, area: state.filesArea }),
     });
@@ -2862,7 +2922,7 @@ async function pushFileToSftp(connectionId, filePath, remotePath) {
 async function openUsersModal() {
   showPanel('admin-panel', 'users');
   try {
-    const res = await fetch('/api/users', {
+    const res = await fetch('api/users', {
       headers: { Authorization: `Bearer ${state.jwtToken}` },
     });
     if (res.ok) {
@@ -2932,7 +2992,7 @@ async function toggleUserStatus(userId, newActive) {
   if (!(await uiConfirm(`Are you sure you want to ${actionName} this user account?`, { title: newActive ? 'Enable user' : 'Disable user', okText: newActive ? 'Enable' : 'Disable', danger: !newActive }))) return;
 
   try {
-    const res = await apiFetch(`/api/users/${userId}`, {
+    const res = await apiFetch(`api/users/${userId}`, {
       method: 'PUT',
       body: JSON.stringify({ is_active: newActive }),
     });
@@ -2979,7 +3039,7 @@ async function handleSaveUser(e) {
   }
 
   try {
-    const res = await fetch('/api/users', {
+    const res = await fetch('api/users', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -3022,7 +3082,7 @@ async function handleSaveUser(e) {
 async function deleteUser(id) {
   if (!(await uiConfirm('Are you sure you want to delete this user?', { title: 'Delete user', okText: 'Delete', danger: true }))) return;
   try {
-    const res = await fetch(`/api/users/${id}`, {
+    const res = await fetch(`api/users/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${state.jwtToken}` },
     });
@@ -3137,7 +3197,7 @@ function closeAuditModal() { closeAdminPanel(); }
 
 // ---- Connections page ----
 async function loadAdminConnections() {
-  const res = await apiFetch('/api/connections');
+  const res = await apiFetch('api/connections');
   if (!res.ok) return;
   const list = await res.json();
   const body = document.getElementById('admin-conn-body');
@@ -3178,7 +3238,7 @@ document.addEventListener('click', async (e) => {
   if (scope) {
     const makeGlobal = !scope.dataset.global;
     if (makeGlobal && !(await uiConfirm('Every user will see this connection. Make it global?', { title: 'Make global', okText: 'Make global' }))) return;
-    const res = await apiFetch(`/api/connections/${scope.dataset.connScope}/scope`, {
+    const res = await apiFetch(`api/connections/${scope.dataset.connScope}/scope`, {
       method: 'POST',
       body: JSON.stringify({ is_global: makeGlobal }),
     });
@@ -3196,7 +3256,7 @@ document.addEventListener('click', async (e) => {
 let activityLogs = [];
 
 async function loadActivityLog() {
-  const res = await apiFetch('/api/audit-logs');
+  const res = await apiFetch('api/audit-logs');
   if (!res.ok) return;
   activityLogs = await res.json();
   const fill = (id, values, label) => {
@@ -3233,7 +3293,7 @@ function renderActivityLog() {
 
 // ---- Server page ----
 async function loadServerPage() {
-  const res = await apiFetch('/api/settings');
+  const res = await apiFetch('api/settings');
   if (!res.ok) return;
   const s = await res.json();
   document.getElementById('server-version').textContent = `Remote v${s.version}`;
@@ -3363,7 +3423,7 @@ function applyCachedTheme() {
 
 async function loadThemes() {
   try {
-    const res = await fetch('/api/themes');
+    const res = await fetch('api/themes');
     if (!res.ok) return;
     const d = await res.json();
     state.themes = d.themes || [];
@@ -3382,7 +3442,7 @@ async function loadUserTheme() {
   let pref = null;
   let sessions = null;
   try {
-    const res = await apiFetch('/api/me/preferences');
+    const res = await apiFetch('api/me/preferences');
     if (res.ok) {
       const prefs = await res.json();
       pref = prefs.theme || null;
@@ -3420,7 +3480,7 @@ async function chooseTheme(id) {
   const follow = document.getElementById('theme-follow-browser');
   if (follow) follow.checked = !id;
   try {
-    await apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: id }) });
+    await apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: id }) });
   } catch (e) {}
 }
 
@@ -3433,7 +3493,7 @@ document.addEventListener('change', (e) => {
   if (e.target && e.target.id === 'theme-follow-browser') {
     if (e.target.checked) {
       state.themePref = null;
-      apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: null }) }).catch(() => {});
+      apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ theme: null }) }).catch(() => {});
       applyThemeDef(state.themes.find((t) => t.id === browserThemeId()));
       renderThemeGrid();
     } else {
@@ -3561,7 +3621,7 @@ async function searchIcons(q) {
   const grid = document.getElementById('icon-picker-grid');
   grid.innerHTML = '<div class="dir-empty" style="grid-column:1/-1;">Searching…</div>';
   try {
-    const res = await apiFetch(`/api/icons/selfhst?q=${encodeURIComponent(q || '')}`);
+    const res = await apiFetch(`api/icons/selfhst?q=${encodeURIComponent(q || '')}`);
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
       grid.innerHTML = `<div class="dir-empty" style="grid-column:1/-1;">${escapeHtml(d.error || 'Icons unavailable')}</div>`;
@@ -3571,7 +3631,7 @@ async function searchIcons(q) {
     grid.innerHTML = d.icons.length
       ? d.icons.map((i) => `
           <button type="button" class="icon-cell ${current === 'selfhst:' + i.slug ? 'active' : ''}" data-icon-slug="${escapeHtml(i.slug)}" title="${escapeHtml(i.name)}">
-            <img src="/api/icons/selfhst/${encodeURIComponent(i.slug)}.png" alt="" loading="lazy">
+            <img src="api/icons/selfhst/${encodeURIComponent(i.slug)}.png" alt="" loading="lazy">
             <span>${escapeHtml(i.name)}</span>
           </button>`).join('')
       : '<div class="dir-empty" style="grid-column:1/-1;">No icons found.</div>';
@@ -3612,7 +3672,7 @@ async function uploadConnIcon(e) {
     const png = await imageToPng(file);
     const form = new FormData();
     form.append('icon', png, 'icon.png');
-    const res = await apiFetch('/api/icons/upload', { method: 'POST', body: form });
+    const res = await apiFetch('api/icons/upload', { method: 'POST', body: form });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
       showToast(d.error || 'Upload failed', 'danger');
@@ -3654,7 +3714,7 @@ state.groupsCache = [];
 
 async function loadGroups() {
   try {
-    const res = await apiFetch('/api/groups');
+    const res = await apiFetch('api/groups');
     if (!res.ok) return;
     state.groupsCache = await res.json();
     renderGroups();
@@ -3698,7 +3758,7 @@ document.addEventListener('click', (e) => {
 async function createGroup() {
   const name = await uiPrompt('', { title: 'New group', placeholder: 'e.g. Finance', okText: 'Create' });
   if (!name || !name.trim()) return;
-  const res = await apiFetch('/api/groups', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+  const res = await apiFetch('api/groups', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
   if (!res.ok) {
     showToast(await readError(res, 'Could not create group'), 'danger');
     return;
@@ -3710,7 +3770,7 @@ async function createGroup() {
 async function renameGroup(group) {
   const name = await uiPrompt('', { title: 'Rename group', value: group.name, okText: 'Rename' });
   if (!name || !name.trim() || name.trim() === group.name) return;
-  const res = await apiFetch(`/api/groups/${group.id}`, {
+  const res = await apiFetch(`api/groups/${group.id}`, {
     method: 'PUT',
     body: JSON.stringify({ name: name.trim(), description: group.description || null }),
   });
@@ -3727,7 +3787,7 @@ async function deleteGroup(group) {
     { title: 'Delete group', okText: 'Delete', danger: true },
   );
   if (!ok) return;
-  const res = await apiFetch(`/api/groups/${group.id}`, { method: 'DELETE' });
+  const res = await apiFetch(`api/groups/${group.id}`, { method: 'DELETE' });
   if (!res.ok) {
     showToast(await readError(res, 'Could not delete group'), 'danger');
     return;
@@ -3763,7 +3823,7 @@ function closeGroupMembers() {
 async function saveGroupMembers() {
   if (!membersTarget) return;
   const user_ids = [...document.querySelectorAll('#group-members-list input:checked')].map((i) => i.value);
-  const res = await apiFetch(`/api/groups/${membersTarget.id}/members`, {
+  const res = await apiFetch(`api/groups/${membersTarget.id}/members`, {
     method: 'PUT',
     body: JSON.stringify({ user_ids }),
   });
@@ -3823,7 +3883,7 @@ async function prepareAssignments(conn) {
   if (!isAdm) return;
 
   try {
-    const [uRes, gRes] = await Promise.all([apiFetch('/api/users'), apiFetch('/api/groups')]);
+    const [uRes, gRes] = await Promise.all([apiFetch('api/users'), apiFetch('api/groups')]);
     if (uRes.ok) state.usersCache = await uRes.json();
     if (gRes.ok) state.groupsCache = await gRes.json();
   } catch (e) {}
@@ -3835,7 +3895,7 @@ async function prepareAssignments(conn) {
 
   if (conn) {
     try {
-      const res = await apiFetch(`/api/connections/${conn.id}/permissions`);
+      const res = await apiFetch(`api/connections/${conn.id}/permissions`);
       if (res.ok) {
         const d = await res.json();
         d.grants.forEach((g) => addAssignmentRow(g));
@@ -3886,7 +3946,7 @@ async function saveAssignments(connId) {
       can_transfer: row.querySelector('.assign-transfer').checked,
     });
   }
-  const res = await apiFetch(`/api/connections/${connId}/permissions`, {
+  const res = await apiFetch(`api/connections/${connId}/permissions`, {
     method: 'PUT',
     body: JSON.stringify({ grants }),
   });
@@ -3902,7 +3962,7 @@ let minPasswordLength = 12;
 
 async function loadPasswordPolicy() {
   try {
-    const res = await fetch('/api/auth/providers');
+    const res = await fetch('api/auth/providers');
     if (!res.ok) return;
     const d = await res.json();
     if (d.min_password_length) minPasswordLength = d.min_password_length;
@@ -3912,11 +3972,17 @@ async function loadPasswordPolicy() {
   });
 }
 
+/** The folder Remote is served from ("/" or e.g. "/remote/"), so the login cookie
+ *  stays with Remote when other apps share the same address behind a proxy. */
+function cookiePath() {
+  return location.pathname.replace(/[^/]*$/, '') || '/';
+}
+
 function setSessionToken(token) {
   state.jwtToken = token;
   localStorage.setItem('remote_token', token);
   localStorage.setItem('remotedog_token', token);
-  document.cookie = `remote_token=${token}; path=/; max-age=86400; SameSite=Lax`;
+  document.cookie = `remote_token=${token}; path=${cookiePath()}; max-age=86400; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
 }
 
 /** Client-side check matching the server's rules. Returns an error message or null. */
@@ -3931,7 +3997,7 @@ function passwordProblem(password, again, username, current) {
 
 async function changeOwnPassword(current, next) {
   try {
-    const res = await apiFetch('/api/auth/change-password', {
+    const res = await apiFetch('api/auth/change-password', {
       method: 'POST',
       body: JSON.stringify({ current_password: current, new_password: next }),
     });
@@ -4068,7 +4134,7 @@ async function submitPasswordReset() {
   }
   const target = pwResetTarget;
   try {
-    const res = await apiFetch(`/api/users/${target.id}/reset-password`, {
+    const res = await apiFetch(`api/users/${target.id}/reset-password`, {
       method: 'POST',
       body: JSON.stringify(body),
     });
@@ -4341,7 +4407,7 @@ function savePanePrefs() {
       glow: localStorage.getItem(PANE_KEYS.glow) || 'subtle',
       angle: localStorage.getItem(PANE_KEYS.angle) || '45deg',
     };
-    apiFetch('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ panes }) }).catch(() => {});
+    apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ panes }) }).catch(() => {});
   }, 400);
 }
 
@@ -4738,7 +4804,7 @@ function openPaneKbdMenu(e, paneIndex) {
 /** Load the session policy and 2FA state for the signed-in user, then watch for idleness. */
 async function refreshSessionInfo() {
   try {
-    const res = await apiFetch('/api/auth/me');
+    const res = await apiFetch('api/auth/me');
     if (!res.ok) return;
     const me = await res.json();
     state.currentUser = Object.assign(state.currentUser || {}, me);
@@ -4763,7 +4829,7 @@ function noteActivity(force = false) {
   if (!state.jwtToken) return;
   if (force || idleWatch.lastInput - idleWatch.lastBeat > ACTIVITY_BEAT_MS) {
     idleWatch.lastBeat = idleWatch.lastInput;
-    apiFetch('/api/auth/activity', { method: 'POST' }).catch(() => {});
+    apiFetch('api/auth/activity', { method: 'POST' }).catch(() => {});
   }
 }
 
@@ -4831,7 +4897,7 @@ async function openTwoFactorSetup(forced = false) {
   overlay.style.display = 'flex';
 
   try {
-    const res = await apiFetch('/api/me/2fa/setup', { method: 'POST' });
+    const res = await apiFetch('api/me/2fa/setup', { method: 'POST' });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
       document.getElementById('tf-qr').innerHTML = '';
@@ -4876,7 +4942,7 @@ async function submitTwoFactorSetup() {
   }
   errEl.textContent = '';
   try {
-    const res = await apiFetch('/api/me/2fa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+    const res = await apiFetch('api/me/2fa/enable', { method: 'POST', body: JSON.stringify({ code }) });
     const d = await res.json().catch(() => ({}));
     if (!res.ok) {
       errEl.textContent = d.error || 'That code is not valid';
@@ -5006,7 +5072,7 @@ async function loadSecurityPage() {
   if (!body) return;
   let st;
   try {
-    const res = await apiFetch('/api/me/2fa');
+    const res = await apiFetch('api/me/2fa');
     if (!res.ok) return;
     st = await res.json();
   } catch (e) { return; }
@@ -5044,7 +5110,7 @@ function renewRecoveryCodes() {
     message: 'Your old recovery codes stop working. Confirm with your password and a code from your app.',
     okText: 'Make new codes',
     run: async (password, code) => {
-      const res = await apiFetch('/api/me/2fa/recovery-codes', { method: 'POST', body: JSON.stringify({ password, code }) });
+      const res = await apiFetch('api/me/2fa/recovery-codes', { method: 'POST', body: JSON.stringify({ password, code }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) return d.error || 'Could not make new codes';
       showRecoveryCodes(d.recovery_codes || []);
@@ -5060,7 +5126,7 @@ function turnOffTwoFactor() {
     okText: 'Turn off',
     danger: true,
     run: async (password, code) => {
-      const res = await apiFetch('/api/me/2fa/disable', { method: 'POST', body: JSON.stringify({ password, code }) });
+      const res = await apiFetch('api/me/2fa/disable', { method: 'POST', body: JSON.stringify({ password, code }) });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) return d.error || 'Could not turn it off';
       if (state.currentUser) state.currentUser.two_factor_enabled = false;
@@ -5077,7 +5143,7 @@ async function loadAdminSecurity() {
   if (!body) return;
   let p, users = [];
   try {
-    const [pr, ur] = await Promise.all([apiFetch('/api/admin/security-policy'), apiFetch('/api/users')]);
+    const [pr, ur] = await Promise.all([apiFetch('api/admin/security-policy'), apiFetch('api/users')]);
     if (!pr.ok) return;
     p = await pr.json();
     if (ur.ok) users = await ur.json();
@@ -5133,7 +5199,7 @@ async function saveSecurityPolicy() {
     return;
   }
   errEl.textContent = '';
-  const res = await apiFetch('/api/admin/security-policy', { method: 'PUT', body: JSON.stringify(policy) });
+  const res = await apiFetch('api/admin/security-policy', { method: 'PUT', body: JSON.stringify(policy) });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) {
     errEl.textContent = d.error || 'Could not save';
@@ -5153,7 +5219,7 @@ async function saveSecurityPolicy() {
 
 async function resetUserTwoFactor(id, username) {
   if (!(await uiConfirm(`Turn off two-factor authentication for ${username}? Their current logins end, and they can set it up again (or must, if their role requires it).`, { title: 'Reset 2FA', okText: 'Reset 2FA', danger: true }))) return;
-  const res = await apiFetch(`/api/users/${encodeURIComponent(id)}/reset-2fa`, { method: 'POST' });
+  const res = await apiFetch(`api/users/${encodeURIComponent(id)}/reset-2fa`, { method: 'POST' });
   const d = await res.json().catch(() => ({}));
   if (!res.ok) {
     showToast(d.error || 'Could not reset 2FA', 'danger');

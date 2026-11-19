@@ -682,6 +682,14 @@
             </div>
             <div id="login-error" class="login-error-msg" style="display: none;"></div>
 
+            <!-- Signed in by a trusted reverse proxy (forward auth) -->
+            <div id="header-login-section" style="display: none; margin-top: 12px;">
+              <button type="button" class="btn btn-secondary btn-block" onclick="tryHeaderLogin(true)" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border-radius:6px;font-size:12px;">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                <span>Continue with your proxy sign-in</span>
+              </button>
+            </div>
+
             <!-- Single Sign-On (Authentik / OIDC) -->
             <div id="oidc-login-section" style="display: none; margin-top: 12px;">
               <div class="divider-text" style="text-align:center;margin:12px 0;position:relative;">

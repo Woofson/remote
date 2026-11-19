@@ -69,6 +69,7 @@ pub async fn handle_telnet_session(
 
     let (mut tcp_read, mut tcp_write) = stream.into_split();
     let (ws_sender_tx, mut ws_sender_rx) = mpsc::channel::<Message>(256);
+    super::spawn_keepalive(&ws_sender_tx);
     let (tcp_sender_tx, mut tcp_sender_rx) = mpsc::channel::<Vec<u8>>(256);
 
     let is_running = Arc::new(AtomicBool::new(true));

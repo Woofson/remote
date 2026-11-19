@@ -26,6 +26,12 @@ pub struct ServerConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub jwt_secret: String,
     pub token_expiry_hours: i64,
+    /// Sub-path when Remote is served under one, e.g. "/remote". Empty = served at "/".
+    #[serde(default)]
+    pub base_path: String,
+    /// Reverse proxies whose forwarded headers are believed (IP addresses or CIDR ranges).
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
 }
 
 impl Default for ServerConfig {
@@ -35,7 +41,17 @@ impl Default for ServerConfig {
             data_dir: "./data".to_string(),
             jwt_secret: String::new(),
             token_expiry_hours: 24,
+            base_path: String::new(),
+            trusted_proxies: Vec::new(),
         }
+    }
+}
+
+impl ServerConfig {
+    /// `base_path` cleaned up: "" or "/remote" (leading slash, no trailing slash).
+    pub fn base(&self) -> String {
+        let t = self.base_path.trim().trim_matches('/');
+        if t.is_empty() { String::new() } else { format!("/{}", t) }
     }
 }
 
@@ -64,6 +80,39 @@ pub struct AuthConfig {
     /// Minimum length for local account passwords.
     #[serde(default = "default_min_password_length")]
     pub min_password_length: usize,
+    /// Sign users in from headers set by a trusted reverse proxy (Authelia, Authentik
+    /// forward auth). Only requests from `server.trusted_proxies` are believed.
+    #[serde(default)]
+    pub header_login: HeaderLoginConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeaderLoginConfig {
+    pub enabled: bool,
+    /// Header with the signed-in username.
+    pub username_header: String,
+    pub email_header: String,
+    pub name_header: String,
+    /// Header with the user's groups (comma or pipe separated).
+    pub groups_header: String,
+    /// Members of this group become admins; of the operator group, operators.
+    pub admin_group: String,
+    pub operator_group: String,
+}
+
+impl Default for HeaderLoginConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            username_header: "Remote-User".into(),
+            email_header: "Remote-Email".into(),
+            name_header: "Remote-Name".into(),
+            groups_header: "Remote-Groups".into(),
+            admin_group: "Remote-Admins".into(),
+            operator_group: "Remote-Operators".into(),
+        }
+    }
 }
 
 fn default_min_password_length() -> usize {
@@ -77,6 +126,7 @@ impl Default for AuthConfig {
             allow_pam_login: false,
             default_role: "viewer".to_string(),
             min_password_length: default_min_password_length(),
+            header_login: HeaderLoginConfig::default(),
         }
     }
 }
