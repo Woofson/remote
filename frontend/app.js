@@ -1655,7 +1655,7 @@ function connectToTarget(connectionId) {
     : '';
 
   titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
-  protoBadge.textContent = conn.protocol.toUpperCase();
+  protoBadge.textContent = PROTOCOL_LABELS[conn.protocol] || conn.protocol.toUpperCase();
   protoBadge.style.display = 'inline-block';
   statsEl.style.display = 'inline-block';
   statsEl.textContent = 'Connecting...';
@@ -3155,7 +3155,7 @@ async function loadAdminConnections() {
     .map((c) => `
       <tr>
         <td><span style="display:inline-flex;align-items:center;gap:8px;">${connIconHtml(c.icon, c.protocol, 'conn-icon-sm')}<strong>${escapeHtml(c.name)}</strong></span></td>
-        <td><span class="pane-protocol-badge">${c.protocol.toUpperCase()}</span> <code>${c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`}</code></td>
+        <td><span class="pane-protocol-badge">${PROTOCOL_LABELS[c.protocol] || c.protocol.toUpperCase()}</span> <code>${c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`}</code></td>
         <td>${c.is_global ? '<span class="text-danger" style="font-weight:700;">Global</span>' : 'Private'}</td>
         <td>${c.owner_name ? escapeHtml(c.owner_name) : '—'}</td>
         <td class="text-muted text-sm">${c.assigned_to && c.assigned_to.length ? c.assigned_to.map(escapeHtml).join(', ') : '—'}</td>
