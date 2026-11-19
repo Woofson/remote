@@ -24,6 +24,21 @@ pub struct User {
     pub avatar_data: Option<String>,
 }
 
+/// Stored two-factor state for one user.
+#[derive(Debug, Clone, Default)]
+pub struct TwoFactorRecord {
+    pub secret_enc: Option<String>,
+    pub pending_enc: Option<String>,
+    pub last_step: i64,
+    pub recovery_hashes: Vec<String>,
+}
+
+impl TwoFactorRecord {
+    pub fn enabled(&self) -> bool {
+        self.secret_enc.is_some()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserSafe {
     pub id: String,
@@ -341,6 +356,12 @@ impl Database {
             )",
             [],
         )?;
+        // Two-factor authentication (#26): encrypted TOTP secret, a pending secret during
+        // setup, the last accepted time step (no code reuse) and hashed recovery codes.
+        let _ = conn.execute("ALTER TABLE user_security ADD COLUMN totp_secret_enc TEXT", []);
+        let _ = conn.execute("ALTER TABLE user_security ADD COLUMN totp_pending_enc TEXT", []);
+        let _ = conn.execute("ALTER TABLE user_security ADD COLUMN totp_last_step INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE user_security ADD COLUMN recovery_codes TEXT", []);
 
         Ok(())
     }
@@ -389,6 +410,105 @@ impl Database {
             )
             .optional()?;
         Ok(row.unwrap_or((0, false)))
+    }
+
+    /// A user's two-factor state; empty when they never set it up.
+    pub fn get_two_factor(&self, user_id: &str) -> SqlResult<TwoFactorRecord> {
+        let conn = self.conn.lock();
+        let row = conn
+            .query_row(
+                "SELECT totp_secret_enc, totp_pending_enc, totp_last_step, recovery_codes
+                 FROM user_security WHERE user_id = ?1",
+                params![user_id],
+                |r| {
+                    let codes: Option<String> = r.get(3)?;
+                    Ok(TwoFactorRecord {
+                        secret_enc: r.get(0)?,
+                        pending_enc: r.get(1)?,
+                        last_step: r.get(2)?,
+                        recovery_hashes: codes
+                            .and_then(|c| serde_json::from_str(&c).ok())
+                            .unwrap_or_default(),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row.unwrap_or_default())
+    }
+
+    /// Store a new secret that is not active until the user confirms a code.
+    pub fn set_totp_pending(&self, user_id: &str, pending_enc: &str) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "INSERT INTO user_security (user_id, totp_pending_enc) VALUES (?1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET totp_pending_enc = ?2",
+            params![user_id, pending_enc],
+        )?;
+        Ok(())
+    }
+
+    /// Turn 2FA on with the confirmed secret and fresh recovery codes.
+    pub fn enable_totp(&self, user_id: &str, secret_enc: &str, recovery_hashes: &[String], step: i64) -> SqlResult<()> {
+        let codes = serde_json::to_string(recovery_hashes).unwrap_or_else(|_| "[]".into());
+        self.conn.lock().execute(
+            "INSERT INTO user_security (user_id, totp_secret_enc, totp_pending_enc, totp_last_step, recovery_codes)
+             VALUES (?1, ?2, NULL, ?3, ?4)
+             ON CONFLICT(user_id) DO UPDATE SET
+                totp_secret_enc = ?2, totp_pending_enc = NULL, totp_last_step = ?3, recovery_codes = ?4",
+            params![user_id, secret_enc, step, codes],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_totp_last_step(&self, user_id: &str, step: i64) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "UPDATE user_security SET totp_last_step = ?2 WHERE user_id = ?1",
+            params![user_id, step],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_recovery_codes(&self, user_id: &str, recovery_hashes: &[String]) -> SqlResult<()> {
+        let codes = serde_json::to_string(recovery_hashes).unwrap_or_else(|_| "[]".into());
+        self.conn.lock().execute(
+            "UPDATE user_security SET recovery_codes = ?2 WHERE user_id = ?1",
+            params![user_id, codes],
+        )?;
+        Ok(())
+    }
+
+    /// Turn 2FA off and forget the secret and recovery codes.
+    pub fn disable_totp(&self, user_id: &str) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "UPDATE user_security SET totp_secret_enc = NULL, totp_pending_enc = NULL,
+                totp_last_step = 0, recovery_codes = NULL WHERE user_id = ?1",
+            params![user_id],
+        )?;
+        Ok(())
+    }
+
+    /// IDs of users who have 2FA turned on.
+    pub fn two_factor_user_ids(&self) -> SqlResult<std::collections::HashSet<String>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT user_id FROM user_security WHERE totp_secret_enc IS NOT NULL")?;
+        let ids = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<SqlResult<_>>()?;
+        Ok(ids)
+    }
+
+    /// A server-wide setting stored in the database (JSON text), if set.
+    pub fn get_setting(&self, key: &str) -> SqlResult<Option<String>> {
+        self.conn
+            .lock()
+            .query_row("SELECT value FROM system_settings WHERE key = ?1", params![key], |r| r.get(0))
+            .optional()
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> SqlResult<()> {
+        self.conn.lock().execute(
+            "INSERT INTO system_settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = ?2",
+            params![key, value],
+        )?;
+        Ok(())
     }
 
     /// End every existing login of this user.

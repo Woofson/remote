@@ -1,3 +1,6 @@
+pub mod policy;
+pub mod totp;
+
 use crate::config::OidcConfig;
 use crate::db::User;
 use aes_gcm::aead::{Aead, KeyInit};
@@ -23,6 +26,56 @@ pub struct Claims {
     /// The user's session generation when issued; a newer generation ends this login.
     #[serde(default)]
     pub gen: i64,
+    /// Random ID of this login, used for idle timeout and the lock screen.
+    #[serde(default)]
+    pub sid: String,
+}
+
+/// Short-lived proof that the password was right and a 2FA code is still needed.
+/// Signed with a different key than login tokens, so it can never be used as one.
+#[derive(Debug, Serialize, Deserialize)]
+struct TwoFactorChallenge {
+    sub: String,
+    purpose: String,
+    gen: i64,
+    exp: usize,
+}
+
+const CHALLENGE_MINUTES: i64 = 5;
+
+fn challenge_key(secret: &str) -> Vec<u8> {
+    format!("{}|two-factor-challenge", secret).into_bytes()
+}
+
+pub fn create_2fa_challenge(user_id: &str, gen: i64, secret: &str) -> Result<String, String> {
+    let claims = TwoFactorChallenge {
+        sub: user_id.to_string(),
+        purpose: "2fa".into(),
+        gen,
+        exp: (Utc::now() + Duration::minutes(CHALLENGE_MINUTES)).timestamp() as usize,
+    };
+    encode(&Header::default(), &claims, &EncodingKey::from_secret(&challenge_key(secret)))
+        .map_err(|e| format!("JWT encoding error: {}", e))
+}
+
+/// Returns (user id, session generation) of a valid, unexpired challenge.
+pub fn verify_2fa_challenge(token: &str, secret: &str) -> Result<(String, i64), String> {
+    let data = decode::<TwoFactorChallenge>(
+        token,
+        &DecodingKey::from_secret(&challenge_key(secret)),
+        &Validation::default(),
+    )
+    .map_err(|_| "The sign-in step expired, please enter your password again".to_string())?;
+    if data.claims.purpose != "2fa" {
+        return Err("Invalid sign-in step".into());
+    }
+    Ok((data.claims.sub, data.claims.gen))
+}
+
+fn new_session_id() -> String {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).expect("OS random source");
+    hex::encode(b)
 }
 
 pub fn hash_password(password: &str) -> Result<String, String> {
@@ -92,6 +145,7 @@ pub fn create_jwt(user: &User, secret: &str, expiry_hours: i64, gen: i64) -> Res
         exp,
         iat,
         gen,
+        sid: new_session_id(),
     };
 
     encode(

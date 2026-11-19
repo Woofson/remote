@@ -1,3 +1,4 @@
+use crate::auth::policy::{LoginLimiter, SecurityPolicy, SessionStatus, SessionTracker};
 use crate::auth::{
     check_password_policy, create_jwt, decrypt_secret, encrypt_secret, generate_password,
     hash_password, verify_jwt, verify_password, Claims, OidcService,
@@ -33,6 +34,8 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+mod security;
+
 #[derive(RustEmbed)]
 #[folder = "frontend/"]
 pub struct FrontendAssets;
@@ -45,6 +48,25 @@ pub struct AppState {
     pub themes: Arc<Vec<crate::themes::ThemeDefinition>>,
     pub icons: Arc<crate::icons::IconStore>,
     pub oidc_service: Arc<OidcService>,
+    /// Admin session rules (login lifetime, idle timeout, 2FA), cached from the database.
+    pub policy: Arc<RwLock<SecurityPolicy>>,
+    /// Live login state: idle time and lock screen.
+    pub sessions: Arc<SessionTracker>,
+    /// Brake on repeated failed sign-in attempts.
+    pub limiter: Arc<LoginLimiter>,
+}
+
+/// Database key of the admin session policy.
+pub const SECURITY_POLICY_KEY: &str = "security_policy";
+
+/// Load the session policy from the database, or defaults (lifetime from config.toml).
+pub fn load_security_policy(db: &Database, default_lifetime_hours: i64) -> SecurityPolicy {
+    db.get_setting(SECURITY_POLICY_KEY)
+        .ok()
+        .flatten()
+        .and_then(|v| serde_json::from_str::<SecurityPolicy>(&v).ok())
+        .filter(|p| p.validate().is_ok())
+        .unwrap_or_else(|| SecurityPolicy::with_default_lifetime(default_lifetime_hours))
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -59,6 +81,20 @@ pub fn create_router(state: AppState) -> Router {
         // Auth API
         .route("/api/auth/login", post(api_login))
         .route("/api/auth/logout", post(api_logout))
+        .route("/api/auth/login/2fa", post(security::api_login_2fa))
+        .route("/api/auth/lock", post(security::api_lock))
+        .route("/api/auth/unlock", post(security::api_unlock))
+        .route("/api/auth/activity", post(security::api_activity))
+        .route("/api/me/2fa", get(security::api_2fa_status))
+        .route("/api/me/2fa/setup", post(security::api_2fa_setup))
+        .route("/api/me/2fa/enable", post(security::api_2fa_enable))
+        .route("/api/me/2fa/disable", post(security::api_2fa_disable))
+        .route("/api/me/2fa/recovery-codes", post(security::api_2fa_recovery_codes))
+        .route("/api/users/:id/reset-2fa", post(security::api_reset_user_2fa))
+        .route(
+            "/api/admin/security-policy",
+            get(security::api_get_security_policy).put(security::api_set_security_policy),
+        )
         .route("/api/auth/me", get(api_me))
         .route("/api/auth/providers", get(api_auth_providers))
         .route("/api/version", get(api_version))
@@ -150,10 +186,24 @@ fn auth_err(code: StatusCode, msg: &str) -> (StatusCode, Json<Value>) {
     (code, Json(json!({ "error": msg })))
 }
 
+/// Which "waiting" states a request may pass through.
+#[derive(Clone, Copy, Default)]
+struct AuthOpts {
+    /// Let through accounts that must still change their password or set up 2FA.
+    allow_pending: bool,
+    /// Let through logins whose screen is locked.
+    allow_locked: bool,
+}
+
+fn coded_err(code: StatusCode, err_code: &str, msg: &str) -> (StatusCode, Json<Value>) {
+    (code, Json(json!({ "error": msg, "code": err_code })))
+}
+
 /// Verify a login token and the account's live state: it must still exist, be active,
 /// and the login must not have been ended by a password change, reset, disable or role change.
-/// Unless `allow_pending`, a required password change blocks everything else.
-fn authenticate_token(state: &AppState, token: &str, allow_pending: bool) -> Result<Claims, (StatusCode, Json<Value>)> {
+/// The admin session policy applies too: maximum login lifetime, idle timeout and lock screen.
+/// Unless allowed, a required password change or 2FA setup blocks everything else.
+fn authenticate(state: &AppState, token: &str, opts: AuthOpts) -> Result<Claims, (StatusCode, Json<Value>)> {
     let secret = state.config.read().server.jwt_secret.clone();
     let claims = verify_jwt(token, &secret).map_err(|e| auth_err(StatusCode::UNAUTHORIZED, &e))?;
 
@@ -173,30 +223,73 @@ fn authenticate_token(state: &AppState, token: &str, allow_pending: bool) -> Res
     if claims.gen != generation {
         return Err(auth_err(StatusCode::UNAUTHORIZED, "Session has ended, please log in again"));
     }
-    if must_change && !allow_pending {
-        return Err((
+
+    let policy = state.policy.read().clone();
+    let age = chrono::Utc::now().timestamp() - claims.iat as i64;
+    if age > policy.max_login_hours * 3600 {
+        return Err(coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Your login has expired, please sign in again"));
+    }
+    match state.sessions.check(&claims.sid, &policy) {
+        SessionStatus::Expired => {
+            return Err(coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Signed out after inactivity, please sign in again"));
+        }
+        SessionStatus::Locked if !opts.allow_locked => {
+            return Err(coded_err(StatusCode::LOCKED, "session_locked", "The session is locked"));
+        }
+        _ => {}
+    }
+
+    if must_change && !opts.allow_pending {
+        return Err(coded_err(
             StatusCode::FORBIDDEN,
-            Json(json!({
-                "error": "You must choose a new password before continuing",
-                "code": "password_change_required",
-            })),
+            "password_change_required",
+            "You must choose a new password before continuing",
+        ));
+    }
+    if !opts.allow_pending
+        && user.auth_provider == "local"
+        && policy.requires_2fa(&user.role)
+        && !state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false)
+    {
+        return Err(coded_err(
+            StatusCode::FORBIDDEN,
+            "two_factor_setup_required",
+            "Set up two-factor authentication before continuing",
         ));
     }
     Ok(claims)
 }
 
-fn extract_claims(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
+fn authenticate_token(state: &AppState, token: &str, allow_pending: bool) -> Result<Claims, (StatusCode, Json<Value>)> {
+    authenticate(state, token, AuthOpts { allow_pending, allow_locked: false })
+}
+
+fn extract_with(state: &AppState, headers: &HeaderMap, opts: AuthOpts) -> Result<Claims, (StatusCode, Json<Value>)> {
     let token = token_from_headers(headers)
         .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Authentication token missing or invalid"))?;
-    authenticate_token(state, &token, false)
+    authenticate(state, &token, opts)
+}
+
+fn extract_claims(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
+    extract_with(state, headers, AuthOpts::default())
 }
 
 /// Like [`extract_claims`], but also lets through accounts that must change their password
-/// (only for: who am I, log out, change password).
+/// or set up 2FA, and locked logins (only for: who am I, log out, change password,
+/// lock, unlock, activity).
 fn extract_claims_pending(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
-    let token = token_from_headers(headers)
-        .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Authentication token missing or invalid"))?;
-    authenticate_token(state, &token, true)
+    extract_with(state, headers, AuthOpts { allow_pending: true, allow_locked: true })
+}
+
+/// For 2FA setup: lets through accounts that must set up 2FA, but never a locked login
+/// (someone at an unattended screen must not be able to tie the account to their phone).
+fn extract_claims_setup(state: &AppState, headers: &HeaderMap) -> Result<Claims, (StatusCode, Json<Value>)> {
+    extract_with(state, headers, AuthOpts { allow_pending: true, allow_locked: false })
+}
+
+/// Login lifetime for new tokens, from the admin policy.
+fn login_hours(state: &AppState) -> i64 {
+    state.policy.read().max_login_hours
 }
 
 // ================= Auth Handlers =================
@@ -222,11 +315,25 @@ pub async fn api_login(
             )
         })?;
 
+    if let Some(wait) = state.limiter.blocked_for(&payload.username) {
+        return Err(security::too_many_attempts(wait));
+    }
+
     // Check the password first so the reply never reveals whether an account exists or is disabled.
     let password = payload.password.unwrap_or_default();
     let user = match user_opt {
         Some(u) if u.auth_provider == "local" && verify_password(&password, &u.password_hash) => u,
-        _ => {
+        other => {
+            state.limiter.record_failure(&payload.username);
+            state.db.log_audit(
+                other.as_ref().map(|u| u.id.as_str()),
+                &payload.username,
+                "LOGIN_FAILED",
+                None,
+                None,
+                Some("Wrong username or password"),
+                None,
+            );
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(json!({ "error": "Invalid username or password" })),
@@ -245,7 +352,16 @@ pub async fn api_login(
         .db
         .get_user_security(&user.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
-    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
+
+    // With 2FA on, the password only earns a short-lived ticket for the code step.
+    if state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false) {
+        let challenge = crate::auth::create_2fa_challenge(&user.id, generation, &cfg.server.jwt_secret)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
+        return Ok(Json(json!({ "two_factor_required": true, "challenge": challenge })));
+    }
+
+    state.limiter.record_success(&user.username);
+    let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
     let _ = state.db.update_last_login(&user.id);
@@ -259,15 +375,24 @@ pub async fn api_login(
         None,
     );
 
+    let setup_required = state.policy.read().requires_2fa(&user.role);
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({
         "token": token,
         "user": safe_user,
         "must_change_password": must_change,
+        "two_factor_setup_required": setup_required,
     })))
 }
 
-pub async fn api_logout() -> Json<Value> {
+/// Log out: forget this login's idle/lock state (the browser drops the token).
+pub async fn api_logout(State(state): State<AppState>, headers: HeaderMap) -> Json<Value> {
+    if let Some(token) = token_from_headers(&headers) {
+        let secret = state.config.read().server.jwt_secret.clone();
+        if let Ok(claims) = verify_jwt(&token, &secret) {
+            state.sessions.end(&claims.sid);
+        }
+    }
     Json(json!({ "message": "Logged out successfully" }))
 }
 
@@ -302,13 +427,23 @@ pub async fn api_me(
 
     let (_, must_change) = state.db.get_user_security(&user.id).unwrap_or((0, false));
     let can_change_password = user.auth_provider == "local";
+    let policy = state.policy.read().clone();
+    let two_factor = state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false);
+    let setup_required = can_change_password && policy.requires_2fa(&user.role) && !two_factor;
     let mut body = json!(UserSafe::from(user));
     body["must_change_password"] = json!(must_change);
     body["can_change_password"] = json!(can_change_password);
+    body["two_factor_enabled"] = json!(two_factor);
+    body["two_factor_setup_required"] = json!(setup_required);
+    body["session_policy"] = json!({
+        "max_login_hours": policy.max_login_hours,
+        "idle_minutes": policy.idle_minutes,
+        "idle_action": policy.idle_action,
+        "lock_requires_2fa": policy.lock_requires_2fa,
+    });
     Ok(Json(body))
 }
 
-/// Public: the running version, from Cargo.toml (single source of truth).
 /// Login shells installed on the server, for the local shell's Shell choice.
 pub async fn api_list_shells(
     State(state): State<AppState>,
@@ -318,6 +453,7 @@ pub async fn api_list_shells(
     Ok(Json(json!({ "shells": available_shells() })))
 }
 
+/// Public: the running version, from Cargo.toml (single source of truth).
 pub async fn api_version() -> Json<Value> {
     Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
 }
@@ -452,7 +588,7 @@ pub async fn api_oidc_callback(
         .db
         .get_user_security(&user.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
-    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
+    let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
 
     let html = format!(
@@ -483,7 +619,7 @@ pub async fn api_oidc_callback(
 pub async fn api_list_users(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> Result<Json<Vec<UserSafe>>, (StatusCode, Json<Value>)> {
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let claims = extract_claims(&state, &headers)?;
     if claims.role != "admin" {
         return Err((
@@ -498,7 +634,17 @@ pub async fn api_list_users(
             Json(json!({ "error": e.to_string() })),
         )
     })?;
-    Ok(Json(users))
+    let with_2fa = state.db.two_factor_user_ids().unwrap_or_default();
+    let list: Vec<Value> = users
+        .into_iter()
+        .map(|u| {
+            let on = with_2fa.contains(&u.id);
+            let mut v = json!(u);
+            v["two_factor"] = json!(on);
+            v
+        })
+        .collect();
+    Ok(Json(Value::Array(list)))
 }
 
 #[derive(Deserialize)]
@@ -748,7 +894,7 @@ pub async fn api_change_password(
     state.db.log_audit(Some(&user.id), &user.username, "PASSWORD_CHANGED", None, None, None, None);
 
     let (generation, _) = state.db.get_user_security(&user.id).unwrap_or((0, false));
-    let token = create_jwt(&user, &cfg.server.jwt_secret, cfg.server.token_expiry_hours, generation)
+    let token = create_jwt(&user, &cfg.server.jwt_secret, login_hours(&state), generation)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
     Ok(Json(json!({ "message": "Password changed", "token": token })))
 }
@@ -2097,6 +2243,8 @@ pub async fn api_get_settings(
             "global_connections": global,
             "global_local_shell": global_local_shell,
             "themes": state.themes.len(),
+            "local_users_without_2fa": security::local_users_without_2fa(&state),
+            "require_2fa_roles": state.policy.read().require_2fa_roles.clone(),
         },
         "auth": {
             "allow_local_login": cfg.auth.allow_local_login,
@@ -2107,7 +2255,7 @@ pub async fn api_get_settings(
         "server": {
             "bind_address": cfg.server.bind_address,
             "data_dir": cfg.server.data_dir,
-            "token_expiry_hours": cfg.server.token_expiry_hours,
+            "token_expiry_hours": state.policy.read().max_login_hours,
         },
         "storage": {
             "staging_dir": cfg.storage.staging_dir,

@@ -69,6 +69,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     ]));
     info!("Themes: {} available", themes.len());
 
+    let policy = remoted::server::load_security_policy(&db, config.server.token_expiry_hours);
+    let sessions = Arc::new(remoted::auth::policy::SessionTracker::default());
     let app_state = AppState {
         config: Arc::new(RwLock::new(config.clone())),
         db,
@@ -76,7 +78,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         themes,
         icons: Arc::new(remoted::icons::IconStore::new(Path::new(&config.server.data_dir))),
         oidc_service,
+        policy: Arc::new(RwLock::new(policy)),
+        sessions: sessions.clone(),
+        limiter: Arc::new(remoted::auth::policy::LoginLimiter::default()),
     };
+
+    // Forget idle/lock state of logins that cannot be alive any more.
+    let prune_policy = app_state.policy.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            tick.tick().await;
+            let hours = prune_policy.read().max_login_hours.max(1) as u64;
+            sessions.prune(std::time::Duration::from_secs(hours * 3600));
+        }
+    });
 
     let router = create_router(app_state);
 

@@ -1,6 +1,6 @@
 [package]
 name = "remoted"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 authors = ["Bolt J Woofson <bolt@boop.no>"]
 description = "High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Multi-Pane HTML5 Canvas & Woofson UI"
@@ -48,6 +48,11 @@ hex = "0.4"
 sha2 = "0.10"
 aes-gcm = "0.10"
 getrandom = "0.2"
+# Two-factor authentication (TOTP): HMAC-SHA1 codes, base32 secrets, QR code for setup
+hmac = "0.13"
+sha1 = "0.11"
+data-encoding = "2.6"
+qrcodegen = "1.8"
 tempfile = "3.16"
 libc = "0.2"
 dirs = "5.0"

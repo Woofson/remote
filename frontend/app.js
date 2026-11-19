@@ -197,9 +197,13 @@ async function apiFetch(url, options = {}) {
     headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(url, Object.assign({}, options, { headers }));
-  if (res.status === 403) {
+  if (res.status === 403 || res.status === 401 || res.status === 423) {
     res.clone().json().then((d) => {
-      if (d && d.code === 'password_change_required') showPasswordRequired();
+      if (!d || !d.code) return;
+      if (d.code === 'password_change_required') showPasswordRequired();
+      else if (d.code === 'two_factor_setup_required') openTwoFactorSetup(true);
+      else if (d.code === 'session_locked') lockSession(true);
+      else if (d.code === 'session_expired') sessionExpired(d.error);
     }).catch(() => {});
   }
   return res;
@@ -247,11 +251,7 @@ async function checkAuth() {
 
     if (res.ok) {
       state.currentUser = await res.json();
-      if (state.currentUser.must_change_password) {
-        showPasswordRequired();
-      } else {
-        onAuthenticated();
-      }
+      continueAfterLogin();
     } else {
       showLoginModal();
     }
@@ -356,6 +356,8 @@ function updateHeaderProfile(user) {
 }
 
 function onAuthenticated() {
+  state.lastUsername = state.currentUser && state.currentUser.username;
+  refreshSessionInfo();
   loadUserTheme();
   const modal = document.getElementById('login-modal');
   if (modal) {
@@ -375,7 +377,15 @@ function showLoginModal() {
   const modal = document.getElementById('login-modal');
   modal.classList.add('active');
   modal.style.display = 'flex';
-  fetchAuthProviders();
+  state.login2fa = null;
+  showLogin2faStep(false);
+  const reason = sessionStorage.getItem('remote_logout_reason');
+  if (reason) {
+    sessionStorage.removeItem('remote_logout_reason');
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = reason;
+    errEl.style.display = 'block';
+  }
   setTimeout(() => {
     const userInput = document.getElementById('login-username');
     if (userInput) userInput.focus();
@@ -398,6 +408,7 @@ async function fetchAuthProviders() {
 }
 
 async function handleLoginSubmit() {
+  if (state.login2fa) return submitLogin2fa();
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
   const errEl = document.getElementById('login-error');
@@ -417,22 +428,114 @@ async function handleLoginSubmit() {
     });
 
     const data = await res.json();
-    if (res.ok) {
-      setSessionToken(data.token);
-      state.currentUser = data.user;
-      if (data.must_change_password) {
-        state.currentUser.must_change_password = true;
-        state.loginPassword = password;
-        showPasswordRequired();
-      } else {
-        onAuthenticated();
-      }
+    if (res.ok && data.two_factor_required) {
+      state.login2fa = { challenge: data.challenge, password };
+      showLogin2faStep(true);
+    } else if (res.ok) {
+      finishLogin(data, password);
     } else {
       errEl.textContent = data.error || 'Invalid username or password';
       errEl.style.display = 'block';
     }
   } catch (err) {
     errEl.textContent = 'Server connection error. Please try again.';
+    errEl.style.display = 'block';
+  }
+}
+
+/** A login succeeded (password, plus code when 2FA is on): store it and continue. */
+function finishLogin(data, password) {
+  const previous = state.lastUsername;
+  setSessionToken(data.token);
+  state.currentUser = data.user;
+  state.currentUser.must_change_password = !!data.must_change_password;
+  state.currentUser.two_factor_setup_required = !!data.two_factor_setup_required;
+  // Panes left open from an expired login belong to that user only.
+  if (previous && previous !== data.user.username) {
+    for (let i = 1; i <= 4; i++) disconnectPane(i);
+  }
+  if (data.must_change_password) state.loginPassword = password;
+  state.login2fa = null;
+  showLogin2faStep(false);
+  continueAfterLogin();
+}
+
+/** After sign-in: a required password change, then required 2FA setup, then the app. */
+function continueAfterLogin() {
+  const u = state.currentUser || {};
+  if (u.must_change_password) showPasswordRequired();
+  else if (u.two_factor_setup_required) openTwoFactorSetup(true);
+  else onAuthenticated();
+}
+
+/** Switch the login card between the password step and the 2FA code step. */
+function showLogin2faStep(on) {
+  const show = (id, visible) => { const el = document.getElementById(id); if (el) el.style.display = visible ? '' : 'none'; };
+  show('login-user-group', !on);
+  show('login-pass-group', !on);
+  show('login-2fa-group', on);
+  show('oidc-login-section', false);
+  const code = document.getElementById('login-2fa-code');
+  if (code) code.value = '';
+  const btn = document.querySelector('#btn-submit-login span');
+  if (btn) btn.textContent = on ? 'Verify' : 'Log In';
+  document.getElementById('login-error').style.display = 'none';
+  if (on) setTimeout(() => code && code.focus(), 30);
+  else fetchAuthProviders();
+}
+
+function cancelLogin2fa() {
+  state.login2fa = null;
+  document.getElementById('login-password').value = '';
+  showLogin2faStep(false);
+  document.getElementById('login-username').focus();
+}
+
+async function submitLogin2fa() {
+  const errEl = document.getElementById('login-error');
+  const code = document.getElementById('login-2fa-code').value.trim();
+  errEl.style.display = 'none';
+  if (!code) {
+    errEl.textContent = 'Enter the code from your authenticator app';
+    errEl.style.display = 'block';
+    return;
+  }
+  try {
+    const res = await fetch('/api/auth/login/2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge: state.login2fa.challenge, code }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      finishLogin(data, state.login2fa.password);
+    } else {
+      errEl.textContent = data.error || 'That code is not valid';
+      errEl.style.display = 'block';
+      if (/expired/i.test(data.error || '')) cancelLogin2fa();
+      else document.getElementById('login-2fa-code').select();
+    }
+  } catch (e) {
+    errEl.textContent = 'Server connection error. Please try again.';
+    errEl.style.display = 'block';
+  }
+}
+
+/** The login ended (lifetime reached or idle sign-out): ask to sign in again. */
+function sessionExpired(message) {
+  if (!state.jwtToken) return;
+  stopIdleWatch();
+  state.lastUsername = state.currentUser && state.currentUser.username;
+  state.jwtToken = '';
+  localStorage.removeItem('remote_token');
+  localStorage.removeItem('remotedog_token');
+  sessionStorage.removeItem('remote_session_locked');
+  const lock = document.getElementById('session-lock-screen');
+  if (lock) { lock.classList.remove('active'); lock.style.display = 'none'; }
+  showLoginModal();
+  const errEl = document.getElementById('login-error');
+  if (errEl && message) {
+    errEl.textContent = message;
     errEl.style.display = 'block';
   }
 }
@@ -447,6 +550,10 @@ function loginWithOidc() {
 }
 
 function logout() {
+  stopIdleWatch();
+  if (state.jwtToken) {
+    fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
+  }
   for (let i = 1; i <= 4; i++) {
     disconnectPane(i);
   }
@@ -461,7 +568,16 @@ function logout() {
   window.location.reload();
 }
 
-function lockSession() {
+function lockSession(serverLocked = false) {
+  if (!serverLocked && state.jwtToken) {
+    apiFetch('/api/auth/lock', { method: 'POST' }).catch(() => {});
+  }
+  const lockEl = document.getElementById('session-lock-screen');
+  const alreadyShown = lockEl && lockEl.style.display === 'flex';
+  const codeGroup = document.getElementById('lock-2fa-group');
+  const needCode = !!(state.sessionPolicy && state.sessionPolicy.lock_requires_2fa && state.currentUser && state.currentUser.two_factor_enabled);
+  if (codeGroup) codeGroup.style.display = needCode ? '' : 'none';
+  if (alreadyShown) return;
   const menu = document.getElementById('profile-dropdown-menu');
   if (menu) {
     menu.classList.remove('active');
@@ -506,17 +622,17 @@ async function submitUnlockSession() {
     return;
   }
 
+  const codeInput = document.getElementById('lock-2fa-code');
+  const code = codeInput ? codeInput.value.trim() : '';
   try {
-    const res = await fetch('/api/auth/login', {
+    const res = await apiFetch('/api/auth/unlock', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: state.currentUser?.username || '',
-        password: password,
-      }),
+      body: JSON.stringify({ password, code: code || null }),
     });
 
     if (res.ok) {
+      if (codeInput) codeInput.value = '';
+      noteActivity(true);
       sessionStorage.removeItem('remote_session_locked');
       const lockScreen = document.getElementById('session-lock-screen');
       if (lockScreen) {
@@ -524,7 +640,7 @@ async function submitUnlockSession() {
         lockScreen.style.display = 'none';
       }
       if (pwdInput) pwdInput.value = '';
-      showToast('🔓 Session unlocked!', 'success');
+      showToast('Session unlocked', 'success');
       
       // Restore focus to active pane
       const p = state.panes[state.activePaneIndex];
@@ -533,7 +649,12 @@ async function submitUnlockSession() {
         else if (p.canvas) p.canvas.focus();
       }
     } else {
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (data.code === 'two_factor_required') {
+        const g = document.getElementById('lock-2fa-group');
+        if (g) g.style.display = '';
+        if (codeInput) setTimeout(() => codeInput.focus(), 30);
+      }
       if (errEl) {
         errEl.textContent = data.error || 'Incorrect password.';
         errEl.style.display = 'block';
@@ -2790,12 +2911,14 @@ function renderUsersTable(users) {
         <td><span class="user-role-badge">${roleName}</span></td>
         <td><span class="pane-protocol-badge">${u.auth_provider.toUpperCase()}</span></td>
         <td class="text-muted text-sm">${u.groups && u.groups.length ? u.groups.map(escapeHtml).join(', ') : '—'}</td>
+        <td>${u.auth_provider !== 'local' ? '<span class="text-muted text-sm">provider</span>' : u.two_factor ? '<span class="tf-pill on">ON</span>' : '<span class="tf-pill off">off</span>'}</td>
         <td>${statusBadge}</td>
         <td class="text-muted">${new Date(u.created_at).toLocaleDateString()}</td>
         <td>
           <div style="display: flex; gap: 4px;">
             ${toggleBtn}
             ${u.auth_provider === 'local' ? `<button class="btn btn-secondary btn-sm" data-reset-user="${escapeHtml(u.id)}" data-reset-name="${escapeHtml(u.username)}" title="Give this user a new password">Reset password</button>` : ''}
+            ${u.two_factor ? `<button class="btn btn-secondary btn-sm" onclick="resetUserTwoFactor('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')" title="Turn off two-factor authentication (lost phone)">Reset 2FA</button>` : ''}
             <button class="btn btn-secondary btn-sm text-danger" onclick="deleteUser('${u.id}')">Delete</button>
           </div>
         </td>
@@ -2919,10 +3042,12 @@ const panelLoaders = {
     users: () => openUsersModal(),
     connections: () => loadAdminConnections(),
     activity: () => loadActivityLog(),
+    security: () => loadAdminSecurity(),
     server: () => loadServerPage(),
   },
   'settings-panel': {
     account: () => {},
+    security: () => loadSecurityPage(),
     appearance: () => renderThemeGrid(),
     shortcuts: () => {},
   },
@@ -3123,6 +3248,12 @@ async function loadServerPage() {
     : st.global_connections.length
       ? item('warn', `${st.global_connections.length} global connection(s): ${st.global_connections.map(escapeHtml).join(', ')}. See Connections.`)
       : item('', 'No global connections; every connection is private or assigned.'));
+  if (st.local_users_without_2fa && st.local_users_without_2fa.length) {
+    items.push(item(st.require_2fa_roles && st.require_2fa_roles.length ? '' : 'warn',
+      `${st.local_users_without_2fa.length} local account(s) without two-factor authentication: ${st.local_users_without_2fa.map(escapeHtml).join(', ')}. See Security.`));
+  } else {
+    items.push(item('', 'Every local account uses two-factor authentication.'));
+  }
   if (st.admin_must_change) items.push(item('warn', 'The built-in <code>admin</code> account must still choose its own password.'));
   if (st.admin_note_present) items.push(item('warn', 'The first-login note <code>initial_admin_credentials.txt</code> still exists in the data folder.'));
   items.push(item(s.auth.default_role === 'admin' ? 'bad' : '', `New single sign-on users get the role <strong>${escapeHtml(s.auth.default_role)}</strong>.`));
@@ -3131,7 +3262,7 @@ async function loadServerPage() {
   const row = (k, v) => `<dt>${k}</dt><dd>${v === undefined || v === null || v === '' ? '—' : escapeHtml(String(v))}</dd>`;
   document.getElementById('admin-server-settings').innerHTML = `
     <div class="settings-section-title">Server</div>
-    <dl class="settings-grid">${row('Address', s.server.bind_address)}${row('Data folder', s.server.data_dir)}${row('Login lifetime (hours)', s.server.token_expiry_hours)}</dl>
+    <dl class="settings-grid">${row('Address', s.server.bind_address)}${row('Data folder', s.server.data_dir)}${row('Login lifetime (hours, set under Security)', s.server.token_expiry_hours)}</dl>
     <div class="settings-section-title">Files</div>
     <dl class="settings-grid">${row('Files folder', s.storage.staging_dir)}${row('Upload limit (MB)', s.storage.max_upload_size_mb)}</dl>
     <div class="settings-section-title">Logins</div>
@@ -3888,7 +4019,7 @@ async function submitPasswordRequired() {
   if (state.currentUser) state.currentUser.must_change_password = false;
   document.getElementById('pw-required').style.display = 'none';
   showToast('Password changed', 'success');
-  onAuthenticated();
+  continueAfterLogin();
 }
 
 let pwResetTarget = null;
@@ -4601,3 +4732,443 @@ function openPaneKbdMenu(e, paneIndex) {
   };
   setTimeout(() => document.addEventListener('click', closeHandler), 10);
 }
+
+// ================= Two-factor authentication & session policy (#26) =================
+
+/** Load the session policy and 2FA state for the signed-in user, then watch for idleness. */
+async function refreshSessionInfo() {
+  try {
+    const res = await apiFetch('/api/auth/me');
+    if (!res.ok) return;
+    const me = await res.json();
+    state.currentUser = Object.assign(state.currentUser || {}, me);
+    state.sessionPolicy = me.session_policy || null;
+    startIdleWatch();
+  } catch (e) {}
+}
+
+// ---- Idle watch: report activity to the server, lock or sign out when idle ----
+const idleWatch = { lastInput: Date.now(), lastBeat: 0, timer: null, bound: false };
+const ACTIVITY_BEAT_MS = 60 * 1000;
+
+function isLockShown() {
+  const el = document.getElementById('session-lock-screen');
+  return !!el && el.style.display === 'flex';
+}
+
+/** Called on typing, clicking and similar. `force` sends the heartbeat now. */
+function noteActivity(force = false) {
+  if (isLockShown() && !force) return;
+  idleWatch.lastInput = Date.now();
+  if (!state.jwtToken) return;
+  if (force || idleWatch.lastInput - idleWatch.lastBeat > ACTIVITY_BEAT_MS) {
+    idleWatch.lastBeat = idleWatch.lastInput;
+    apiFetch('/api/auth/activity', { method: 'POST' }).catch(() => {});
+  }
+}
+
+function startIdleWatch() {
+  if (!idleWatch.bound) {
+    idleWatch.bound = true;
+    let lastMove = 0;
+    const onInput = () => noteActivity();
+    // Capture phase: also sees keys typed into terminals and remote desktops.
+    ['keydown', 'mousedown', 'wheel', 'touchstart'].forEach((t) => window.addEventListener(t, onInput, { capture: true, passive: true }));
+    window.addEventListener('mousemove', () => {
+      const now = Date.now();
+      if (now - lastMove > 5000) { lastMove = now; noteActivity(); }
+    }, { capture: true, passive: true });
+  }
+  idleWatch.lastInput = Date.now();
+  clearInterval(idleWatch.timer);
+  idleWatch.timer = setInterval(checkIdle, 10 * 1000);
+}
+
+function stopIdleWatch() {
+  clearInterval(idleWatch.timer);
+  idleWatch.timer = null;
+}
+
+function checkIdle() {
+  const p = state.sessionPolicy;
+  if (!p || !p.idle_minutes || !state.jwtToken || isLockShown()) return;
+  if (Date.now() - idleWatch.lastInput < p.idle_minutes * 60 * 1000) return;
+  if (p.idle_action === 'logout') {
+    sessionStorage.setItem('remote_logout_reason', 'You were signed out after a period of inactivity.');
+    logout();
+  } else {
+    lockSession();
+  }
+}
+
+// ---- Setup dialog ----
+const tfSetup = { forced: false, codes: [], secret: '' };
+
+async function openTwoFactorSetup(forced = false) {
+  const overlay = document.getElementById('tf-setup');
+  if (!overlay) return;
+  if (overlay.style.display === 'flex' && tfSetup.forced === forced) return;
+  tfSetup.forced = forced;
+  tfSetup.codes = [];
+  document.getElementById('tf-setup-error').textContent = '';
+  document.getElementById('tf-step-scan').style.display = '';
+  document.getElementById('tf-step-codes').style.display = 'none';
+  document.getElementById('tf-setup-code').value = '';
+  document.getElementById('tf-qr').innerHTML = '<span class="text-muted text-sm">Loading…</span>';
+  document.getElementById('tf-secret').textContent = '';
+  document.getElementById('tf-setup-intro').textContent = forced
+    ? 'Your administrator requires two-factor authentication for your account. Scan this code with an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password.'
+    : 'Scan this code with an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password.';
+  document.getElementById('tf-setup-title').textContent = 'Set up two-factor authentication';
+  document.getElementById('tf-setup-x').style.display = forced ? 'none' : '';
+  const cancelBtn = document.getElementById('tf-setup-cancel');
+  cancelBtn.textContent = forced ? 'Log out' : 'Cancel';
+  cancelBtn.style.display = '';
+  const ok = document.getElementById('tf-setup-ok');
+  ok.textContent = 'Turn on';
+  ok.disabled = false;
+  document.getElementById('tf-setup-box').style.transform = '';
+  overlay.style.display = 'flex';
+
+  try {
+    const res = await apiFetch('/api/me/2fa/setup', { method: 'POST' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      document.getElementById('tf-qr').innerHTML = '';
+      document.getElementById('tf-setup-error').textContent = d.error || 'Could not start the setup';
+      return;
+    }
+    tfSetup.secret = d.secret;
+    // The QR code is an SVG made by the Remote server (no outside service sees the secret).
+    document.getElementById('tf-qr').innerHTML = d.qr_svg || '';
+    document.getElementById('tf-secret').textContent = d.secret.replace(/(.{4})/g, '$1 ').trim();
+    setTimeout(() => document.getElementById('tf-setup-code').focus(), 30);
+  } catch (e) {
+    document.getElementById('tf-setup-error').textContent = 'Server connection error';
+  }
+}
+
+function closeTwoFactorSetup() {
+  if (tfSetup.forced && !tfSetup.codes.length) {
+    logout();
+    return;
+  }
+  document.getElementById('tf-setup').style.display = 'none';
+  if (tfSetup.codes.length) finishTwoFactorSetup();
+}
+
+async function submitTwoFactorSetup() {
+  const errEl = document.getElementById('tf-setup-error');
+  // Second step: the user confirms they saved the recovery codes.
+  if (tfSetup.codes.length) {
+    if (!document.getElementById('tf-codes-saved').checked) {
+      errEl.textContent = 'Tick the box once you have saved your recovery codes';
+      return;
+    }
+    document.getElementById('tf-setup').style.display = 'none';
+    finishTwoFactorSetup();
+    return;
+  }
+  const code = document.getElementById('tf-setup-code').value.replace(/\s/g, '');
+  if (!/^\d{6}$/.test(code)) {
+    errEl.textContent = 'Enter the 6-digit code from the app';
+    return;
+  }
+  errEl.textContent = '';
+  try {
+    const res = await apiFetch('/api/me/2fa/enable', { method: 'POST', body: JSON.stringify({ code }) });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      errEl.textContent = d.error || 'That code is not valid';
+      document.getElementById('tf-setup-code').select();
+      return;
+    }
+    tfSetup.codes = d.recovery_codes || [];
+    document.getElementById('tf-codes-intro').textContent = 'Two-factor authentication is on. Save these recovery codes somewhere safe, such as your password manager. Each code signs you in once if you lose your phone. They are shown only now.';
+    document.getElementById('tf-codes').innerHTML = tfSetup.codes.map((c) => `<code>${escapeHtml(c)}</code>`).join('');
+    document.getElementById('tf-codes-saved').checked = false;
+    document.getElementById('tf-step-scan').style.display = 'none';
+    document.getElementById('tf-step-codes').style.display = '';
+    document.getElementById('tf-setup-x').style.display = 'none';
+    document.getElementById('tf-setup-cancel').style.display = 'none';
+    document.getElementById('tf-setup-ok').textContent = 'Done';
+    if (state.currentUser) state.currentUser.two_factor_enabled = true;
+  } catch (e) {
+    errEl.textContent = 'Server connection error';
+  }
+}
+
+function finishTwoFactorSetup() {
+  document.getElementById('tf-setup-cancel').style.display = '';
+  const wasForced = tfSetup.forced;
+  tfSetup.codes = [];
+  tfSetup.forced = false;
+  showToast('Two-factor authentication is on', 'success');
+  if (wasForced) {
+    if (state.currentUser) state.currentUser.two_factor_setup_required = false;
+    onAuthenticated();
+  } else {
+    loadSecurityPage();
+  }
+}
+
+function copyTwoFactorSecret() {
+  copyTextToClipboard(tfSetup.secret);
+}
+
+function recoveryCodesText() {
+  const user = state.currentUser ? state.currentUser.username : '';
+  return `Remote recovery codes for ${user} (${window.location.host})\n`
+    + `Each code works once. Created ${new Date().toLocaleString()}.\n\n${tfSetup.codes.join('\n')}\n`;
+}
+
+function copyRecoveryCodes() {
+  copyTextToClipboard(recoveryCodesText());
+}
+
+function downloadRecoveryCodes() {
+  const blob = new Blob([recoveryCodesText()], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `remote-recovery-codes-${state.currentUser ? state.currentUser.username : 'user'}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+/** Show recovery codes in the setup dialog's second step (after renewing them). */
+function showRecoveryCodes(codes) {
+  tfSetup.forced = false;
+  tfSetup.codes = codes;
+  document.getElementById('tf-setup-title').textContent = 'New recovery codes';
+  document.getElementById('tf-codes-intro').textContent = 'Your old recovery codes no longer work. Save these new ones somewhere safe, such as your password manager. Each code signs you in once if you lose your phone. They are shown only now.';
+  document.getElementById('tf-step-scan').style.display = 'none';
+  document.getElementById('tf-step-codes').style.display = '';
+  document.getElementById('tf-codes').innerHTML = codes.map((c) => `<code>${escapeHtml(c)}</code>`).join('');
+  document.getElementById('tf-codes-saved').checked = false;
+  document.getElementById('tf-setup-error').textContent = '';
+  document.getElementById('tf-setup-x').style.display = 'none';
+  document.getElementById('tf-setup-cancel').style.display = 'none';
+  document.getElementById('tf-setup-ok').textContent = 'Done';
+  document.getElementById('tf-setup-box').style.transform = '';
+  document.getElementById('tf-setup').style.display = 'flex';
+}
+
+// ---- Confirm with password + code ----
+function tfConfirm({ title, message, okText = 'Confirm', danger = false, run }) {
+  const overlay = document.getElementById('tf-confirm');
+  document.getElementById('tf-confirm-title').textContent = title;
+  document.getElementById('tf-confirm-message').textContent = message;
+  document.getElementById('tf-confirm-password').value = '';
+  document.getElementById('tf-confirm-code').value = '';
+  document.getElementById('tf-confirm-error').textContent = '';
+  const ok = document.getElementById('tf-confirm-ok');
+  ok.textContent = okText;
+  ok.className = danger ? 'btn btn-danger' : 'btn btn-accent';
+  document.getElementById('tf-confirm-box').style.transform = '';
+  overlay.style.display = 'flex';
+  setTimeout(() => document.getElementById('tf-confirm-password').focus(), 30);
+
+  const close = () => { overlay.style.display = 'none'; cleanup(); };
+  const submit = async () => {
+    const password = document.getElementById('tf-confirm-password').value;
+    const code = document.getElementById('tf-confirm-code').value.trim();
+    const errEl = document.getElementById('tf-confirm-error');
+    if (!password || !code) {
+      errEl.textContent = 'Enter your password and a code';
+      return;
+    }
+    ok.disabled = true;
+    const error = await run(password, code);
+    ok.disabled = false;
+    if (error) errEl.textContent = error;
+    else close();
+  };
+  const onKey = (e) => {
+    e.stopPropagation();
+    if (e.key === 'Escape') close();
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+  };
+  const cancel = document.getElementById('tf-confirm-cancel');
+  ok.addEventListener('click', submit);
+  cancel.addEventListener('click', close);
+  overlay.addEventListener('keydown', onKey);
+  function cleanup() {
+    ok.removeEventListener('click', submit);
+    cancel.removeEventListener('click', close);
+    overlay.removeEventListener('keydown', onKey);
+  }
+}
+
+// ---- Settings > Security (own account) ----
+async function loadSecurityPage() {
+  const body = document.getElementById('tf-security-body');
+  if (!body) return;
+  let st;
+  try {
+    const res = await apiFetch('/api/me/2fa');
+    if (!res.ok) return;
+    st = await res.json();
+  } catch (e) { return; }
+
+  const intro = '<p class="pw-hint" style="margin:0 0 12px;">Two-factor authentication asks for a code from your phone after your password, so a stolen password alone cannot open your sessions.</p>';
+  if (!st.available) {
+    body.innerHTML = `${intro}<div class="tf-card"><div class="tf-card-title">Two-factor authentication</div>
+      <p class="text-muted text-sm">Your account signs in through your organisation's sign-in provider. Set up two-factor authentication there.</p></div>`;
+    return;
+  }
+  if (!st.enabled) {
+    body.innerHTML = `${intro}<div class="tf-card">
+      <div class="tf-card-title">Two-factor authentication <span class="tf-pill off">Off</span></div>
+      <p class="text-muted text-sm">You need an authenticator app on your phone, for example Aegis, 2FAS, Google Authenticator or 1Password.</p>
+      <button type="button" class="btn btn-accent btn-sm" onclick="openTwoFactorSetup(false)">Set up two-factor authentication</button>
+    </div>`;
+    return;
+  }
+  const low = st.recovery_codes_left <= 3;
+  body.innerHTML = `${intro}<div class="tf-card">
+    <div class="tf-card-title">Two-factor authentication <span class="tf-pill on">On</span></div>
+    <p class="text-sm ${low ? 'text-warning' : 'text-muted'}">${st.recovery_codes_left} recovery code(s) left.${low ? ' Make new ones soon.' : ''}</p>
+    <div class="tf-card-actions">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="renewRecoveryCodes()">New recovery codes</button>
+      ${st.required
+        ? '<span class="text-muted text-sm">Required for your role by your administrator.</span>'
+        : '<button type="button" class="btn btn-secondary btn-sm text-danger" onclick="turnOffTwoFactor()">Turn off</button>'}
+    </div>
+  </div>`;
+}
+
+function renewRecoveryCodes() {
+  tfConfirm({
+    title: 'New recovery codes',
+    message: 'Your old recovery codes stop working. Confirm with your password and a code from your app.',
+    okText: 'Make new codes',
+    run: async (password, code) => {
+      const res = await apiFetch('/api/me/2fa/recovery-codes', { method: 'POST', body: JSON.stringify({ password, code }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) return d.error || 'Could not make new codes';
+      showRecoveryCodes(d.recovery_codes || []);
+      return null;
+    },
+  });
+}
+
+function turnOffTwoFactor() {
+  tfConfirm({
+    title: 'Turn off two-factor authentication',
+    message: 'Signing in will only need your password again. Confirm with your password and a code from your app.',
+    okText: 'Turn off',
+    danger: true,
+    run: async (password, code) => {
+      const res = await apiFetch('/api/me/2fa/disable', { method: 'POST', body: JSON.stringify({ password, code }) });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) return d.error || 'Could not turn it off';
+      if (state.currentUser) state.currentUser.two_factor_enabled = false;
+      showToast('Two-factor authentication is off', 'warning');
+      loadSecurityPage();
+      return null;
+    },
+  });
+}
+
+// ---- Admin > Security (session policy) ----
+async function loadAdminSecurity() {
+  const body = document.getElementById('admin-security-body');
+  if (!body) return;
+  let p, users = [];
+  try {
+    const [pr, ur] = await Promise.all([apiFetch('/api/admin/security-policy'), apiFetch('/api/users')]);
+    if (!pr.ok) return;
+    p = await pr.json();
+    if (ur.ok) users = await ur.json();
+  } catch (e) { return; }
+  const missing = users.filter((u) => u.is_active && u.auth_provider === 'local' && !u.two_factor);
+  const roleBox = (role, label) => `<label class="pw-check"><input type="checkbox" class="sec-role" value="${role}" ${p.require_2fa_roles.includes(role) ? 'checked' : ''}/> <span>${label}</span></label>`;
+  body.innerHTML = `
+    <div class="settings-section-title">Two-factor authentication</div>
+    <div class="sec-row">
+      <div class="sec-label">Required for<div class="pw-hint">Local accounts with these roles must set it up at their next sign-in. Single sign-on users use their provider's 2FA.</div></div>
+      <div class="sec-roles">${roleBox('admin', 'Admin')}${roleBox('operator', 'Operator')}${roleBox('viewer', 'Viewer')}</div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Lock screen<div class="pw-hint">Also ask for a code when unlocking, for users who have 2FA on.</div></div>
+      <label class="pw-check"><input type="checkbox" id="sec-lock-2fa" ${p.lock_requires_2fa ? 'checked' : ''}/> <span>Ask for a 2FA code to unlock</span></label>
+    </div>
+    <div class="settings-section-title">Sessions</div>
+    <div class="sec-row">
+      <div class="sec-label">Login lifetime<div class="pw-hint">After this, everyone signs in again. Open connections keep running until then.</div></div>
+      <div class="sec-field"><input type="number" id="sec-max-hours" class="form-input" min="1" max="720" value="${p.max_login_hours}"/><span class="text-muted text-sm">hours</span></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Idle timeout<div class="pw-hint">Time without typing or clicking. 0 turns it off.</div></div>
+      <div class="sec-field"><input type="number" id="sec-idle-min" class="form-input" min="0" max="1440" value="${p.idle_minutes}"/><span class="text-muted text-sm">minutes</span></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">When idle<div class="pw-hint">Locking keeps connections running behind the lock screen.</div></div>
+      <select id="sec-idle-action" class="form-input sec-select">
+        <option value="lock" ${p.idle_action === 'lock' ? 'selected' : ''}>Lock the screen</option>
+        <option value="logout" ${p.idle_action === 'logout' ? 'selected' : ''}>Sign out</option>
+      </select>
+    </div>
+    <div class="sec-actions">
+      <span class="pw-error" id="sec-error"></span>
+      <button type="button" class="btn btn-accent btn-sm" onclick="saveSecurityPolicy()">Save</button>
+    </div>
+    <div class="settings-section-title">Local accounts without 2FA</div>
+    <p class="text-sm ${missing.length ? '' : 'text-muted'}">${missing.length ? missing.map((u) => `<code>${escapeHtml(u.username)}</code>`).join(' ') : 'None. Every local account uses two-factor authentication.'}</p>`;
+}
+
+async function saveSecurityPolicy() {
+  const errEl = document.getElementById('sec-error');
+  const policy = {
+    max_login_hours: parseInt(document.getElementById('sec-max-hours').value, 10),
+    idle_minutes: parseInt(document.getElementById('sec-idle-min').value, 10) || 0,
+    idle_action: document.getElementById('sec-idle-action').value,
+    lock_requires_2fa: document.getElementById('sec-lock-2fa').checked,
+    require_2fa_roles: [...document.querySelectorAll('.sec-role:checked')].map((b) => b.value),
+  };
+  const me = state.currentUser || {};
+  if (policy.require_2fa_roles.includes(me.role) && !me.two_factor_enabled
+    && !(await uiConfirm('Your own role will require two-factor authentication. You will be asked to set it up right away. Continue?', { title: 'Require 2FA', okText: 'Save' }))) {
+    return;
+  }
+  errEl.textContent = '';
+  const res = await apiFetch('/api/admin/security-policy', { method: 'PUT', body: JSON.stringify(policy) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errEl.textContent = d.error || 'Could not save';
+    return;
+  }
+  state.sessionPolicy = {
+    max_login_hours: d.max_login_hours,
+    idle_minutes: d.idle_minutes,
+    idle_action: d.idle_action,
+    lock_requires_2fa: d.lock_requires_2fa,
+  };
+  showToast('Security settings saved', 'success');
+  refreshSessionInfo().then(() => {
+    if (state.currentUser && state.currentUser.two_factor_setup_required) openTwoFactorSetup(true);
+  });
+}
+
+async function resetUserTwoFactor(id, username) {
+  if (!(await uiConfirm(`Turn off two-factor authentication for ${username}? Their current logins end, and they can set it up again (or must, if their role requires it).`, { title: 'Reset 2FA', okText: 'Reset 2FA', danger: true }))) return;
+  const res = await apiFetch(`/api/users/${encodeURIComponent(id)}/reset-2fa`, { method: 'POST' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(d.error || 'Could not reset 2FA', 'danger');
+    return;
+  }
+  showToast(d.message || 'Two-factor authentication reset', 'success');
+  openUsersModal();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  makeDraggable(document.getElementById('tf-setup-box'), document.getElementById('tf-setup-header'));
+  makeDraggable(document.getElementById('tf-confirm-box'), document.getElementById('tf-confirm-header'));
+  document.getElementById('tf-setup').addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); submitTwoFactorSetup(); }
+    if (e.key === 'Escape' && !tfSetup.forced && !tfSetup.codes.length) closeTwoFactorSetup();
+  });
+});

@@ -2993,3 +2993,200 @@ kbd {
 .icon-grid {
   align-content: start;
 }
+
+/* ==========================================================================
+   Two-factor authentication & security policy (#26)
+   ========================================================================== */
+/* Shown right after signing in when 2FA is required, so above the login screen. */
+#tf-setup { z-index: 100000; }
+#tf-confirm { z-index: 100001; }
+
+.tf-setup-box { width: 460px; }
+#tf-setup .ui-dialog-message { margin-bottom: 12px; }
+
+.tf-qr-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+
+.tf-qr {
+  width: 156px;
+  height: 156px;
+  flex-shrink: 0;
+  padding: 6px;
+  background: #ffffff; /* QR codes need dark-on-light to scan reliably */
+  border-radius: var(--radius-md, 6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tf-qr svg { width: 100%; height: 100%; display: block; }
+
+.tf-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.tf-small-label {
+  font-size: 11px;
+  color: var(--woofson-text-muted);
+}
+
+.tf-secret {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 6px 8px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-void);
+  border: 1px solid var(--woofson-border);
+  color: var(--woofson-text-main);
+  word-break: break-all;
+  user-select: all;
+}
+
+.tf-code-input {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  letter-spacing: 3px;
+}
+
+.tf-codes {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-void);
+  border: 1px solid var(--woofson-border);
+  user-select: all;
+}
+
+.tf-codes code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  text-align: center;
+  color: var(--woofson-text-main);
+}
+
+.tf-codes-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.tf-card {
+  padding: 12px 14px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-header);
+  border: 1px solid var(--woofson-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.tf-card p { margin: 0; }
+
+.tf-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.tf-card-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.tf-pill {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--woofson-border);
+  color: var(--woofson-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.tf-pill.on {
+  color: var(--woofson-success, #10b981);
+  border-color: color-mix(in srgb, var(--woofson-success, #10b981) 45%, transparent);
+  background: color-mix(in srgb, var(--woofson-success, #10b981) 12%, transparent);
+}
+
+.text-warning { color: #f59e0b; }
+
+.login-hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--woofson-text-muted);
+}
+
+.login-link-btn {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--woofson-accent);
+  cursor: pointer;
+}
+
+.login-link-btn:hover { text-decoration: underline; }
+
+/* Admin > Security */
+.sec-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--woofson-border);
+}
+
+.sec-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sec-label .pw-hint { font-weight: 400; margin-top: 2px; }
+
+.sec-roles {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.sec-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sec-field .form-input { width: 110px; }
+.sec-select { max-width: 220px; }
+
+.sec-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+}
+
+@media (max-width: 600px) {
+  .tf-qr-row { flex-direction: column; align-items: flex-start; }
+  .sec-row { grid-template-columns: 1fr; gap: 8px; }
+}
