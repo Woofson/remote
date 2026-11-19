@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Remote — High-Performance Remote Gateway</title>
+  <title>Remote</title>
   <link rel="stylesheet" href="app.css?v=__REMOTE_VERSION__" />
   <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/remote-32.png" />
   <link rel="apple-touch-icon" href="assets/icons/remote-180.png" />
@@ -1419,7 +1419,7 @@
           <div style="text-align: center; margin-bottom: 18px; padding: 16px; background: var(--woofson-bg-void, #121214); border: 1px solid var(--woofson-border, #3f3f46); border-radius: var(--radius-md, 6px);">
             <img src="assets/icons/remote-160.webp" alt="Remote" style="height: 52px; width: auto; object-fit: contain; margin-bottom: 8px;">
             <div style="font-size: 18px; font-weight: 800; color: var(--woofson-accent, #f59e0b); letter-spacing: 0.5px;">Remote</div>
-            <div style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px;">Ultra-Low-Resource Remote Gateway — By Woofson</div>
+            <div style="font-size: 11px; color: var(--woofson-text-muted, #a1a1aa); margin-bottom: 10px;">Web gateway for remote access, by Woofson</div>
             <div style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap;">
               <span class="badge" style="background: rgba(245, 158, 11, 0.2); color: var(--woofson-accent, #f59e0b); border: 1px solid rgba(245, 158, 11, 0.4); font-weight: 700; padding: 2px 8px; border-radius: 4px;"><span class="app-version"></span> (Single Binary)</span>
               <span class="badge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); padding: 2px 8px; border-radius: 4px;">Rust + Axum + Tokio</span>
@@ -1429,7 +1429,7 @@
 
           <!-- Description -->
           <p style="font-size: 12px; color: var(--woofson-text-main, #f4f4f5); line-height: 1.6; margin-bottom: 16px;">
-            <strong>Remote</strong> is an ultra-high-performance, memory-safe alternative to Apache Guacamole. Built in modern Rust with pure HTML5 Canvas and WebSockets, Remote delivers RDP, VNC, and SSH multi-pane access with native clipboard auto-sync and shared file transfer using a fraction of traditional gateway resources.
+            <strong>Remote</strong> opens RDP and VNC desktops, SSH and Telnet terminals, and shells on the server in your browser, side by side in one workspace. It is a single Rust program with the web interface built in, written as a simpler alternative to Apache Guacamole.
           </p>
 
           <!-- System Details Card -->
@@ -1442,8 +1442,8 @@
               <div><span style="color: var(--woofson-text-muted);">Author:</span> <strong style="color: var(--woofson-text-main);">Bolt J Woofson</strong></div>
               <div><span style="color: var(--woofson-text-muted);">Contact:</span> <a href="mailto:bolt@boop.no" style="color: var(--woofson-accent); text-decoration: none;">bolt@boop.no</a></div>
               <div><span style="color: var(--woofson-text-muted);">Backend:</span> <span style="font-family: var(--font-mono);">Rust 2021 (Axum 0.7)</span></div>
-              <div><span style="color: var(--woofson-text-muted);">Protocols:</span> <span>RDP, RFB/VNC, SSH, Local PTY</span></div>
-              <div><span style="color: var(--woofson-text-muted);">Auth:</span> <span>Argon2id + JWT + Authentik OIDC</span></div>
+              <div><span style="color: var(--woofson-text-muted);">Protocols:</span> <span>RDP, VNC, SSH, Telnet, local shell</span></div>
+              <div><span style="color: var(--woofson-text-muted);">Auth:</span> <span>Argon2id, two-factor (TOTP), OpenID Connect</span></div>
               <div><span style="color: var(--woofson-text-muted);">Database:</span> <span>SQLite 3 (Bundled C)</span></div>
               <div><span style="color: var(--woofson-text-muted);">Repository:</span> <a href="https://github.com/Woofson/remote" target="_blank" style="color: var(--woofson-accent); text-decoration: none;">github.com/Woofson/remote</a></div>
               <div><span style="color: var(--woofson-text-muted);">Connection icons:</span> <a href="https://selfh.st/icons/" target="_blank" rel="noopener noreferrer" style="color: var(--woofson-accent); text-decoration: none;">selfh.st/icons</a> (CC BY 4.0)</div>

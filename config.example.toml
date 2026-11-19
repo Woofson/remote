@@ -1,7 +1,6 @@
 # Remote example configuration
 # Copy to config.toml and adjust. config.toml is ignored by git; never commit it.
 # Without a config.toml, Remote creates one with defaults on first start.
-# Unified High-Performance Rust Remote Gateway (RDP, VNC, SSH) with Woofson UI
 
 [server]
 bind_address = "0.0.0.0:8088"
