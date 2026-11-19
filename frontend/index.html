@@ -608,15 +608,10 @@
 
     <!-- Dedicated Session Lock Screen Overlay (Maintains active background sessions) -->
     <div class="modal-overlay login-screen-overlay" id="session-lock-screen" style="display: none;">
-      <!-- Top-Left Corner Branding Logo -->
+      <!-- Corner branding (hidden, as in Brum: the card header carries the branding) -->
       <div class="login-corner-brand">
         <img src="assets/icons/remote-160.webp" alt="Remote" class="login-corner-logo" />
         <span class="login-corner-name">Remote</span>
-      </div>
-
-      <!-- Lower-Right Version Badge -->
-      <div class="login-corner-version">
-        <span class="login-version-badge">Session Locked</span>
       </div>
 
       <!-- Lock Card -->
@@ -659,19 +654,17 @@
           </div>
         </form>
       </div>
+
+      <!-- Flat dim lower-right version link -->
+      <a href="https://github.com/Woofson/remote" target="_blank" rel="noopener noreferrer" class="login-corner-version-link app-version" title="Remote on GitHub"></a>
     </div>
 
     <!-- Login Modal (Exact CommanderDog Authenticator Experience) -->
     <div class="modal-overlay login-screen-overlay" id="login-modal">
-      <!-- Top-Left Corner Branding Logo -->
+      <!-- Corner branding (hidden, as in Brum: the card header carries the branding) -->
       <div class="login-corner-brand">
         <img src="assets/icons/remote-160.webp" alt="Remote" class="login-corner-logo" />
         <span class="login-corner-name">Remote</span>
-      </div>
-
-      <!-- Lower-Right Version Badge -->
-      <div class="login-corner-version">
-        <span class="login-version-badge app-version"></span>
       </div>
 
       <!-- Login Card -->
@@ -692,7 +685,7 @@
                 <svg class="login-label-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Who are you?
               </label>
               <div class="login-input-wrapper">
-                <input type="text" id="login-username" class="login-input" autocomplete="username" autofocus spellcheck="false" />
+                <input type="text" id="login-username" class="login-input" autocomplete="username" autofocus spellcheck="false" placeholder="Username" />
               </div>
             </div>
             <div class="login-form-group" id="login-pass-group">
@@ -700,7 +693,7 @@
                 <svg class="login-label-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Password
               </label>
               <div class="login-input-wrapper">
-                <input type="password" id="login-password" class="login-input" autocomplete="current-password" />
+                <input type="password" id="login-password" class="login-input" autocomplete="current-password" placeholder="Password" />
               </div>
               <button type="button" class="login-link-btn" id="login-forgot-link" style="display:none;" onclick="showLoginForgot(true)">Forgot password?</button>
             </div>
@@ -724,25 +717,6 @@
             </div>
             <div id="login-error" class="login-error-msg" style="display: none;"></div>
 
-            <!-- Signed in by a trusted reverse proxy (forward auth) -->
-            <div id="header-login-section" style="display: none; margin-top: 12px;">
-              <button type="button" class="btn btn-secondary btn-block" onclick="tryHeaderLogin(true)" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border-radius:6px;font-size:12px;">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                <span>Continue with your proxy sign-in</span>
-              </button>
-            </div>
-
-            <!-- Single Sign-On (Authentik / OIDC) -->
-            <div id="oidc-login-section" style="display: none; margin-top: 12px;">
-              <div class="divider-text" style="text-align:center;margin:12px 0;position:relative;">
-                <span style="background:#18181c;padding:0 8px;font-size:10.5px;color:#71717a;position:relative;z-index:1;">OR SINGLE SIGN-ON</span>
-                <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:#3f3f46;z-index:0;"></div>
-              </div>
-              <button type="button" class="btn btn-secondary btn-block" onclick="loginWithOidc()" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border-radius:6px;font-size:12px;">
-                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polygon points="10 8 16 12 10 16 10 8"/></svg>
-                <span id="oidc-provider-btn-label">Sign in with Authentik</span>
-              </button>
-            </div>
           </div>
           <div class="login-card-footer">
             <button type="submit" class="btn btn-accent login-submit-btn" id="btn-submit-login">
@@ -751,7 +725,26 @@
             </button>
           </div>
         </form>
+        <!-- Signed in by a trusted reverse proxy (forward auth) -->
+        <div id="header-login-section" class="login-sso-section" style="display: none;">
+          <div class="login-divider"><span>or</span></div>
+          <button type="button" class="btn btn-sso" onclick="tryHeaderLogin(true)">
+            <svg style="width: 15px; height: 15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>Continue with your proxy sign-in</span>
+          </button>
+        </div>
+        <!-- Single Sign-On (Authentik / OIDC) -->
+        <div id="oidc-login-section" class="login-sso-section" style="display: none;">
+          <div class="login-divider"><span>or</span></div>
+          <button type="button" class="btn btn-sso" onclick="loginWithOidc()">
+            <svg style="width: 15px; height: 15px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+            <span id="oidc-provider-btn-label">Sign in with Authentik</span>
+          </button>
+        </div>
       </div>
+
+      <!-- Flat dim lower-right version link -->
+      <a href="https://github.com/Woofson/remote" target="_blank" rel="noopener noreferrer" class="login-corner-version-link app-version" title="Remote on GitHub"></a>
     </div>
 
     <!-- Connections Manager Modal (CommanderDog Style) -->

@@ -381,10 +381,42 @@ function onAuthenticated() {
   }
 }
 
+// A fresh, slightly different amber glow each time the login or lock screen appears (as in Brum).
+function randomizeLoginBackground(targetEl = null) {
+  const elements = targetEl ? [targetEl] : [document.getElementById('login-modal'), document.getElementById('session-lock-screen')].filter(Boolean);
+  if (!elements.length) return;
+
+  const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  const randFloat = (min, max) => (Math.random() * (max - min) + min).toFixed(2);
+
+  const x1 = randInt(10, 35), y1 = randInt(10, 35);
+  const x2 = randInt(65, 90), y2 = randInt(65, 90);
+  const x3 = randInt(35, 65), y3 = randInt(35, 65);
+  const angle = randInt(125, 160);
+
+  const op1 = randFloat(0.12, 0.20);
+  const op2 = randFloat(0.09, 0.16);
+  const op3 = randFloat(0.05, 0.10);
+
+  const rx1 = randInt(60, 80), ry1 = randInt(45, 65);
+  const rx2 = randInt(55, 75), ry2 = randInt(40, 60);
+  const circleSize = randInt(450, 650);
+
+  const bgStyle = `
+    radial-gradient(ellipse ${rx1}% ${ry1}% at ${x1}% ${y1}%, rgba(245, 158, 11, ${op1}) 0%, transparent 70%),
+    radial-gradient(ellipse ${rx2}% ${ry2}% at ${x2}% ${y2}%, rgba(217, 119, 6, ${op2}) 0%, transparent 65%),
+    radial-gradient(circle ${circleSize}px at ${x3}% ${y3}%, rgba(120, 53, 15, ${op3}) 0%, transparent 100%),
+    linear-gradient(${angle}deg, #0e0e11 0%, #15151a 45%, #181512 100%)
+  `;
+
+  elements.forEach(el => { el.style.backgroundImage = bgStyle; });
+}
+
 function showLoginModal() {
   const modal = document.getElementById('login-modal');
   modal.classList.add('active');
   modal.style.display = 'flex';
+  randomizeLoginBackground(modal);
   state.login2fa = null;
   showLogin2faStep(false);
   document.getElementById('login-error').classList.remove('login-ok-msg');
@@ -645,6 +677,7 @@ function lockSession(serverLocked = false) {
     if (nameEl) nameEl.textContent = uname;
     if (avatarEl) renderAvatarElement(avatarEl, avatar, initial);
 
+    randomizeLoginBackground(lockScreen);
     lockScreen.classList.add('active');
     lockScreen.style.display = 'flex';
     const pwdInput = document.getElementById('lock-password');
