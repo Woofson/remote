@@ -230,6 +230,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     openEmailReset(resetMatch[1]);
     return;
   }
+  captureConnectLink();
   await checkAuth();
 });
 
@@ -373,7 +374,7 @@ function onAuthenticated() {
     modal.style.display = 'none';
   }
   updateHeaderProfile();
-  loadConnections();
+  loadConnections().then(openPendingConnection);
   if (sessionStorage.getItem('remote_session_locked') === 'true') {
     lockSession();
   } else {
@@ -723,7 +724,11 @@ async function submitUnlockSession() {
       }
       if (pwdInput) pwdInput.value = '';
       showToast('Session unlocked', 'success');
-      
+      if (sessionStorage.getItem(PENDING_CONNECT_KEY)) {
+        openPendingConnection();
+        return;
+      }
+
       // Restore focus to active pane
       const p = state.panes[state.activePaneIndex];
       if (p) {
@@ -1252,6 +1257,7 @@ function setupDirectory() {
       if (!btn) return;
       const id = btn.dataset.id;
       if (btn.dataset.dirAction === 'connect') connectToTarget(id);
+      if (btn.dataset.dirAction === 'link') copyTextToClipboard(connectionLink(id));
       if (btn.dataset.dirAction === 'edit') openEditConnectionModal(id);
       if (btn.dataset.dirAction === 'delete') deleteConnection(id);
     });
@@ -1319,6 +1325,7 @@ function renderConnectionsTable() {
           <div class="dir-policies">${policies}</div>
           <div class="dir-actions">
             <button class="btn btn-accent btn-sm" data-dir-action="connect" data-id="${escapeHtml(c.id)}" title="Connect in pane ${pane}" ${perms.can_connect === false ? 'disabled' : ''}>Connect</button>
+            <button class="dir-icon-btn" data-dir-action="link" data-id="${escapeHtml(c.id)}" title="Copy link (for bookmarks and shortcuts)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
             ${canEdit ? `<button class="dir-icon-btn" data-dir-action="edit" data-id="${escapeHtml(c.id)}" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>` : ''}
             ${canEdit ? `<button class="dir-icon-btn danger" data-dir-action="delete" data-id="${escapeHtml(c.id)}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
           </div>
@@ -1716,6 +1723,55 @@ async function deleteConnection(id) {
     showToast(`Failed to delete connection: ${err}`, 'danger');
   }
 }
+
+// ================= Direct connection links (#29) =================
+// A link like ".../#connect=<id>" opens that saved connection. The link carries
+// only the connection id; login and permission checks apply as usual.
+const PENDING_CONNECT_KEY = 'remote_pending_connect';
+const CONNECT_HASH_RE = /^#connect=([A-Za-z0-9-]{1,64})$/;
+
+function connectionLink(id) {
+  return `${location.origin}${location.pathname}#connect=${encodeURIComponent(id)}`;
+}
+
+/** Take a connect link from the address bar and keep it until the user is in. */
+function captureConnectLink() {
+  const m = CONNECT_HASH_RE.exec(location.hash);
+  if (!m) return false;
+  // Stored per tab so it survives a single sign-on redirect.
+  sessionStorage.setItem(PENDING_CONNECT_KEY, m[1]);
+  history.replaceState(null, '', location.pathname + location.search);
+  return true;
+}
+
+/** Open the connection from a link once logged in, connections loaded and the screen unlocked. */
+function openPendingConnection() {
+  const id = sessionStorage.getItem(PENDING_CONNECT_KEY);
+  if (!id || !state.currentUser || sessionStorage.getItem('remote_session_locked') === 'true') return;
+  sessionStorage.removeItem(PENDING_CONNECT_KEY);
+  const conn = (state.connections || []).find((c) => c.id === id);
+  if (!conn) {
+    showToast('The linked connection does not exist or you have no access to it.', 'warning');
+    return;
+  }
+  if (conn.user_permissions && conn.user_permissions.can_connect === false) {
+    showToast(`You are not allowed to connect to ${conn.name}.`, 'warning');
+    return;
+  }
+  // First free pane in the current layout; otherwise the selected pane.
+  const l = state.paneLayout;
+  const visible = l === 1 || l === '1' ? 1 : (l === 2 || l === '2v' || l === '2h') ? 2 : (l === 3 || l === '3') ? 3 : 4;
+  for (let i = 1; i <= visible; i++) {
+    if (!state.panes[i].socket) { activatePane(i); break; }
+  }
+  connectToTarget(conn.id);
+}
+
+// A link opened in a tab where Remote is already running only changes the "#" part.
+window.addEventListener('hashchange', () => {
+  if (!captureConnectLink() || !state.currentUser) return;
+  loadConnections().then(openPendingConnection);
+});
 
 // ================= Remote Gateway WebSocket Tunnel & Protocol Handlers =================
 function connectToTarget(connectionId) {
