@@ -3361,3 +3361,56 @@ kbd {
   background: transparent;
   cursor: pointer;
 }
+
+/* Full window / full screen toolbar: move and hide */
+.pane-bar-grip,
+.pane-header .pane-bar-hide-btn {
+  display: none;
+}
+
+.full-window-mode .pane-bar-grip,
+.fullscreen-mode .pane-bar-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 26px;
+  margin-left: -6px;
+  color: var(--woofson-text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.full-window-mode .pane-bar-grip:active,
+.fullscreen-mode .pane-bar-grip:active {
+  cursor: grabbing;
+}
+
+.full-window-mode .pane-header .pane-bar-hide-btn,
+.fullscreen-mode .pane-header .pane-bar-hide-btn {
+  display: flex;
+}
+
+#app.fs-bar-moved.full-window-mode .pane-header,
+#app.fs-bar-moved.fullscreen-mode .pane-header {
+  left: var(--fs-bar-x, 50%);
+  top: var(--fs-bar-y, 12px);
+  transform: none;
+}
+
+#app.fs-bar-moved.full-window-mode .pane-header:hover,
+#app.fs-bar-moved.fullscreen-mode .pane-header:hover,
+#app.fs-bar-moved.full-window-mode .pane-header:focus-within,
+#app.fs-bar-moved.fullscreen-mode .pane-header:focus-within {
+  transform: none;
+}
+
+#app.fs-bar-moved .pane-header.fs-bar-dragging {
+  transition: none;
+  opacity: 1;
+}
+
+#app.fs-bar-hidden.full-window-mode .pane-header,
+#app.fs-bar-hidden.fullscreen-mode .pane-header {
+  display: none !important;
+}

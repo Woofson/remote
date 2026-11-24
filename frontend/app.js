@@ -40,6 +40,7 @@ const state = {
   filesPath: '',
   filesArea: 'my',
   filesWritable: true,
+  fsToolbar: { x: null, y: null, hidden: false },
   panes: {
     1: { id: 1, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
     2: { id: 2, socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null },
@@ -837,6 +838,117 @@ document.addEventListener('click', (e) => {
 });
 
 // ================= Full Window & Fullscreen Toggle System =================
+// ================= Full window / full screen toolbar: move and hide =================
+// Position is stored as a share of the pane size so it fits any screen; saved on the user profile.
+function isFsToolbarKey(e) {
+  return e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT') && inFsToolbarMode();
+}
+
+function inFsToolbarMode() {
+  const app = document.getElementById('app');
+  return !!app && (app.classList.contains('full-window-mode') || app.classList.contains('fullscreen-mode'));
+}
+
+function applyFsToolbar(p) {
+  state.fsToolbar = { x: null, y: null, hidden: false, ...(p || {}) };
+  const app = document.getElementById('app');
+  if (!app) return;
+  const t = state.fsToolbar;
+  const moved = Number.isFinite(t.x) && Number.isFinite(t.y);
+  app.classList.toggle('fs-bar-moved', moved);
+  app.classList.toggle('fs-bar-hidden', !!t.hidden);
+  if (moved) {
+    app.style.setProperty('--fs-bar-x', `${t.x}%`);
+    app.style.setProperty('--fs-bar-y', `${t.y}%`);
+  } else {
+    app.style.removeProperty('--fs-bar-x');
+    app.style.removeProperty('--fs-bar-y');
+  }
+}
+
+let fsToolbarSaveTimer = null;
+function saveFsToolbar() {
+  clearTimeout(fsToolbarSaveTimer);
+  fsToolbarSaveTimer = setTimeout(() => {
+    if (!state.jwtToken) return;
+    const t = state.fsToolbar;
+    const moved = Number.isFinite(t.x) && Number.isFinite(t.y);
+    const value = moved || t.hidden ? { x: moved ? t.x : null, y: moved ? t.y : null, hidden: !!t.hidden } : null;
+    apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ fs_toolbar: value }) }).catch(() => {});
+  }, 400);
+}
+
+function setFsToolbarHidden(hidden) {
+  applyFsToolbar({ ...state.fsToolbar, hidden });
+  saveFsToolbar();
+  if (hidden) showFsToolbarHint();
+}
+
+function showFsToolbarHint() {
+  showToast('Toolbar hidden. Press Alt+T, or hold the mouse at the top edge of the screen, to show it again.');
+}
+
+function startFsToolbarDrag(e) {
+  if (e.button !== 0 || !inFsToolbarMode()) return;
+  const header = e.currentTarget.closest('.pane-header');
+  const box = header && header.offsetParent;
+  if (!box) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const boxRect = box.getBoundingClientRect();
+  const hRect = header.getBoundingClientRect();
+  const grabX = e.clientX - hRect.left;
+  const grabY = e.clientY - hRect.top;
+  const grip = e.currentTarget;
+  grip.setPointerCapture(e.pointerId);
+  header.classList.add('fs-bar-dragging');
+  const move = (ev) => {
+    const maxX = Math.max(0, boxRect.width - hRect.width);
+    const maxY = Math.max(0, boxRect.height - hRect.height);
+    const x = Math.min(maxX, Math.max(0, ev.clientX - boxRect.left - grabX));
+    const y = Math.min(maxY, Math.max(0, ev.clientY - boxRect.top - grabY));
+    applyFsToolbar({ ...state.fsToolbar, x: +(x / boxRect.width * 100).toFixed(2), y: +(y / boxRect.height * 100).toFixed(2) });
+  };
+  const up = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    header.classList.remove('fs-bar-dragging');
+    saveFsToolbar();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
+}
+
+function resetFsToolbarPosition(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  applyFsToolbar({ ...state.fsToolbar, x: null, y: null });
+  saveFsToolbar();
+}
+
+// Holding the pointer (mouse, pen or finger) at the very top edge for a second brings a hidden toolbar back.
+(() => {
+  const EDGE_PX = 3;
+  const HOLD_MS = 1000;
+  let timer = null;
+  const cancel = () => { clearTimeout(timer); timer = null; };
+  document.addEventListener('pointermove', (e) => {
+    if (!state.fsToolbar || !state.fsToolbar.hidden || !inFsToolbarMode() || e.clientY > EDGE_PX) {
+      cancel();
+      return;
+    }
+    if (!timer) timer = setTimeout(() => { timer = null; setFsToolbarHidden(false); }, HOLD_MS);
+  }, true);
+  document.addEventListener('pointerdown', (e) => {
+    if (!state.fsToolbar || !state.fsToolbar.hidden || !inFsToolbarMode() || e.clientY > EDGE_PX) return;
+    cancel();
+    timer = setTimeout(() => { timer = null; setFsToolbarHidden(false); }, HOLD_MS);
+  }, true);
+  document.addEventListener('pointerup', cancel, true);
+  document.addEventListener('pointerleave', cancel, true);
+})();
+
 function toggleFullWindow(paneIndex) {
   const app = document.getElementById('app');
   if (!app) return;
@@ -856,6 +968,7 @@ function toggleFullWindow(paneIndex) {
       activatePane(paneIndex);
       pane.classList.add('maximized-pane');
       app.classList.add('full-window-mode');
+      if (state.fsToolbar && state.fsToolbar.hidden) setTimeout(showFsToolbarHint, 1200);
       showToast(`Pane ${paneIndex} Full Window (F10 / Alt+W to restore)`);
     }
   } else {
@@ -870,6 +983,7 @@ function toggleFullWindow(paneIndex) {
     } else {
       app.classList.add('full-window-mode');
       showToast('Full Window mode active (F10 / Alt+W to exit)');
+      if (state.fsToolbar && state.fsToolbar.hidden) setTimeout(showFsToolbarHint, 1200);
     }
   }
 
@@ -928,6 +1042,7 @@ document.addEventListener('fullscreenchange', () => {
   const isFs = !!document.fullscreenElement;
   if (app) {
     app.classList.toggle('fullscreen-mode', isFs);
+    if (isFs && state.fsToolbar && state.fsToolbar.hidden) setTimeout(showFsToolbarHint, 1200);
   }
   if (btnFullscreen) {
     btnFullscreen.classList.toggle('active', isFs);
@@ -2029,6 +2144,8 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
   }
 
   term.open(container);
+  // Alt+T belongs to Remote (toolbar) in full window / full screen; keep it out of the shell.
+  term.attachCustomKeyEventHandler((ev) => !isFsToolbarKey(ev));
   pane.terminal = term;
   pane.fitAddon = fitAddon;
 
@@ -2435,6 +2552,9 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
       return;
     }
 
+    // Alt+T belongs to Remote (toolbar) in full window / full screen: not sent to the remote machine.
+    if (isFsToolbarKey(e)) return;
+
     sendKey(true, e);
     // Prevent default browser shortcuts except developer tools
     if (e.key !== 'F12' && !(e.ctrlKey && e.shiftKey && e.key === 'I')) {
@@ -2448,6 +2568,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
       e.stopPropagation();
       return;
     }
+    if (isFsToolbarKey(e)) return;
     sendKey(false, e);
     if (e.key !== 'F12' && !(e.ctrlKey && e.shiftKey && e.key === 'I')) {
       e.preventDefault();
@@ -3725,6 +3846,7 @@ async function loadUserTheme() {
       sessions = prefs.sessions || null;
       if (prefs.panes) applyServerPanePrefs(prefs.panes);
       if (prefs.layout) restoreLayout(prefs.layout);
+      if (prefs.fs_toolbar) applyFsToolbar(prefs.fs_toolbar);
     }
   } catch (e) {}
   applySessionPrefs(sessions);
@@ -3797,6 +3919,13 @@ function setupKeyboardShortcuts() {
     if (e.key === 'F10' || (e.altKey && (e.key === 'w' || e.key === 'W'))) {
       e.preventDefault();
       toggleFullWindow();
+      return;
+    }
+
+    // Alt+T -> show or hide the full window / full screen toolbar
+    if (e.type === 'keydown' && isFsToolbarKey(e)) {
+      e.preventDefault();
+      setFsToolbarHidden(!state.fsToolbar.hidden);
       return;
     }
 
