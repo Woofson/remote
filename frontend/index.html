@@ -675,11 +675,11 @@
       <div class="login-card">
         <div class="login-card-header">
           <div class="login-brand-icon">
-            <img src="assets/icons/remote-160.webp" alt="Remote" class="login-brand-img" />
+            <img src="assets/icons/remote-160.webp" alt="Remote" class="login-brand-img" id="login-brand-img" />
           </div>
           <div class="login-header-text">
-            <h2 class="login-title">Hello friend.</h2>
-            <p class="login-subtitle">Remote is ready when you are.</p>
+            <h2 class="login-title" id="login-title-text">Hello friend.</h2>
+            <p class="login-subtitle" id="login-subtitle-text">Remote is ready when you are.</p>
           </div>
         </div>
         <form id="login-form" onsubmit="event.preventDefault(); handleLoginSubmit();">
@@ -1083,6 +1083,7 @@
             <button type="button" class="panel-nav-btn" data-panel-page="activity" data-keywords="activity audit log access denied login password history">Activity Log</button>
             <button type="button" class="panel-nav-btn" data-panel-page="security" data-keywords="security two-factor 2fa totp authenticator session timeout idle lock lifetime expiry policy">Security</button>
             <button type="button" class="panel-nav-btn" data-panel-page="email" data-keywords="email mail smtp password reset forgot notifications sender public address">Email</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="branding" data-keywords="branding login lock screen logo title welcome wallpaper background accent colour color reset default">Branding</button>
             <button type="button" class="panel-nav-btn" data-panel-page="server" data-keywords="server settings secret key backup oidc sso password policy upload config status version">Server</button>
           </nav>
           <div class="panel-content">
@@ -1158,6 +1159,10 @@
             <section class="panel-page" data-page="email">
               <div class="panel-page-header"><h3>Email</h3></div>
               <div id="admin-email-body"></div>
+            </section>
+            <section class="panel-page" data-page="branding">
+              <div class="panel-page-header"><h3>Branding</h3></div>
+              <div id="admin-branding-body"></div>
             </section>
             <section class="panel-page" data-page="server">
               <div class="panel-page-header"><h3>Server</h3><span class="text-muted text-sm" id="server-version"></span></div>

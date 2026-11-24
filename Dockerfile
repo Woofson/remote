@@ -12,7 +12,7 @@ FROM rust:1-alpine3.23 AS build
 RUN apk add --no-cache build-base cmake perl pkgconf linux-headers openssl-dev zlib-dev
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY frontend ./frontend
 COPY assets ./assets

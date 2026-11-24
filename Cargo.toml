@@ -96,3 +96,7 @@ rustls = { version = "0.23.43", default-features = false, features = ["aws_lc_rs
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 openssl = { version = "0.10", features = ["vendored"] }
+
+[build-dependencies]
+# Build timestamp for the version info (already a dependency of Remote itself)
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

@@ -60,6 +60,7 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 - Repeated wrong passwords or codes are slowed down. Sign-ins, failures and security changes are recorded in the activity log, with the visitor's address.
 - **Email** (optional): people reset a forgotten password themselves with a single-use link, admins can email new users a link to choose their own password, and users are told when their password or two-factor settings change. Works with any SMTP server; set up under Admin > Email.
 - **Admin Control Panel**: users and groups, all connections, the activity log, security settings and a server status checklist.
+- **Branding** (Admin > Branding): your own logo, title, welcome text, wallpapers (one picked at random per visit) and accent colour on the login and lock screens, each with a reset to Remote's defaults.
 
 ---
 

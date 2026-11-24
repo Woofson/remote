@@ -33,6 +33,7 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+mod branding;
 mod email;
 mod proxy;
 mod security;
@@ -111,6 +112,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/users/:id/password-link", post(email::api_send_password_link))
         .route("/api/admin/email", get(email::api_get_email_settings).put(email::api_set_email_settings))
         .route("/api/admin/email/test", post(email::api_test_email))
+        .route("/api/branding", get(branding::api_get_branding))
+        .route("/api/branding/file/:name", get(branding::api_branding_file))
+        .route("/api/admin/branding", axum::routing::put(branding::api_set_branding))
+        .route(
+            "/api/admin/branding/image",
+            post(branding::api_upload_branding_image).layer(DefaultBodyLimit::max(branding::MAX_BRANDING_IMAGE + 64 * 1024)),
+        )
         .route("/api/shells", get(api_list_shells))
         .route("/api/auth/oidc/login", get(api_oidc_login))
         .route("/api/auth/oidc/callback", get(api_oidc_callback))
@@ -470,7 +478,12 @@ pub async fn api_list_shells(
 
 /// Public: the running version, from Cargo.toml (single source of truth).
 pub async fn api_version() -> Json<Value> {
-    Json(json!({ "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({
+        "version": env!("CARGO_PKG_VERSION"),
+        "build_number": env!("REMOTE_BUILD_NUMBER"),
+        "build_commit": env!("REMOTE_BUILD_COMMIT"),
+        "build_timestamp": env!("REMOTE_BUILD_TIMESTAMP"),
+    }))
 }
 
 pub async fn api_auth_providers(State(state): State<AppState>) -> Json<Value> {

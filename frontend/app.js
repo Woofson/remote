@@ -215,6 +215,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadThemes();
   setupPanels();
   loadAppVersion();
+  loadBranding();
   loadPasswordPolicy();
   setupPasswordDialogs();
   setupKeyboardShortcuts();
@@ -239,11 +240,25 @@ async function loadAppVersion() {
   try {
     const res = await fetch('api/version');
     if (!res.ok) return;
-    const { version } = await res.json();
-    document.querySelectorAll('.app-version').forEach((el) => {
-      el.textContent = `v${version}`;
-    });
+    state.appVersion = await res.json();
+    updateVersionText();
   } catch (e) {}
+}
+
+/** Version badges. The login and lock screen corner names Remote and its build while custom branding is on. */
+function updateVersionText() {
+  const v = state.appVersion;
+  if (!v) return;
+  const custom = !!(state.branding && state.branding.custom);
+  const details = `Remote v${v.version} (Build #${v.build_number} · ${v.build_commit} · ${v.build_timestamp})`;
+  document.querySelectorAll('.app-version').forEach((el) => {
+    if (el.classList.contains('login-corner-version-link')) {
+      el.textContent = custom ? `Remote ${v.version} (Build #${v.build_number})` : `v${v.version}`;
+      el.title = `${details} on GitHub`;
+    } else {
+      el.textContent = `v${v.version}`;
+    }
+  });
 }
 
 // ================= Authentication =================
@@ -387,6 +402,23 @@ function randomizeLoginBackground(targetEl = null) {
   const elements = targetEl ? [targetEl] : [document.getElementById('login-modal'), document.getElementById('session-lock-screen')].filter(Boolean);
   if (!elements.length) return;
 
+  // Admin wallpapers (#30): one picked at random, slightly dimmed so the card stays readable.
+  const brand = state.branding || {};
+  const walls = brand.wallpaper_urls || [];
+  if (walls.length) {
+    const url = walls[Math.floor(Math.random() * walls.length)];
+    elements.forEach((el) => {
+      el.style.backgroundImage = `linear-gradient(rgba(0, 0, 0, 0.35), rgba(0, 0, 0, 0.35)), url("${url}")`;
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center';
+    });
+    return;
+  }
+  elements.forEach((el) => { el.style.backgroundSize = ''; el.style.backgroundPosition = ''; });
+  // Glow colours follow the admin accent colour, if set.
+  const rgb = hexToRgb(brand.accent) || [245, 158, 11];
+  const shade = (f) => rgb.map((c) => Math.round(c * f)).join(', ');
+
   const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
   const randFloat = (min, max) => (Math.random() * (max - min) + min).toFixed(2);
 
@@ -404,9 +436,9 @@ function randomizeLoginBackground(targetEl = null) {
   const circleSize = randInt(450, 650);
 
   const bgStyle = `
-    radial-gradient(ellipse ${rx1}% ${ry1}% at ${x1}% ${y1}%, rgba(245, 158, 11, ${op1}) 0%, transparent 70%),
-    radial-gradient(ellipse ${rx2}% ${ry2}% at ${x2}% ${y2}%, rgba(217, 119, 6, ${op2}) 0%, transparent 65%),
-    radial-gradient(circle ${circleSize}px at ${x3}% ${y3}%, rgba(120, 53, 15, ${op3}) 0%, transparent 100%),
+    radial-gradient(ellipse ${rx1}% ${ry1}% at ${x1}% ${y1}%, rgba(${rgb.join(', ')}, ${op1}) 0%, transparent 70%),
+    radial-gradient(ellipse ${rx2}% ${ry2}% at ${x2}% ${y2}%, rgba(${shade(0.85)}, ${op2}) 0%, transparent 65%),
+    radial-gradient(circle ${circleSize}px at ${x3}% ${y3}%, rgba(${shade(0.45)}, ${op3}) 0%, transparent 100%),
     linear-gradient(${angle}deg, #0e0e11 0%, #15151a 45%, #181512 100%)
   `;
 
@@ -3339,6 +3371,7 @@ const panelLoaders = {
     activity: () => loadActivityLog(),
     security: () => loadAdminSecurity(),
     email: () => loadAdminEmail(),
+    branding: () => loadAdminBranding(),
     server: () => loadServerPage(),
   },
   'settings-panel': {
@@ -5713,4 +5746,226 @@ async function sendTestEmail() {
     btn.disabled = false;
     btn.textContent = 'Send test';
   }
+}
+
+
+// ================= Login and lock screen branding (#30) =================
+const BRAND_DEFAULTS = {
+  title: 'Hello friend.',
+  subtitle: 'Remote is ready when you are.',
+  logo: 'assets/icons/remote-160.webp',
+};
+
+function hexToRgb(hex) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : null;
+}
+
+/** A lighter variant of the accent for hover states. */
+function lightenHex(hex, amount = 0.25) {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  return '#' + rgb.map((c) => Math.round(c + (255 - c) * amount).toString(16).padStart(2, '0')).join('');
+}
+
+async function loadBranding() {
+  try {
+    const res = await fetch('api/branding');
+    if (!res.ok) return;
+    state.branding = await res.json();
+    applyBranding();
+  } catch (e) {}
+}
+
+function applyBranding() {
+  const b = state.branding || {};
+  const title = document.getElementById('login-title-text');
+  const subtitle = document.getElementById('login-subtitle-text');
+  if (title) title.textContent = b.title || BRAND_DEFAULTS.title;
+  if (subtitle) subtitle.textContent = b.subtitle || BRAND_DEFAULTS.subtitle;
+  document.querySelectorAll('#login-brand-img, .login-corner-logo').forEach((img) => {
+    img.src = b.logo_url || BRAND_DEFAULTS.logo;
+  });
+  const rgb = hexToRgb(b.accent);
+  ['login-modal', 'session-lock-screen'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (rgb) {
+      el.style.setProperty('--woofson-accent', b.accent);
+      el.style.setProperty('--woofson-accent-hover', lightenHex(b.accent));
+      el.style.setProperty('--login-accent-rgb', rgb.join(', '));
+    } else {
+      ['--woofson-accent', '--woofson-accent-hover', '--login-accent-rgb'].forEach((p) => el.style.removeProperty(p));
+    }
+  });
+  randomizeLoginBackground();
+  updateVersionText();
+}
+
+// ---- Admin > Branding ----
+let brandDraft = null;
+
+async function loadAdminBranding() {
+  try {
+    const res = await fetch('api/branding');
+    if (res.ok) state.branding = await res.json();
+  } catch (e) {}
+  const b = state.branding || {};
+  brandDraft = {
+    title: b.title || '',
+    subtitle: b.subtitle || '',
+    logo: b.logo || null,
+    wallpapers: [...(b.wallpapers || [])],
+    accent: b.accent || null,
+  };
+  renderAdminBranding();
+}
+
+const brandFileUrl = (f) => `api/branding/file/${f}`;
+const BRAND_X = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+
+function renderAdminBranding() {
+  const body = document.getElementById('admin-branding-body');
+  if (!body || !brandDraft) return;
+  const d = brandDraft;
+  const v = (x) => escapeHtml(x == null ? '' : String(x));
+  const accent = d.accent || '#f59e0b';
+  body.innerHTML = `
+    <p class="pw-hint" style="margin:0 0 6px;">Make the login and lock screens your own. Everyone sees these before signing in. Empty fields and removed pictures fall back to Remote's defaults.</p>
+    <div class="sec-row">
+      <div class="sec-label">Logo<div class="pw-hint">Shown on the login screen. Square pictures work best; transparent PNG or WebP is fine.</div></div>
+      <div class="sec-field">
+        <div class="brand-thumb logo" style="background-image:url('${d.logo ? brandFileUrl(d.logo) : BRAND_DEFAULTS.logo}')"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('brand-logo-file').click()">Upload</button>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="brandReset('logo')" ${d.logo ? '' : 'disabled'}>Reset</button>
+        <input type="file" id="brand-logo-file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="brandUpload(event, 'logo')"/>
+      </div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Title</div>
+      <div class="sec-field">
+        <input type="text" id="brand-title" class="form-input mail-wide" maxlength="60" value="${v(d.title)}" placeholder="${v(BRAND_DEFAULTS.title)}" oninput="brandDraft.title = this.value"/>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="brandReset('title')">Reset</button>
+      </div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Welcome text</div>
+      <div class="sec-field">
+        <input type="text" id="brand-subtitle" class="form-input mail-wide" maxlength="160" value="${v(d.subtitle)}" placeholder="${v(BRAND_DEFAULTS.subtitle)}" oninput="brandDraft.subtitle = this.value"/>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="brandReset('subtitle')">Reset</button>
+      </div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Wallpapers<div class="pw-hint">One is picked at random for each visit to the login or lock screen. Without any, Remote's amber glow is shown. Up to 20.</div></div>
+      <div class="sec-field" style="flex-direction:column; align-items:flex-start;">
+        <div class="brand-thumbs">
+          ${d.wallpapers.map((w, i) => `<div class="brand-thumb" style="background-image:url('${brandFileUrl(w)}')"><button type="button" class="brand-thumb-remove" title="Remove" onclick="brandRemoveWallpaper(${i})">${BRAND_X}</button></div>`).join('') || '<span class="pw-hint">Remote default (amber glow)</span>'}
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="document.getElementById('brand-wall-file').click()" ${d.wallpapers.length >= 20 ? 'disabled' : ''}>Add pictures</button>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="brandReset('wallpapers')" ${d.wallpapers.length ? '' : 'disabled'}>Reset</button>
+        </div>
+        <input type="file" id="brand-wall-file" accept="image/png,image/jpeg,image/webp" multiple style="display:none" onchange="brandUpload(event, 'wallpaper')"/>
+      </div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Accent colour<div class="pw-hint">Buttons, highlights and the glow on the login and lock screens.</div></div>
+      <div class="sec-field brand-accent-row">
+        <input type="color" id="brand-accent" value="${v(accent)}" oninput="brandDraft.accent = this.value; document.getElementById('brand-accent-label').textContent = this.value"/>
+        <code id="brand-accent-label">${d.accent ? v(d.accent) : 'Remote default'}</code>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="brandReset('accent')" ${d.accent ? '' : 'disabled'}>Reset</button>
+      </div>
+    </div>
+    <div class="sec-actions">
+      <span class="pw-error" id="brand-error"></span>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="brandResetAll()">Reset all to Remote defaults</button>
+      <button type="button" class="btn btn-accent btn-sm" onclick="saveBranding()">Save</button>
+    </div>`;
+}
+
+function brandReset(what) {
+  if (what === 'logo') brandDraft.logo = null;
+  if (what === 'title') brandDraft.title = '';
+  if (what === 'subtitle') brandDraft.subtitle = '';
+  if (what === 'wallpapers') brandDraft.wallpapers = [];
+  if (what === 'accent') brandDraft.accent = null;
+  renderAdminBranding();
+}
+
+function brandRemoveWallpaper(i) {
+  brandDraft.wallpapers.splice(i, 1);
+  renderAdminBranding();
+}
+
+/** Shrink a picture in the browser before upload: wallpapers to 2560x1440 at most, logos to 256x256. */
+function brandShrinkImage(file, maxW, maxH, type) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxW / img.width, maxH / img.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob && blob.type === type) return resolve(blob);
+        // Browsers without WebP encoding: PNG keeps logo transparency, JPEG keeps wallpapers small.
+        canvas.toBlob((b2) => (b2 ? resolve(b2) : reject(new Error('Could not read the picture'))), maxW > 512 ? 'image/jpeg' : 'image/png', 0.85);
+      }, type, 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Not a picture this browser can read')); };
+    img.src = url;
+  });
+}
+
+async function brandUpload(event, kind) {
+  const files = [...(event.target.files || [])];
+  event.target.value = '';
+  const errEl = document.getElementById('brand-error');
+  if (errEl) errEl.textContent = '';
+  for (const file of files) {
+    if (kind === 'wallpaper' && brandDraft.wallpapers.length >= 20) break;
+    try {
+      const blob = kind === 'logo'
+        ? await brandShrinkImage(file, 256, 256, 'image/webp')
+        : await brandShrinkImage(file, 2560, 1440, 'image/webp');
+      const form = new FormData();
+      form.append('file', blob, 'image');
+      const res = await apiFetch('api/admin/branding/image', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Upload failed');
+      if (kind === 'logo') brandDraft.logo = data.file;
+      else if (!brandDraft.wallpapers.includes(data.file)) brandDraft.wallpapers.push(data.file);
+    } catch (e) {
+      if (errEl) errEl.textContent = `${file.name}: ${e.message}`;
+    }
+  }
+  renderAdminBranding();
+}
+
+async function saveBranding(payload = null) {
+  const errEl = document.getElementById('brand-error');
+  if (errEl) errEl.textContent = '';
+  const d = payload || brandDraft;
+  const res = await apiFetch('api/admin/branding', {
+    method: 'PUT',
+    body: JSON.stringify({ title: d.title, subtitle: d.subtitle, logo: d.logo, wallpapers: d.wallpapers, accent: d.accent }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    if (errEl) errEl.textContent = data.error || 'Saving failed';
+    return;
+  }
+  state.branding = data;
+  applyBranding();
+  await loadAdminBranding();
+  showToast(data.custom ? 'Branding saved' : 'Branding reset to Remote defaults', 'success');
+}
+
+async function brandResetAll() {
+  const ok = await uiConfirm('Reset the logo, texts, wallpapers and accent colour to Remote\'s defaults? Uploaded pictures are deleted.', { title: 'Reset branding', okText: 'Reset all', danger: true });
+  if (!ok) return;
+  await saveBranding({ title: '', subtitle: '', logo: null, wallpapers: [], accent: null });
 }
