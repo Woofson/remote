@@ -65,7 +65,19 @@ dirs = "5.0"
 open = "5.3"
 async-trait = "0.1"
 urlencoding = "2.1"
-ironrdp-client = { version = "0.1.0", features = ["rustls", "clipboard", "rdpdr"] }
+# RDP client engine adapted from ironrdp-client 0.1.0 lives in src/protocols/rdp_client
+# (see docs/rdp-client.md); these are its direct dependencies.
+anyhow = "1"
+url = "2"
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+ironrdp-cfg = "0.1"
+ironrdp-propertyset = "0.1"
+ironrdp-displaycontrol = "0.8"
+ironrdp-dvc = "0.8"
+ironrdp-echo = "0.4"
+ironrdp-rdcleanpath = "0.2"
+ironrdp-cliprdr-native = "0.7"
 ironrdp-connector = "0.10.0"
 ironrdp-session = "0.11.0"
 ironrdp-pdu = "0.9.0"

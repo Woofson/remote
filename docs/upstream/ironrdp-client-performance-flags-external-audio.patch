@@ -1,0 +1,85 @@
+diff -ru a/src/config.rs b/src/config.rs
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -202,6 +202,12 @@
+     /// Enable QOIZ (QOI with zlib) bitmap codec.
+     #[cfg(feature = "qoiz")]
+     pub qoiz: bool,
++
++    /// Advertise audio playback without the built-in `sound` backend.
++    ///
++    /// For callers that register their own RDPSND channel via
++    /// [`ConfigBuilder::with_static_channel`] (for example to forward audio elsewhere).
++    pub external_audio: bool,
+ }
+ 
+ #[cfg_attr(
+@@ -224,6 +230,7 @@
+             qoi: true,
+             #[cfg(feature = "qoiz")]
+             qoiz: true,
++            external_audio: false,
+         }
+     }
+ }
+@@ -558,6 +565,7 @@
+     enable_server_pointer: Option<bool>,
+     pointer_software_rendering: Option<bool>,
+     enable_audio_playback: Option<bool>,
++    performance_flags: Option<ironrdp_pdu::rdp::client_info::PerformanceFlags>,
+     compression_type: Option<ironrdp_pdu::rdp::client_info::CompressionType>,
+     compression_enabled: Option<bool>,
+     alternate_shell: Option<String>,
+@@ -898,6 +906,26 @@
+         self
+     }
+ 
++    /// Set the performance flags sent in the Client Info PDU (wallpaper, full-window drag,
++    /// menu animations, theming, font smoothing, ...).
++    ///
++    /// Defaults to [`PerformanceFlags::default`](ironrdp_pdu::rdp::client_info::PerformanceFlags).
++    #[must_use]
++    pub fn with_performance_flags(mut self, flags: ironrdp_pdu::rdp::client_info::PerformanceFlags) -> Self {
++        self.performance_flags = Some(flags);
++        self
++    }
++
++    /// Advertise audio playback to the server while supplying the RDPSND channel yourself
++    /// through [`with_static_channel`](Self::with_static_channel), without the built-in
++    /// `sound` backend.
++    #[must_use]
++    pub fn with_external_audio(mut self, enabled: bool) -> Self {
++        self.channels.external_audio = enabled;
++        self.enable_audio_playback = Some(enabled);
++        self
++    }
++
+     /// Enable or disable RDPSND (audio) playback.
+     #[cfg(feature = "sound")]
+     #[must_use]
+@@ -1175,7 +1203,7 @@
+             pointer_software_rendering: self.pointer_software_rendering.unwrap_or(false),
+             multitransport_flags: None,
+             compression_type,
+-            performance_flags: PerformanceFlags::default(),
++            performance_flags: self.performance_flags.unwrap_or(PerformanceFlags::default()),
+             timezone_info: TimezoneInfo::default(),
+             alternate_shell: self.alternate_shell.unwrap_or_default(),
+             work_dir: self.work_dir.unwrap_or_default(),
+diff -ru a/src/rdp.rs b/src/rdp.rs
+--- a/src/rdp.rs
++++ b/src/rdp.rs
+@@ -352,11 +352,11 @@
+     // If sound is disabled at runtime (or the feature is off) ensure the connector doesn't
+     // advertise audio support, which would confuse the server.
+     #[cfg(not(feature = "sound"))]
+-    {
++    if !config.channels.external_audio {
+         connector_config.enable_audio_playback = false;
+     }
+     #[cfg(feature = "sound")]
+-    if !config.channels.sound {
++    if !config.channels.sound && !config.channels.external_audio {
+         connector_config.enable_audio_playback = false;
+     }
+ 

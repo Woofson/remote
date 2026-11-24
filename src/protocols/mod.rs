@@ -4,6 +4,7 @@ pub mod ssh;
 pub mod telnet;
 pub mod vnc;
 pub mod rdp;
+pub mod rdp_client;
 pub mod rdp_drive;
 
 use serde::{Deserialize, Serialize};

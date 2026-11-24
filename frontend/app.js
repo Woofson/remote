@@ -2251,6 +2251,9 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
           ctx.putImageData(imgData, x, y);
           offset += byteLen;
         }
+      } else if (type === 0x10) {
+        // Sound: [0x10, PCM signed 16-bit little-endian, stereo, 44.1 kHz]
+        playPaneAudio(pane, e.data);
       } else if (type === 0x02) {
         // CopyRect
         const x = dv.getUint16(1, false);
@@ -2478,6 +2481,96 @@ async function requestClosePane(paneIndex) {
   disconnectPane(paneIndex);
 }
 
+// ================= Sound from remote desktops (#25) =================
+// The server forwards the remote machine's sound as raw PCM; it is queued gap-free
+// through Web Audio. Browsers block sound until the user has clicked the page.
+const AUDIO_RATE = 44100;
+const AUDIO_ICON_ON = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>';
+const AUDIO_ICON_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
+
+function playPaneAudio(pane, buf) {
+  if (!pane.audio) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    pane.audio = { ctx, gain, nextTime: 0, muted: false };
+    ctx.onstatechange = () => updatePaneAudioButton(pane);
+    if (ctx.state === 'suspended') {
+      // Blocked until a click or key press anywhere on the page.
+      const resume = () => {
+        if (pane.audio && pane.audio.ctx === ctx) ctx.resume().catch(() => {});
+        document.removeEventListener('pointerdown', resume, true);
+        document.removeEventListener('keydown', resume, true);
+      };
+      document.addEventListener('pointerdown', resume, true);
+      document.addEventListener('keydown', resume, true);
+      ctx.resume().catch(() => {});
+    }
+    updatePaneAudioButton(pane);
+  }
+  const a = pane.audio;
+  if (a.ctx.state !== 'running') return; // drop sound while blocked instead of piling it up
+
+  const frames = Math.floor((buf.byteLength - 1) / 4);
+  if (frames <= 0) return;
+  const pcm = new DataView(buf, 1);
+  const audioBuf = a.ctx.createBuffer(2, frames, AUDIO_RATE);
+  const left = audioBuf.getChannelData(0);
+  const right = audioBuf.getChannelData(1);
+  for (let i = 0; i < frames; i++) {
+    left[i] = pcm.getInt16(i * 4, true) / 32768;
+    right[i] = pcm.getInt16(i * 4 + 2, true) / 32768;
+  }
+  const now = a.ctx.currentTime;
+  // Small safety margin; start over if the queue fell behind or ran far ahead (lag).
+  if (a.nextTime < now + 0.02 || a.nextTime > now + 0.5) a.nextTime = now + 0.06;
+  const src = a.ctx.createBufferSource();
+  src.buffer = audioBuf;
+  src.connect(a.gain);
+  src.start(a.nextTime);
+  a.nextTime += audioBuf.duration;
+}
+
+function stopPaneAudio(pane) {
+  if (pane.audio) {
+    try { pane.audio.ctx.close(); } catch (e) {}
+    pane.audio = null;
+  }
+  updatePaneAudioButton(pane);
+}
+
+function togglePaneAudio(paneIndex) {
+  const pane = state.panes[paneIndex];
+  const a = pane && pane.audio;
+  if (!a) return;
+  if (a.ctx.state !== 'running') {
+    a.ctx.resume().catch(() => {});
+    a.muted = false;
+  } else {
+    a.muted = !a.muted;
+  }
+  a.gain.gain.value = a.muted ? 0 : 1;
+  updatePaneAudioButton(pane);
+}
+
+function updatePaneAudioButton(pane) {
+  const btn = document.getElementById(`pane-${pane.id}-audio-btn`);
+  if (!btn) return;
+  const a = pane.audio;
+  if (!a) {
+    btn.style.display = 'none';
+    btn.classList.remove('blocked');
+    return;
+  }
+  const blocked = a.ctx.state !== 'running';
+  btn.style.display = '';
+  btn.classList.toggle('blocked', blocked);
+  btn.innerHTML = blocked || a.muted ? AUDIO_ICON_OFF : AUDIO_ICON_ON;
+  btn.title = blocked ? 'Sound is blocked by the browser: click to enable sound' : a.muted ? 'Unmute sound' : 'Mute sound';
+}
+
 function disconnectPane(paneIndex) {
   const pane = state.panes[paneIndex];
   const prevConn = pane.conn;
@@ -2501,6 +2594,7 @@ function disconnectPane(paneIndex) {
     pane.socket.close();
     pane.socket = null;
   }
+  stopPaneAudio(pane);
   pane.conn = null;
 
   document.getElementById(`pane-${paneIndex}-title`).textContent = 'Ready for Session';

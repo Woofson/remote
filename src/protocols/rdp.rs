@@ -1,7 +1,7 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures_util::{SinkExt, StreamExt};
-use ironrdp_client::config::{ClipboardType, ConfigBuilder, Destination};
-use ironrdp_client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
+use super::rdp_client::config::{ClipboardType, ConfigBuilder, Destination};
+use super::rdp_client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
 use ironrdp_cliprdr::backend::{ClipboardMessage, CliprdrBackend};
 use ironrdp_cliprdr::pdu::{
     ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsRequest,
@@ -12,6 +12,8 @@ use ironrdp_connector::ConnectorErrorKind;
 use ironrdp_pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp_pdu::input::mouse::{MousePdu, PointerFlags};
 use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
+use ironrdp_pdu::rdp::client_info::PerformanceFlags;
+use ironrdp_rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
 use serde_json::json;
 use smallvec::smallvec;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +40,58 @@ pub struct RdpConnectionParams {
     /// Drives offered as `\\tsclient\<name>`; empty disables drive redirection.
     pub drives: Vec<super::rdp_drive::DriveSpec>,
     pub keyboard_layout: Option<String>,
+}
+
+/// Binary packet type for audio sent to the browser: `[0x10, PCM s16le stereo 44.1 kHz ...]`.
+const AUDIO_PACKET: u8 = 0x10;
+
+/// The one audio format offered to the server. Windows always offers it; offering a single
+/// format keeps the server's format numbers unambiguous.
+const WEB_AUDIO_FORMATS: [AudioFormat; 1] = [AudioFormat {
+    format: WaveFormat::PCM,
+    n_channels: 2,
+    n_samples_per_sec: 44_100,
+    n_avg_bytes_per_sec: 44_100 * 4,
+    n_block_align: 4,
+    bits_per_sample: 16,
+    data: None,
+}];
+
+/// RDPSND backend that forwards the remote machine's sound to the browser as raw PCM.
+#[derive(Debug)]
+struct WebAudioBackend {
+    ws_tx: mpsc::Sender<Message>,
+}
+
+impl ironrdp_rdpsnd::client::RdpsndClientHandler for WebAudioBackend {
+    fn get_formats(&self) -> &[AudioFormat] {
+        &WEB_AUDIO_FORMATS
+    }
+
+    fn wave(&mut self, _format_no: usize, _ts: u32, data: std::borrow::Cow<'_, [u8]>) {
+        let mut pkt = Vec::with_capacity(1 + data.len());
+        pkt.push(AUDIO_PACKET);
+        pkt.extend_from_slice(&data);
+        // Never block the RDP session for sound: drop a chunk if the browser falls behind.
+        let _ = self.ws_tx.try_send(Message::Binary(pkt));
+    }
+
+    fn set_volume(&mut self, _volume: VolumePdu) {}
+
+    fn set_pitch(&mut self, _pitch: PitchPdu) {}
+
+    fn close(&mut self) {}
+}
+
+/// Performance flags from the connection settings (wallpaper, window drag, animations, ...).
+fn performance_flags(params: &RdpConnectionParams) -> PerformanceFlags {
+    let mut f = PerformanceFlags::empty();
+    f.set(PerformanceFlags::DISABLE_WALLPAPER, params.disable_wallpaper);
+    f.set(PerformanceFlags::DISABLE_FULLWINDOWDRAG, params.disable_full_window_drag);
+    f.set(PerformanceFlags::DISABLE_MENUANIMATIONS, params.disable_menu_animations);
+    f.set(PerformanceFlags::DISABLE_THEMING, params.disable_themes);
+    f.set(PerformanceFlags::ENABLE_FONT_SMOOTHING, params.font_smoothing);
+    f
 }
 
 #[derive(Debug, Clone)]
@@ -503,6 +557,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_username(parsed_user)
         .with_password(password)
         .with_clipboard(ClipboardType::Disable)
+        .with_performance_flags(performance_flags(&params))
         .with_static_channel(move |_props| {
             Some(ironrdp_cliprdr::Cliprdr::new(Box::new(backend_for_factory.clone())))
         });
@@ -513,7 +568,17 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         }
     }
 
-    if !params.drives.is_empty() {
+    if params.enable_audio {
+        info!("RDP Gateway: audio playback enabled, forwarding sound to the browser");
+        let audio_tx = ws_out_tx.clone();
+        config_builder = config_builder
+            .with_external_audio(true)
+            .with_static_channel(move |_ps| {
+                Some(ironrdp_rdpsnd::client::Rdpsnd::new(Box::new(WebAudioBackend {
+                    ws_tx: audio_tx.clone(),
+                })))
+            });
+    } else if !params.drives.is_empty() {
         // Windows only starts the RDPDR channel when the client also advertises RDPSND
         // (MS-RDPEFS, Appendix A). Register a silent RDPSND channel that offers no audio
         // formats, so no audio is streamed.
@@ -522,6 +587,9 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                 ironrdp_rdpsnd::client::NoopRdpsndBackend,
             )))
         });
+    }
+
+    if !params.drives.is_empty() {
         config_builder = config_builder.with_rdpdr(true);
         for d in &params.drives {
             info!(
