@@ -349,22 +349,39 @@ impl Hub {
         let mut closing = false;
         match &m {
             Message::Text(t) => match control_type(t).as_deref() {
-                Some("init") => self.last_init = Some(m.clone()),
+                Some("init") => {
+                    self.last_init = Some(m.clone());
+                    if let (Some(rec), Some(v)) = (self.recorder.as_mut(), parse_control(t)) {
+                        let dim = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0).min(u16::MAX as u64) as u16;
+                        rec.screen_size(dim("width"), dim("height"));
+                    }
+                }
                 // Clipboard contents and password prompts belong to the owner.
                 Some("clipboard_sync") | Some("auth_required") => owner_only = true,
                 Some(_) => {}
                 None => self.remember_terminal_output(&m),
             },
-            Message::Binary(_) => {
+            Message::Binary(b) => {
                 if self.cfg.kind == SessionKind::Terminal {
                     self.remember_terminal_output(&m);
+                } else if let Some(rec) = self.recorder.as_mut() {
+                    rec.picture(b);
+                    if rec.take_resync() {
+                        let _ = self.proto_in.send(Message::Text(json!({ "type": "refresh" }).to_string())).await;
+                    }
                 }
             }
             Message::Close(_) => closing = true,
             _ => {}
         }
+        // A recorded desktop keeps drawing while nobody looks (#31); those who cannot see it
+        // are not sent the pictures, and get a fresh one when they look again.
+        let hidden_skip = self.records_pictures() && matches!(&m, Message::Binary(b) if matches!(b.first(), Some(0x01..=0x03)));
         if !owner_only {
-            self.to_guests(&m);
+            self.to_guests_filtered(&m, hidden_skip);
+        }
+        if hidden_skip && !self.owner_visible {
+            return false;
         }
         if closing {
             for g in self.guests.values() {
@@ -403,9 +420,19 @@ impl Hub {
         }
     }
 
+    /// Recording a desktop: the picture keeps coming even when nobody can see it.
+    fn records_pictures(&self) -> bool {
+        self.recorder.as_ref().is_some_and(|r| r.is_graphics())
+    }
+
     fn to_guests(&mut self, m: &Message) {
+        self.to_guests_filtered(m, false);
+    }
+
+    /// `skip_hidden`: leave out guests who cannot see the session right now.
+    fn to_guests_filtered(&mut self, m: &Message, skip_hidden: bool) {
         for g in self.guests.values_mut() {
-            if g.lagging {
+            if g.lagging || (skip_hidden && !g.visible) {
                 continue;
             }
             if g.tx.try_send(m.clone()).is_err() {
@@ -438,7 +465,11 @@ impl Hub {
             if let Some(v) = parse_control(t) {
                 match v.get("type").and_then(|x| x.as_str()) {
                     Some("visibility") => {
+                        let was = self.owner_visible;
                         self.owner_visible = v.get("visible").and_then(|x| x.as_bool()).unwrap_or(true);
+                        if self.owner_visible && !was && self.records_pictures() {
+                            let _ = self.proto_in.send(Message::Text(json!({ "type": "refresh" }).to_string())).await;
+                        }
                         self.update_visibility().await;
                         return;
                     }
@@ -505,7 +536,11 @@ impl Hub {
                 if let Some(v) = parse_control(t) {
                     match v.get("type").and_then(|x| x.as_str()) {
                         Some("visibility") => {
+                            let was = g.visible;
                             g.visible = v.get("visible").and_then(|x| x.as_bool()).unwrap_or(true);
+                            if g.visible && !was && self.records_pictures() {
+                                let _ = self.proto_in.send(Message::Text(json!({ "type": "refresh" }).to_string())).await;
+                            }
                             self.update_visibility().await;
                             return;
                         }
@@ -533,7 +568,7 @@ impl Hub {
         if self.cfg.kind != SessionKind::Graphics {
             return;
         }
-        let visible = self.owner_visible || self.guests.values().any(|g| g.visible);
+        let visible = self.owner_visible || self.guests.values().any(|g| g.visible) || self.records_pictures();
         if visible != self.sent_visible {
             self.sent_visible = visible;
             let _ = self.proto_in.send(Message::Text(json!({ "type": "visibility", "visible": visible }).to_string())).await;

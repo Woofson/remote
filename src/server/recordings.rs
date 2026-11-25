@@ -194,6 +194,89 @@ pub async fn api_recording_data(
         .map_err(db_err)
 }
 
+/// Desktop recordings: where playback can start, and the length. Watching someone else's
+/// recording is logged here (once per opening).
+pub async fn api_recording_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ip: ClientIp,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    let claims = extract_claims(&state, &headers)?;
+    let (rec, r) = load(&state, &claims, &id)?;
+    if rec.kind != "graphics" {
+        return Err(err(StatusCode::BAD_REQUEST, "Not a desktop recording"));
+    }
+    let path = folder(&state).join(&rec.file_name);
+    let segments = tokio::task::spawn_blocking(move || crate::recording::read_index(&path))
+        .await
+        .map_err(db_err)?
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
+    if r.relation != "own" {
+        state.db.log_audit(
+            Some(&claims.sub),
+            &claims.username,
+            "RECORDING_VIEWED",
+            rec.connection_id.as_deref(),
+            Some(&rec.connection_name),
+            Some(&format!("{}'s recording from {}", rec.username, short_time(&rec.started_at))),
+            ip.as_opt(),
+        );
+    }
+    Ok(Json(json!({ "segments": segments, "duration_ms": rec.duration_ms, "status": rec.status })))
+}
+
+/// Desktop recordings: one piece (from a seek point to the next), decrypted but still
+/// compressed; the player unpacks it.
+pub async fn api_recording_segment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath((id, n)): AxumPath<(String, usize)>,
+) -> Result<Response, ApiError> {
+    let claims = extract_claims(&state, &headers)?;
+    let (rec, _) = load(&state, &claims, &id)?;
+    if rec.kind != "graphics" {
+        return Err(err(StatusCode::BAD_REQUEST, "Not a desktop recording"));
+    }
+    let path = folder(&state).join(&rec.file_name);
+    let key_enc = rec.key_enc.clone();
+    let secret = state.config.read().server.jwt_secret.clone();
+    let data = tokio::task::spawn_blocking(move || crate::recording::read_segment(&path, &key_enc, &secret, n))
+        .await
+        .map_err(db_err)?
+        .map_err(|e| err(StatusCode::NOT_FOUND, &e))?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(Body::from(data))
+        .map_err(db_err)
+}
+
+/// Desktop recordings are downloaded as a video the browser makes; this checks it is
+/// allowed and writes it to the activity log before the browser starts.
+pub async fn api_recording_export(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ip: ClientIp,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, ApiError> {
+    let claims = extract_claims(&state, &headers)?;
+    let (rec, r) = load(&state, &claims, &id)?;
+    if !r.download {
+        return Err(err(StatusCode::FORBIDDEN, "Downloading this recording is not allowed"));
+    }
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "RECORDING_DOWNLOADED",
+        rec.connection_id.as_deref(),
+        Some(&rec.connection_name),
+        Some(&format!("{}'s recording from {} (saved as video)", rec.username, short_time(&rec.started_at))),
+        ip.as_opt(),
+    );
+    Ok(Json(json!({ "ok": true })))
+}
+
 /// Download as a plain (unencrypted) file. Always logged.
 pub async fn api_recording_download(
     State(state): State<AppState>,
@@ -205,6 +288,9 @@ pub async fn api_recording_download(
     let (rec, r) = load(&state, &claims, &id)?;
     if !r.download {
         return Err(err(StatusCode::FORBIDDEN, "Downloading this recording is not allowed"));
+    }
+    if rec.kind == "graphics" {
+        return Err(err(StatusCode::BAD_REQUEST, "Desktop recordings are saved as a video from the player"));
     }
     let stream = read_stream(&state, &rec).await?;
     state.db.log_audit(

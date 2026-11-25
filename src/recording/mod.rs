@@ -11,7 +11,10 @@
 //! the server's master secret. Chunks are written every few seconds, so a crash loses at
 //! most the last few seconds.
 //!
-//! File layout: `REMOTEREC1` then repeated `[u32 length][12-byte nonce][ciphertext]`.
+//! Terminal file layout: `REMOTEREC1` then repeated `[u32 length][12-byte nonce][ciphertext]`.
+//!
+//! Desktop sessions (RDP, VNC) record the picture updates the browser was sent; see
+//! [`graphics`] for their format, the server-side screen copy and the seek points.
 
 use crate::db::{Database, RecordingRecord};
 use aes_gcm::aead::{Aead, KeyInit, Payload};
@@ -25,6 +28,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
+
+mod graphics;
+pub use graphics::{read_index, read_segment, Segment};
 
 const MAGIC: &[u8] = b"REMOTEREC1";
 /// Write a chunk once this much is waiting...
@@ -46,21 +52,36 @@ pub struct RecordingStart {
     pub connection_id: String,
     pub connection_name: String,
     pub protocol: String,
+    /// RDP/VNC: a picture. Otherwise a terminal of `cols` x `rows`.
+    pub graphics: bool,
     pub cols: u16,
     pub rows: u16,
 }
 
 enum Cmd {
+    /// Terminal: one finished line of the text recording.
     Data(Vec<u8>),
+    /// Desktop: a picture update as sent to the browser.
+    Packet(Vec<u8>),
+    /// Desktop: the screen size (re)set.
+    Init(u16, u16),
     Finish,
 }
 
-/// Records one terminal session. Lives in the session relay; dropping it ends the recording.
+/// Picture updates waiting for the writer before new ones are dropped (and a fresh picture asked for).
+const MAX_QUEUED: usize = 128 * 1024 * 1024;
+
+/// Records one session. Lives in the session relay; dropping it ends the recording.
 pub struct Recorder {
     tx: mpsc::Sender<Cmd>,
     started: Instant,
     utf8_carry: Vec<u8>,
     finished: bool,
+    graphics: bool,
+    /// Desktop: bytes handed to the writer and not yet processed.
+    queued: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// Desktop: updates were dropped; the picture must be redrawn in full.
+    lost: bool,
 }
 
 impl Recorder {
@@ -75,8 +96,9 @@ impl Recorder {
         getrandom::getrandom(&mut key).map_err(|e| format!("No random source: {e}"))?;
         let key_enc = crate::auth::encrypt_secret(&hex::encode(key), &s.master_secret)?;
 
+        let magic = if s.graphics { graphics::MAGIC } else { MAGIC };
         let mut file = open_private_file(&path)?;
-        file.write_all(MAGIC).map_err(|e| format!("Cannot write {}: {e}", path.display()))?;
+        file.write_all(magic).map_err(|e| format!("Cannot write {}: {e}", path.display()))?;
 
         let now = chrono::Utc::now();
         let rec = RecordingRecord {
@@ -86,11 +108,11 @@ impl Recorder {
             connection_id: Some(s.connection_id),
             connection_name: s.connection_name.clone(),
             protocol: s.protocol,
-            kind: "terminal".into(),
+            kind: if s.graphics { "graphics" } else { "terminal" }.into(),
             started_at: now.to_rfc3339(),
             ended_at: None,
             duration_ms: 0,
-            size_bytes: MAGIC.len() as i64,
+            size_bytes: magic.len() as i64,
             status: "recording".into(),
             file_name,
             key_enc,
@@ -112,13 +134,61 @@ impl Recorder {
 
         let (tx, rx) = mpsc::channel::<Cmd>();
         let started = Instant::now();
-        let writer = ChunkWriter { file, cipher: Aes256Gcm::new_from_slice(&key).expect("32-byte key"), index: 0, size: MAGIC.len() as u64 };
-        std::thread::Builder::new()
-            .name("recording".into())
-            .spawn(move || write_loop(rx, writer, first, db, id, path, started, audit))
-            .map_err(|e| format!("Cannot start the recording writer: {e}"))?;
+        let queued = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let writer = ChunkWriter {
+            file,
+            cipher: Aes256Gcm::new_from_slice(&key).expect("32-byte key"),
+            index: 0,
+            size: magic.len() as u64,
+            v2: s.graphics,
+            level: if s.graphics { Compression::fast() } else { Compression::default() },
+        };
+        let done = Finisher { db, id, path, started, audit };
+        let spawned = if s.graphics {
+            let q = queued.clone();
+            std::thread::Builder::new().name("recording".into()).spawn(move || graphics::write_loop(rx, writer, q, done))
+        } else {
+            std::thread::Builder::new().name("recording".into()).spawn(move || write_loop(rx, writer, first, done))
+        };
+        spawned.map_err(|e| format!("Cannot start the recording writer: {e}"))?;
 
-        Ok(Recorder { tx, started, utf8_carry: Vec::new(), finished: false })
+        Ok(Recorder { tx, started, utf8_carry: Vec::new(), finished: false, graphics: s.graphics, queued, lost: false })
+    }
+
+    /// Desktop: a picture update the browser was sent (tiles, copies; not sound).
+    pub fn picture(&mut self, packet: &[u8]) {
+        use std::sync::atomic::Ordering;
+        if !self.graphics || !matches!(packet.first(), Some(0x01..=0x03)) {
+            return;
+        }
+        if self.queued.load(Ordering::Relaxed) + packet.len() > MAX_QUEUED {
+            // The disk cannot keep up: skip, and redraw in full once it has caught up.
+            self.lost = true;
+            return;
+        }
+        self.queued.fetch_add(packet.len(), Ordering::Relaxed);
+        let _ = self.tx.send(Cmd::Packet(packet.to_vec()));
+    }
+
+    /// Desktop: the screen size the browser was told.
+    pub fn screen_size(&mut self, width: u16, height: u16) {
+        if self.graphics {
+            let _ = self.tx.send(Cmd::Init(width, height));
+        }
+    }
+
+    /// Desktop: true once after updates were dropped and the writer has caught up again;
+    /// the session should then send a full picture.
+    pub fn take_resync(&mut self) -> bool {
+        if self.lost && self.queued.load(std::sync::atomic::Ordering::Relaxed) < MAX_QUEUED / 4 {
+            self.lost = false;
+            return true;
+        }
+        false
+    }
+
+    pub fn is_graphics(&self) -> bool {
+        self.graphics
     }
 
     fn secs(&self) -> f64 {
@@ -169,25 +239,38 @@ struct ChunkWriter {
     cipher: Aes256Gcm,
     index: u64,
     size: u64,
+    /// Desktop format: each chunk also carries a seek-point flag and its time (see `graphics`).
+    v2: bool,
+    level: Compression,
 }
 
 impl ChunkWriter {
     fn write_chunk(&mut self, plain: &[u8]) -> std::io::Result<()> {
+        self.write_chunk_at(plain, 0, 0)
+    }
+
+    /// `flags` and `t_ms` are stored (and authenticated) only in the desktop format.
+    fn write_chunk_at(&mut self, plain: &[u8], flags: u8, t_ms: u32) -> std::io::Result<()> {
         if plain.is_empty() {
             return Ok(());
         }
-        let mut enc = DeflateEncoder::new(Vec::new(), Compression::default());
+        let mut enc = DeflateEncoder::new(Vec::new(), self.level);
         enc.write_all(plain)?;
         let packed = enc.finish()?;
         let mut nonce = [0u8; 12];
         getrandom::getrandom(&mut nonce).map_err(std::io::Error::other)?;
-        let aad = self.index.to_le_bytes();
+        let aad = chunk_aad(self.index, self.v2.then_some((flags, t_ms)));
         let sealed = self
             .cipher
             .encrypt(Nonce::from_slice(&nonce), Payload { msg: &packed, aad: &aad })
             .map_err(|_| std::io::Error::other("encryption failed"))?;
         let len = (12 + sealed.len()) as u32;
         self.file.write_all(&len.to_le_bytes())?;
+        if self.v2 {
+            self.file.write_all(&[flags])?;
+            self.file.write_all(&t_ms.to_le_bytes())?;
+            self.size += 5;
+        }
         self.file.write_all(&nonce)?;
         self.file.write_all(&sealed)?;
         self.file.flush()?;
@@ -197,29 +280,57 @@ impl ChunkWriter {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn write_loop(
-    rx: mpsc::Receiver<Cmd>,
-    mut w: ChunkWriter,
-    first: Vec<u8>,
+/// Associated data of a chunk: its number, and in the desktop format its flag and time.
+fn chunk_aad(index: u64, v2: Option<(u8, u32)>) -> Vec<u8> {
+    let mut aad = index.to_le_bytes().to_vec();
+    if let Some((flags, t)) = v2 {
+        aad.push(flags);
+        aad.extend_from_slice(&t.to_le_bytes());
+    }
+    aad
+}
+
+/// Closes a recording off: database entry and activity log.
+struct Finisher {
     db: Database,
     id: String,
     path: PathBuf,
     started: Instant,
     audit: AuditFn,
-) {
+}
+
+impl Finisher {
+    fn finish(self, w: ChunkWriter, failed: bool) {
+        let _ = w.file.sync_all();
+        let duration_ms = self.started.elapsed().as_millis() as i64;
+        let _ = self.db.finish_recording(
+            &self.id,
+            &chrono::Utc::now().to_rfc3339(),
+            duration_ms,
+            w.size as i64,
+            if failed { "interrupted" } else { "done" },
+        );
+        (self.audit)(
+            "RECORDING_STOPPED",
+            format!("session recording stopped ({}, {})", format_duration(duration_ms), format_size(w.size)),
+        );
+    }
+}
+
+fn write_loop(rx: mpsc::Receiver<Cmd>, mut w: ChunkWriter, first: Vec<u8>, done: Finisher) {
+    let (id, path) = (done.id.clone(), done.path.clone());
     let mut buf = first;
     let mut last_write = Instant::now();
     let mut failed = false;
-    audit("RECORDING_STARTED", "session recording started".into());
+    (done.audit)("RECORDING_STARTED", "session recording started".into());
     loop {
         let wait = Duration::from_secs(CHUNK_SECS).saturating_sub(last_write.elapsed());
         let msg = rx.recv_timeout(wait);
-        let done = matches!(msg, Ok(Cmd::Finish) | Err(mpsc::RecvTimeoutError::Disconnected));
+        let stop = matches!(msg, Ok(Cmd::Finish) | Err(mpsc::RecvTimeoutError::Disconnected));
         if let Ok(Cmd::Data(d)) = msg {
             buf.extend_from_slice(&d);
         }
-        if !failed && (done || buf.len() >= CHUNK_BYTES || last_write.elapsed() >= Duration::from_secs(CHUNK_SECS)) {
+        if !failed && (stop || buf.len() >= CHUNK_BYTES || last_write.elapsed() >= Duration::from_secs(CHUNK_SECS)) {
             if let Err(e) = w.write_chunk(&buf) {
                 warn!("Recording {}: cannot write to {}: {e}", id, path.display());
                 failed = true;
@@ -230,26 +341,28 @@ fn write_loop(
         if failed {
             buf.clear();
         }
-        if done {
+        if stop {
             break;
         }
     }
-    let _ = w.file.sync_all();
-    let duration_ms = started.elapsed().as_millis() as i64;
-    let _ = db.finish_recording(&id, &chrono::Utc::now().to_rfc3339(), duration_ms, w.size as i64, if failed { "interrupted" } else { "done" });
-    audit(
-        "RECORDING_STOPPED",
-        format!("session recording stopped ({}, {})", format_duration(duration_ms), format_size(w.size)),
-    );
+    done.finish(w, failed);
+}
+
+/// The cipher for a recording, from its stored (encrypted) key.
+fn unlock(key_enc: &str, master_secret: &str) -> Result<Aes256Gcm, String> {
+    let key = crate::auth::decrypt_secret(key_enc, master_secret).map_err(|_| "This recording's key cannot be unlocked".to_string())?;
+    let key = hex::decode(key).map_err(|_| "Damaged recording key".to_string())?;
+    Aes256Gcm::new_from_slice(&key).map_err(|_| "Damaged recording key".to_string())
 }
 
 /// Read a whole recording back: the decrypted, uncompressed stream. A damaged or cut-off
 /// end (power loss while writing) is skipped.
 pub fn read_recording(path: &Path, key_enc: &str, master_secret: &str) -> Result<Vec<u8>, String> {
-    let key = crate::auth::decrypt_secret(key_enc, master_secret).map_err(|_| "This recording's key cannot be unlocked".to_string())?;
-    let key = hex::decode(key).map_err(|_| "Damaged recording key".to_string())?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "Damaged recording key".to_string())?;
+    let cipher = unlock(key_enc, master_secret)?;
     let data = std::fs::read(path).map_err(|e| format!("Cannot read the recording file: {e}"))?;
+    if data.starts_with(graphics::MAGIC) {
+        return Err("Desktop recordings are played piece by piece".into());
+    }
     if !data.starts_with(MAGIC) {
         return Err("Not a Remote recording".into());
     }
@@ -507,6 +620,7 @@ mod tests {
                 connection_id: "c1".into(),
                 connection_name: "box".into(),
                 protocol: "ssh".into(),
+                graphics: false,
                 cols: 80,
                 rows: 24,
             },

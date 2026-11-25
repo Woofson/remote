@@ -193,6 +193,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/recordings/:id", axum::routing::delete(recordings::api_delete_recording))
         .route("/api/recordings/:id/data", get(recordings::api_recording_data))
         .route("/api/recordings/:id/download", get(recordings::api_recording_download))
+        .route("/api/recordings/:id/index", get(recordings::api_recording_index))
+        .route("/api/recordings/:id/segment/:n", get(recordings::api_recording_segment))
+        .route("/api/recordings/:id/export", post(recordings::api_recording_export))
         .route("/api/recordings/:id/shares", put(recordings::api_set_recording_shares))
         // Static Frontend Files
         .fallback(static_file_handler)
@@ -2605,13 +2608,11 @@ pub async fn ws_tunnel_handler(
         .and_then(|k| decrypt_secret(&k, &cfg.server.jwt_secret).ok());
 
     // Session recording (#31): required by the connection or by one of the user's groups.
-    // Terminal sessions only for now; desktop recording follows in a later step.
-    let is_terminal = !matches!(conn_rec.protocol.as_str(), "rdp" | "vnc");
-    let must_record = is_terminal
-        && state
-            .db
-            .session_recording_required(&conn_rec.id, &user.id)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    let is_graphics = matches!(conn_rec.protocol.as_str(), "rdp" | "vnc");
+    let must_record = state
+        .db
+        .session_recording_required(&conn_rec.id, &user.id)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
     let recorder = if must_record {
         let audit = {
             let db = state.db.clone();
@@ -2629,6 +2630,7 @@ pub async fn ws_tunnel_handler(
             connection_id: conn_rec.id.clone(),
             connection_name: conn_rec.name.clone(),
             protocol: conn_rec.protocol.clone(),
+            graphics: is_graphics,
             cols,
             rows,
         };

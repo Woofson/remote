@@ -13,6 +13,9 @@ services:
       # config.toml, data/ (database, secret.key, Files, icons) and optional themes/.
       # Back up this one folder.
       - ./remote:/remote
+      # Session recordings are kept in ./remote/data/recordings. Desktop recordings can grow
+      # large; to keep them on another disk or a NAS share, mount it over that folder:
+      # - /mnt/nas/remote-recordings:/remote/data/recordings
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:8088/api/version || exit 1"]
       interval: 30s

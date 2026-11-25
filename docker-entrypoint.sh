@@ -57,7 +57,16 @@ new_config
 if [ "$(stat -c %u /remote)" != "$PUID" ] || [ "$(stat -c %u /remote/config.toml)" != "$PUID" ] \
     || { [ -e /remote/data ] && [ "$(stat -c %u /remote/data)" != "$PUID" ]; }; then
     echo "remote: giving /remote to user $PUID:$PGID"
-    chown -R "$PUID:$PGID" /remote
+    # Folders mounted inside /remote (e.g. recordings on a NAS) may refuse; that is reported below.
+    chown -R "$PUID:$PGID" /remote 2>/dev/null || echo "remote: some files in /remote could not be handed over"
+fi
+
+# Session recordings: the folder must be writable, or recorded sessions are refused.
+# (Created as Remote's user, so a first start does not leave data/ owned by root.)
+su-exec "$PUID:$PGID" mkdir -p /remote/data/recordings 2>/dev/null || true
+if [ "$(stat -c %u /remote/data/recordings 2>/dev/null)" != "$PUID" ]; then
+    chown "$PUID:$PGID" /remote/data/recordings 2>/dev/null \
+        || echo "remote: warning: /remote/data/recordings is not owned by $PUID:$PGID; recorded sessions need it to be writable"
 fi
 
 export HOME=/remote
