@@ -3414,3 +3414,118 @@ kbd {
 #app.fs-bar-hidden.fullscreen-mode .pane-header {
   display: none !important;
 }
+
+/* ==========================================================================
+   TABS INSIDE A PANE (#7)
+   ========================================================================== */
+.pane-tab-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.pane-tab-body.hidden { display: none; }
+
+.pane-header .pane-header-left { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+.pane-header .pane-header-right { flex-shrink: 0; margin-left: 6px; }
+
+/* With two or more tabs the strip replaces the title and protocol badge. */
+.remote-pane.has-tabs .pane-conn-name,
+.remote-pane.has-tabs .pane-protocol-badge { display: none !important; }
+
+.pane-tabs {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.pane-tabs::-webkit-scrollbar { display: none; }
+.remote-pane.has-tabs .pane-tabs { display: flex; }
+
+.pane-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  max-width: 170px;
+  flex-shrink: 0;
+  padding: 0 4px 0 8px;
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-panel);
+  color: var(--woofson-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.pane-tab:hover { color: var(--woofson-text-main); background: var(--woofson-bg-active); }
+.pane-tab.active {
+  color: var(--woofson-text-main);
+  border-color: var(--pane-custom-color, var(--woofson-accent));
+  box-shadow: inset 0 -2px 0 var(--pane-custom-color, var(--woofson-accent));
+}
+.pane-tab .conn-icon-sm { width: 13px; height: 13px; flex-shrink: 0; }
+.pane-tab-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Small status light: connecting, connected, disconnected. */
+.pane-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--woofson-text-dim);
+}
+.pane-tab.status-connecting .pane-tab-dot { background: var(--woofson-warning, #f59e0b); }
+.pane-tab.status-connected .pane-tab-dot { background: var(--woofson-success, #22c55e); }
+.pane-tab.status-disconnected .pane-tab-dot { background: var(--woofson-danger, #ef4444); }
+
+.pane-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.pane-tab-close svg { width: 11px; height: 11px; }
+.pane-tab-close:hover { opacity: 1; background: rgba(239, 68, 68, 0.2); color: var(--woofson-danger, #ef4444); }
+
+/* Floating toolbar (full window / full screen): keep the strip from growing too wide. */
+.full-window-mode .pane-tabs,
+.fullscreen-mode .pane-tabs,
+.remote-pane.maximized-pane .pane-tabs { max-width: 46vw; }
+
+/* Phones: with several tabs, the buttons stay on the first row and the tabs get a row of their own. */
+@media (max-width: 640px) {
+  .remote-pane.has-tabs .pane-header {
+    height: auto;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding: 4px 8px;
+  }
+  .remote-pane.has-tabs .pane-header-right { order: 1; margin-left: auto; }
+  .remote-pane.has-tabs .pane-header-left { order: 2; flex: 1 1 100%; }
+  .full-window-mode .remote-pane.has-tabs .pane-header,
+  .fullscreen-mode .remote-pane.has-tabs .pane-header,
+  .remote-pane.maximized-pane.has-tabs .pane-header {
+    height: 36px;
+    flex-wrap: nowrap;
+    padding: 0 14px;
+  }
+  .full-window-mode .remote-pane.has-tabs .pane-header-left,
+  .fullscreen-mode .remote-pane.has-tabs .pane-header-left,
+  .remote-pane.maximized-pane.has-tabs .pane-header-left { order: 0; flex: 1 1 auto; }
+}

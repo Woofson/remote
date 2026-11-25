@@ -222,6 +222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupKeyboardShortcuts();
   setupGlobalDragAndDrop();
   initPaneStyles();
+  initPaneTabs();
   initAllPaneKbdBadges();
   try { restoreLayout(localStorage.getItem(LAYOUT_KEY)); } catch (e) {}
   const resetMatch = /^#reset=([A-Za-z0-9_-]+)$/.exec(location.hash);
@@ -561,7 +562,7 @@ function finishLogin(data, password) {
   state.currentUser.two_factor_setup_required = !!data.two_factor_setup_required;
   // Panes left open from an expired login belong to that user only.
   if (previous && previous !== data.user.username) {
-    for (let i = 1; i <= 4; i++) disconnectPane(i);
+    for (let i = 1; i <= 4; i++) resetPaneTabs(i);
   }
   if (data.must_change_password) state.loginPassword = password;
   state.login2fa = null;
@@ -668,7 +669,7 @@ function logout() {
     fetch('api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
   }
   for (let i = 1; i <= 4; i++) {
-    disconnectPane(i);
+    resetPaneTabs(i);
   }
   state.jwtToken = '';
   state.currentUser = null;
@@ -1343,6 +1344,7 @@ function openConnectionsModal() {
 
 function closeConnectionsModal() {
   document.getElementById('connections-modal').style.display = 'none';
+  state.newTabPane = null;
 }
 
 const PROTOCOL_ICONS = {
@@ -1921,36 +1923,40 @@ window.addEventListener('hashchange', () => {
 });
 
 // ================= Remote Gateway WebSocket Tunnel & Protocol Handlers =================
-function connectToTarget(connectionId) {
+/**
+ * Open a connection. Without `opts.session` it goes to the active pane: into its selected tab
+ * when that tab has no live session, otherwise into a new tab (#7), so nothing running is
+ * closed by accident. With `opts.session` (reconnect) it reuses that exact tab.
+ */
+function connectToTarget(connectionId, opts = {}) {
   const conn = state.connections.find(c => c.id === connectionId);
   if (!conn) return;
 
+  const wantNewTab = state.newTabPane === state.activePaneIndex;
   closeConnectionsModal();
-  const paneIndex = state.activePaneIndex;
-  const pane = state.panes[paneIndex];
+  let pane = opts.session;
+  if (!pane) {
+    pane = state.panes[state.activePaneIndex];
+    if (pane.socket || (wantNewTab && pane.conn)) pane = addPaneTab(state.activePaneIndex);
+  }
+  const paneIndex = pane.id;
 
-  disconnectPane(paneIndex);
-
-  const titleEl = document.getElementById(`pane-${paneIndex}-title`);
-  const protoBadge = document.getElementById(`pane-${paneIndex}-proto`);
-  const bodyEl = document.getElementById(`pane-${paneIndex}-body`);
-  const statsEl = document.getElementById(`pane-${paneIndex}-stats`);
-
-  const viewOnlyTag = conn.view_only
-    ? ` <span style="font-size: 9px; padding: 2px 5px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); color: var(--woofson-accent); border-radius: 3px; font-weight: 700; margin-left: 6px;">VIEW-ONLY</span>`
-    : '';
-
-  titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
-  protoBadge.textContent = PROTOCOL_LABELS[conn.protocol] || conn.protocol.toUpperCase();
-  protoBadge.style.display = 'inline-block';
-  statsEl.style.display = 'inline-block';
-  statsEl.textContent = 'Connecting...';
+  teardownSession(pane);
+  const bodyEl = pane.el;
+  // Header text belongs to the pane: a session only writes it while its tab is shown.
+  const statsEl = {
+    set textContent(t) { pane.statsText = t; refreshPaneStats(pane); },
+    style: { set color(c) { pane.statsColor = c; refreshPaneStats(pane); } },
+  };
 
   bodyEl.innerHTML = '';
   pane.conn = conn;
   pane.type = conn.protocol;
   pane.lastError = null;
-  updatePaneKbdBadge(paneIndex);
+  pane.statsColor = '';
+  pane.status = 'connecting';
+  statsEl.textContent = 'Connecting...';
+  renderPaneHeader(paneIndex);
 
   const rect = bodyEl.getBoundingClientRect();
   const initW = Math.min(3840, Math.max(640, Math.round(rect.width) || 1920));
@@ -1974,7 +1980,9 @@ function connectToTarget(connectionId) {
     // A session that stays up for a minute earns back its automatic reconnects.
     setTimeout(() => { if (pane.socket === ws) pane.autoReconnects = 0; }, 60000);
     const latency = Date.now() - startTime;
+    pane.status = 'connected';
     statsEl.textContent = `${latency} ms`;
+    renderPaneTabs(pane.id);
     showToast(`Connected to ${conn.name} [Pane ${paneIndex}]`);
 
     if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled' && !(conn.user_permissions && !conn.user_permissions.can_transfer)) {
@@ -2000,8 +2008,10 @@ function connectToTarget(connectionId) {
       pane.authPending = false;
       closeUiDialog(null);
     }
+    pane.status = 'disconnected';
     statsEl.textContent = 'Disconnected';
     statsEl.style.color = 'var(--woofson-danger, #ef4444)';
+    renderPaneTabs(pane.id);
     showToast(`Disconnected from ${conn.name}`);
 
     // Free canvas/terminal resources and clean up pane state
@@ -2038,7 +2048,7 @@ function connectToTarget(connectionId) {
           ${errBanner}
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px;">
-          <button class="btn btn-primary" onclick="connectToTarget('${conn.id}')" style="display: flex; align-items: center; gap: 6px; font-weight: 600; padding: 6px 14px; font-size: 12px;">
+          <button class="btn btn-primary" onclick="event.stopPropagation(); reconnectTab(${pane.tabId})" style="display: flex; align-items: center; gap: 6px; font-weight: 600; padding: 6px 14px; font-size: 12px;">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
             Reconnect to ${escapeHtml(conn.name)}
           </button>
@@ -2046,7 +2056,7 @@ function connectToTarget(connectionId) {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
             Switch Target
           </button>
-          <button class="btn btn-secondary" onclick="disconnectPane(${paneIndex})" style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; opacity: 0.8;">
+          <button class="btn btn-secondary" onclick="event.stopPropagation(); clearTab(${pane.tabId})" style="display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 12px; opacity: 0.8;">
             ✕ Clear
           </button>
         </div>
@@ -2063,10 +2073,7 @@ function connectToTarget(connectionId) {
       setTimeout(() => {
         // Only if the pane is still showing this disconnected session.
         if (pane.socket || pane.conn !== conn || !document.body.contains(note)) return;
-        const prev = state.activePaneIndex;
-        state.activePaneIndex = paneIndex;
-        connectToTarget(conn.id);
-        state.activePaneIndex = prev;
+        connectToTarget(conn.id, { session: pane });
       }, delay * 1000);
     }
   };
@@ -2641,11 +2648,7 @@ document.addEventListener('change', (e) => {
 /** Pane close button: ask first (if enabled) when a live session would be closed. */
 async function requestClosePane(paneIndex) {
   const pane = state.panes[paneIndex];
-  if (pane && pane.conn && sessionPrefs.confirmClose) {
-    const ok = await uiConfirm(`Disconnect from ${pane.conn.name}?`, { title: 'Close session', okText: 'Disconnect', danger: true });
-    if (!ok) return;
-  }
-  disconnectPane(paneIndex);
+  if (pane) requestCloseTab(pane.tabId);
 }
 
 // ================= Sound from remote desktops (#25) =================
@@ -2723,6 +2726,7 @@ function togglePaneAudio(paneIndex) {
 }
 
 function updatePaneAudioButton(pane) {
+  if (state.panes[pane.id] !== pane) return; // a hidden tab: its sound keeps playing, the button is not its
   const btn = document.getElementById(`pane-${pane.id}-audio-btn`);
   if (!btn) return;
   const a = pane.audio;
@@ -2738,9 +2742,8 @@ function updatePaneAudioButton(pane) {
   btn.title = blocked ? 'Sound is blocked by the browser: click to enable sound' : a.muted ? 'Unmute sound' : 'Mute sound';
 }
 
-function disconnectPane(paneIndex) {
-  const pane = state.panes[paneIndex];
-  const prevConn = pane.conn;
+/** Stop a session's connection and free its screen or terminal (the tab itself stays). */
+function teardownSession(pane) {
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
     pane.resizeObserver = null;
@@ -2762,21 +2765,27 @@ function disconnectPane(paneIndex) {
     pane.socket = null;
   }
   stopPaneAudio(pane);
+}
+
+/** Disconnect a session and show the "Ready for Session" screen in its tab. */
+function disconnectSession(pane) {
+  const prevConn = pane.conn;
+  teardownSession(pane);
   pane.conn = null;
-  updatePaneKbdBadge(paneIndex);
+  pane.status = 'idle';
+  pane.statsText = '';
+  pane.statsColor = '';
+  pane.lastConn = prevConn || pane.lastConn || null;
+  const again = pane.lastConn;
 
-  document.getElementById(`pane-${paneIndex}-title`).textContent = 'Ready for Session';
-  document.getElementById(`pane-${paneIndex}-proto`).style.display = 'none';
-  document.getElementById(`pane-${paneIndex}-stats`).style.display = 'none';
-
-  const reconnectBtn = prevConn ? `
-    <button class="btn btn-secondary" onclick="connectToTarget('${prevConn.id}')" style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 4px; padding: 5px 10px;">
+  const reconnectBtn = again ? `
+    <button class="btn btn-secondary" onclick="event.stopPropagation(); reconnectTab(${pane.tabId})" style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin-top: 4px; padding: 5px 10px;">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
-      Reconnect ${escapeHtml(prevConn.name)}
+      Reconnect ${escapeHtml(again.name)}
     </button>
   ` : '';
 
-  document.getElementById(`pane-${paneIndex}-body`).innerHTML = `
+  pane.el.innerHTML = `
     <div class="pane-empty-state">
       <div class="empty-icon"><img src="assets/icons/remote-160.webp" alt="Remote" class="empty-brand-img" /></div>
       <h3>Ready for Session</h3>
@@ -2786,6 +2795,201 @@ function disconnectPane(paneIndex) {
       </div>
     </div>
   `;
+  renderPaneHeader(pane.id);
+}
+
+/** Disconnect the selected tab of a pane. */
+function disconnectPane(paneIndex) {
+  disconnectSession(state.panes[paneIndex]);
+}
+
+// ================= Tabs inside a pane (#7) =================
+// Each tab is its own session record; state.panes[i] is the tab shown in pane i and
+// state.paneTabs[i] lists all of them. Sessions in hidden tabs keep running.
+let nextTabId = 1;
+
+function makeSession(paneIndex) {
+  const el = document.createElement('div');
+  el.className = 'pane-tab-body';
+  return {
+    id: paneIndex, tabId: nextTabId++, el,
+    socket: null, conn: null, type: null, canvas: null, ctx: null, terminal: null, fitAddon: null, resizeObserver: null,
+    status: 'idle', statsText: '', statsColor: '',
+  };
+}
+
+/** Wrap each pane's starting content in its first tab. */
+function initPaneTabs() {
+  state.paneTabs = {};
+  for (let i = 1; i <= 4; i++) {
+    const body = document.getElementById(`pane-${i}-body`);
+    const sess = Object.assign(state.panes[i], makeSession(i));
+    while (body.firstChild) sess.el.appendChild(body.firstChild);
+    body.appendChild(sess.el);
+    state.paneTabs[i] = [sess];
+    renderPaneHeader(i);
+  }
+}
+
+function findTab(tabId) {
+  for (let i = 1; i <= 4; i++) {
+    const t = (state.paneTabs[i] || []).find(s => s.tabId === tabId);
+    if (t) return t;
+  }
+  return null;
+}
+
+/** Add an empty tab to a pane and show it. */
+function addPaneTab(paneIndex) {
+  const sess = makeSession(paneIndex);
+  document.getElementById(`pane-${paneIndex}-body`).appendChild(sess.el);
+  state.paneTabs[paneIndex].push(sess);
+  switchTab(sess.tabId);
+  return sess;
+}
+
+/** Show a tab in its pane. */
+function switchTab(tabId) {
+  const sess = findTab(tabId);
+  if (!sess) return;
+  const i = sess.id;
+  state.panes[i] = sess;
+  for (const t of state.paneTabs[i]) t.el.classList.toggle('hidden', t !== sess);
+  activatePane(i);
+  renderPaneHeader(i);
+  // A terminal measured while hidden has no size: fit it now that it is visible.
+  setTimeout(() => {
+    if (state.panes[i] !== sess) return;
+    if (sess.fitAddon && sess.terminal) {
+      try { sess.fitAddon.fit(); } catch (e) {}
+    }
+    if (sess.terminal) sess.terminal.focus();
+    else if (sess.canvas) sess.canvas.focus();
+  }, 30);
+}
+
+/** "+" in the pane header: pick a connection for a new tab in this pane. */
+function openNewTab(e, paneIndex) {
+  if (e) e.stopPropagation();
+  activatePane(paneIndex);
+  openConnectionsModal();
+  state.newTabPane = paneIndex;
+}
+
+function reconnectTab(tabId) {
+  const sess = findTab(tabId);
+  const conn = sess && (sess.conn || sess.lastConn);
+  if (!conn) return;
+  if (state.panes[sess.id] !== sess) switchTab(tabId);
+  activatePane(sess.id);
+  connectToTarget(conn.id, { session: sess });
+}
+
+/** "Clear" on a disconnected tab: close it, or empty it when it is the pane's only tab. */
+function clearTab(tabId) {
+  const sess = findTab(tabId);
+  if (!sess) return;
+  if (state.paneTabs[sess.id].length > 1) removeTab(sess);
+  else disconnectSession(sess);
+}
+
+/** Close a tab (asks first for a live session when that is switched on in Settings). */
+async function requestCloseTab(tabId) {
+  const sess = findTab(tabId);
+  if (!sess) return;
+  if (sess.conn && sess.socket && sessionPrefs.confirmClose) {
+    const ok = await uiConfirm(`Disconnect from ${sess.conn.name}?`, { title: 'Close session', okText: 'Disconnect', danger: true });
+    if (!ok) return;
+  }
+  if (state.paneTabs[sess.id].length > 1) removeTab(sess);
+  else disconnectSession(sess);
+}
+
+function removeTab(sess) {
+  const i = sess.id;
+  const list = state.paneTabs[i];
+  const idx = list.indexOf(sess);
+  teardownSession(sess);
+  sess.conn = null;
+  sess.el.remove();
+  list.splice(idx, 1);
+  if (state.panes[i] === sess) switchTab(list[Math.min(idx, list.length - 1)].tabId);
+  else renderPaneHeader(i);
+}
+
+/** Close every tab of a pane and leave one empty tab (sign-out, user change). */
+function resetPaneTabs(paneIndex) {
+  const list = state.paneTabs[paneIndex];
+  while (list.length > 1) removeTab(list[list.length - 1]);
+  list[0].lastConn = null;
+  disconnectSession(list[0]);
+}
+
+/** Ping or status text in the pane header, shown only for the selected tab. */
+function refreshPaneStats(sess) {
+  renderPaneTabs(sess.id);
+  if (state.panes[sess.id] !== sess) return;
+  const el = document.getElementById(`pane-${sess.id}-stats`);
+  if (!el) return;
+  el.style.display = sess.statsText ? 'inline-block' : 'none';
+  el.textContent = sess.statsText;
+  el.style.color = sess.statsColor || '';
+}
+
+/** Title, protocol, tabs and buttons in a pane's header, for its selected tab. */
+function renderPaneHeader(paneIndex) {
+  const sess = state.panes[paneIndex];
+  if (!sess || !state.paneTabs) return;
+  const titleEl = document.getElementById(`pane-${paneIndex}-title`);
+  const protoEl = document.getElementById(`pane-${paneIndex}-proto`);
+  const conn = sess.conn;
+  if (titleEl) {
+    if (conn) {
+      const viewOnlyTag = conn.view_only
+        ? ` <span style="font-size: 9px; padding: 2px 5px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); color: var(--woofson-accent); border-radius: 3px; font-weight: 700; margin-left: 6px;">VIEW-ONLY</span>`
+        : '';
+      titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
+    } else {
+      titleEl.textContent = 'Ready for Session';
+    }
+  }
+  if (protoEl) {
+    protoEl.textContent = conn ? (PROTOCOL_LABELS[conn.protocol] || conn.protocol.toUpperCase()) : '';
+    protoEl.style.display = conn ? 'inline-block' : 'none';
+  }
+  renderPaneTabs(paneIndex);
+  refreshPaneStats(sess);
+  updatePaneKbdBadge(paneIndex);
+  updatePaneAudioButton(sess);
+}
+
+/** The tab strip: hidden with one tab (the header then looks as before), shown with more. */
+function renderPaneTabs(paneIndex) {
+  const strip = document.getElementById(`pane-${paneIndex}-tabs`);
+  const addBtn = document.getElementById(`pane-${paneIndex}-tab-add`);
+  const paneEl = document.getElementById(`pane-${paneIndex}`);
+  const list = (state.paneTabs && state.paneTabs[paneIndex]) || [];
+  const multi = list.length > 1;
+  if (paneEl) paneEl.classList.toggle('has-tabs', multi);
+  if (addBtn) addBtn.style.display = multi || list.some(t => t.conn) ? '' : 'none';
+  if (!strip) return;
+  if (!multi) { strip.innerHTML = ''; return; }
+  const active = state.panes[paneIndex];
+  strip.innerHTML = list.map((t) => {
+    const c = t.conn || t.lastConn;
+    const name = t.conn ? t.conn.name : 'New tab';
+    const icon = c ? connIconHtml(c.icon, c.protocol, 'conn-icon-sm') : '';
+    const status = t.conn ? t.status : 'idle';
+    const tip = t.conn ? `${t.conn.name} (${PROTOCOL_LABELS[t.conn.protocol] || t.conn.protocol}, ${status})` : 'Empty tab';
+    return `<div class="pane-tab${t === active ? ' active' : ''} status-${status}" role="tab" title="${escapeHtml(tip)}"
+        onclick="event.stopPropagation(); switchTab(${t.tabId})" onauxclick="if (event.button === 1) { event.preventDefault(); event.stopPropagation(); requestCloseTab(${t.tabId}); }">
+        <span class="pane-tab-dot"></span>${icon}<span class="pane-tab-name">${escapeHtml(name)}</span>
+        <button class="pane-tab-close" title="Close tab" onclick="event.stopPropagation(); requestCloseTab(${t.tabId})">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+  strip.querySelector('.pane-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
 // ================= Bi-Directional Clipboard Engine =================
@@ -3796,7 +4000,7 @@ function applyThemeDef(def) {
   const termTheme = terminalThemeFor(def);
   r.setProperty('--woofson-term-bg', termTheme.background);
   r.setProperty('--woofson-pane-bg', light ? def.bg_dark : mixHex(def.bg_dark, '#000000', 0.5));
-  Object.values(state.panes || {}).forEach((p) => {
+  Object.values(state.paneTabs || state.panes || {}).flat().forEach((p) => {
     if (p && p.terminal) {
       try { p.terminal.options.theme = termTheme; } catch (e) {}
     }
@@ -5193,10 +5397,7 @@ function setPaneKbdLayout(paneIndex, layoutId) {
     return;
   }
   showToast(`Reconnecting with the ${layout ? layout.name : layoutId.toUpperCase()} keyboard layout…`);
-  const prev = state.activePaneIndex;
-  state.activePaneIndex = paneIndex;
-  connectToTarget(pane.conn.id);
-  state.activePaneIndex = prev;
+  connectToTarget(pane.conn.id, { session: pane });
 }
 
 function updatePaneKbdBadge(paneIndex) {
