@@ -384,14 +384,14 @@ function updateHeaderProfile(user) {
 function onAuthenticated() {
   state.lastUsername = state.currentUser && state.currentUser.username;
   refreshSessionInfo();
-  loadUserTheme();
+  const prefsLoaded = loadUserTheme();
   const modal = document.getElementById('login-modal');
   if (modal) {
     modal.classList.remove('active');
     modal.style.display = 'none';
   }
   updateHeaderProfile();
-  loadConnections().then(openPendingConnection);
+  Promise.all([loadConnections(), prefsLoaded]).then(restoreRememberedTabs).then(openPendingConnection);
   if (sessionStorage.getItem('remote_session_locked') === 'true') {
     lockSession();
   } else {
@@ -562,6 +562,7 @@ function finishLogin(data, password) {
   state.currentUser.two_factor_setup_required = !!data.two_factor_setup_required;
   // Panes left open from an expired login belong to that user only.
   if (previous && previous !== data.user.username) {
+    stopTabsSaving();
     for (let i = 1; i <= 4; i++) resetPaneTabs(i);
   }
   if (data.must_change_password) state.loginPassword = password;
@@ -668,6 +669,7 @@ function logout() {
   if (state.jwtToken) {
     fetch('api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
   }
+  stopTabsSaving();
   for (let i = 1; i <= 4; i++) {
     resetPaneTabs(i);
   }
@@ -1936,8 +1938,15 @@ function connectToTarget(connectionId, opts = {}) {
   closeConnectionsModal();
   let pane = opts.session;
   if (!pane) {
+    // A remembered tab of this connection in the pane is used rather than adding a second one.
+    const remembered = state.paneTabs[state.activePaneIndex].find(t => t.parked && t.lastConn && t.lastConn.id === connectionId);
     pane = state.panes[state.activePaneIndex];
-    if (pane.socket || (wantNewTab && pane.conn)) pane = addPaneTab(state.activePaneIndex);
+    if (remembered) {
+      if (remembered !== pane) switchTab(remembered.tabId);
+      pane = remembered;
+    } else if (pane.socket || pane.parked || (wantNewTab && pane.conn)) {
+      pane = addPaneTab(state.activePaneIndex);
+    }
   }
   const paneIndex = pane.id;
 
@@ -1950,6 +1959,7 @@ function connectToTarget(connectionId, opts = {}) {
   };
 
   bodyEl.innerHTML = '';
+  pane.parked = false;
   pane.conn = conn;
   pane.type = conn.protocol;
   pane.lastError = null;
@@ -2772,6 +2782,7 @@ function disconnectSession(pane) {
   const prevConn = pane.conn;
   teardownSession(pane);
   pane.conn = null;
+  pane.parked = false;
   pane.status = 'idle';
   pane.statsText = '';
   pane.statsColor = '';
@@ -2949,6 +2960,9 @@ function renderPaneHeader(paneIndex) {
         ? ` <span style="font-size: 9px; padding: 2px 5px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); color: var(--woofson-accent); border-radius: 3px; font-weight: 700; margin-left: 6px;">VIEW-ONLY</span>`
         : '';
       titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
+    } else if (sess.parked && sess.lastConn) {
+      const c = sess.lastConn;
+      titleEl.innerHTML = `${connIconHtml(c.icon, c.protocol, 'conn-icon-sm')} ${escapeHtml(c.name)} <span class="pane-title-note">not connected</span>`;
     } else {
       titleEl.textContent = 'Ready for Session';
     }
@@ -2972,18 +2986,20 @@ function renderPaneTabs(paneIndex) {
   const multi = list.length > 1;
   if (tabDrag && tabDrag.active) return; // redrawn when the drag ends
   if (paneEl) paneEl.classList.toggle('has-tabs', multi);
-  if (addBtn) addBtn.style.display = multi || list.some(t => t.conn) ? '' : 'none';
+  if (addBtn) addBtn.style.display = multi || list.some(t => t.conn || t.parked) ? '' : 'none';
+  scheduleTabsSave();
   if (!strip) return;
   if (!multi) { strip.innerHTML = ''; return; }
   const active = state.panes[paneIndex];
   strip.innerHTML = list.map((t) => {
     const c = t.conn || t.lastConn;
-    const name = t.conn ? t.conn.name : 'New tab';
+    const name = t.conn ? t.conn.name : t.parked && c ? c.name : 'New tab';
     const icon = c ? connIconHtml(c.icon, c.protocol, 'conn-icon-sm') : '';
-    const status = t.conn ? t.status : 'idle';
-    const tip = t.conn ? `${t.conn.name} (${PROTOCOL_LABELS[t.conn.protocol] || t.conn.protocol}, ${status})` : 'Empty tab';
+    const status = t.conn ? t.status : t.parked ? 'parked' : 'idle';
+    const tip = t.conn ? `${t.conn.name} (${PROTOCOL_LABELS[t.conn.protocol] || t.conn.protocol}, ${status})`
+      : t.parked && c ? `${c.name} (not connected; click to connect)` : 'Empty tab';
     return `<div class="pane-tab${t === active ? ' active' : ''} status-${status}" role="tab" title="${escapeHtml(tip)}" data-tab-id="${t.tabId}"
-        onpointerdown="startTabDrag(event, ${t.tabId})" onclick="event.stopPropagation(); switchTab(${t.tabId})" onauxclick="if (event.button === 1) { event.preventDefault(); event.stopPropagation(); requestCloseTab(${t.tabId}); }">
+        onpointerdown="startTabDrag(event, ${t.tabId})" onclick="event.stopPropagation(); selectTab(${t.tabId})" onauxclick="if (event.button === 1) { event.preventDefault(); event.stopPropagation(); requestCloseTab(${t.tabId}); }">
         <span class="pane-tab-dot"></span>${icon}<span class="pane-tab-name">${escapeHtml(name)}</span>
         <button class="pane-tab-close" title="Close tab" onclick="event.stopPropagation(); requestCloseTab(${t.tabId})">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -3002,6 +3018,95 @@ function showSelectedTab(paneIndex) {
       try { sel.fitAddon.fit(); } catch (e) {}
     }
   }, 30);
+}
+
+/** A click on a tab: show it, and connect it when it is a remembered tab (#7). */
+function selectTab(tabId) {
+  const sess = findTab(tabId);
+  if (!sess) return;
+  switchTab(tabId);
+  if (sess.parked) reconnectTab(tabId);
+}
+
+// ---- Remembered tabs (#7): saved on the user's profile, back as unconnected tabs ----
+const MAX_SAVED_TABS = 25;
+let tabsSaveTimer = null;
+let lastTabsSaved = null;
+
+/** A tab that shows a remembered connection, connected only when the user asks. */
+function parkSession(sess, conn) {
+  teardownSession(sess);
+  sess.conn = null;
+  sess.parked = true;
+  sess.lastConn = conn;
+  sess.status = 'parked';
+  sess.statsText = '';
+  sess.statsColor = '';
+  sess.el.innerHTML = `
+    <div class="pane-empty-state">
+      <div class="empty-icon">${connIconHtml(conn.icon, conn.protocol, 'conn-icon-lg')}</div>
+      <h3>${escapeHtml(conn.name)}</h3>
+      <p>Open from your last visit. Not connected yet.</p>
+      <button class="btn btn-primary" onclick="event.stopPropagation(); reconnectTab(${sess.tabId})">Connect</button>
+    </div>
+  `;
+}
+
+/** After sign-in: bring back the saved tabs, unless sessions are already open on this page. */
+function restoreRememberedTabs() {
+  const saved = state.userPrefs && state.userPrefs.tabs;
+  const busy = [1, 2, 3, 4].some(i => state.paneTabs[i].some(t => t.conn || t.socket || t.parked));
+  if (saved && typeof saved === 'object' && !busy) {
+    for (let i = 1; i <= 4; i++) {
+      const entry = saved[i];
+      if (!entry || !Array.isArray(entry.ids)) continue;
+      const conns = entry.ids
+        .map(id => state.connections.find(c => c.id === id))
+        .filter(c => c && !(c.user_permissions && c.user_permissions.can_connect === false));
+      if (!conns.length) continue;
+      const list = state.paneTabs[i];
+      conns.forEach((c, k) => {
+        let sess = list[0];
+        if (k > 0) {
+          sess = makeSession(i);
+          document.getElementById(`pane-${i}-body`).appendChild(sess.el);
+          list.push(sess);
+        }
+        parkSession(sess, c);
+      });
+      state.panes[i] = list[Math.max(0, Math.min(entry.active || 0, list.length - 1))];
+      showSelectedTab(i);
+      renderPaneHeader(i);
+    }
+    lastTabsSaved = JSON.stringify(saved);
+  }
+  state.tabsReady = true;
+}
+
+/** Save which connections are open as tabs in each pane (shortly after the last change). */
+function scheduleTabsSave() {
+  if (!state.tabsReady || !state.currentUser) return;
+  clearTimeout(tabsSaveTimer);
+  tabsSaveTimer = setTimeout(() => {
+    if (!state.tabsReady || !state.currentUser) return;
+    const snap = {};
+    for (let i = 1; i <= 4; i++) {
+      const list = state.paneTabs[i].filter(t => t.conn || (t.parked && t.lastConn)).slice(0, MAX_SAVED_TABS);
+      if (!list.length) continue;
+      snap[i] = { ids: list.map(t => (t.conn || t.lastConn).id), active: Math.max(0, list.indexOf(state.panes[i])) };
+    }
+    const json = JSON.stringify(snap);
+    if (json === lastTabsSaved) return;
+    lastTabsSaved = json;
+    apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ tabs: snap }) }).catch(() => {});
+  }, 800);
+}
+
+/** Sign-out or another user: closing the tabs must not overwrite what was saved. */
+function stopTabsSaving() {
+  state.tabsReady = false;
+  clearTimeout(tabsSaveTimer);
+  lastTabsSaved = null;
 }
 
 /**
@@ -4197,6 +4302,7 @@ async function loadUserTheme() {
     const res = await apiFetch('api/me/preferences');
     if (res.ok) {
       const prefs = await res.json();
+      state.userPrefs = prefs;
       pref = prefs.theme || null;
       sessions = prefs.sessions || null;
       if (prefs.panes) applyServerPanePrefs(prefs.panes);

@@ -3549,3 +3549,8 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
   outline-offset: -4px;
 }
 .remote-pane:not(.has-tabs) .pane-conn-name { cursor: grab; }
+
+/* Remembered tabs (#7): not connected yet. */
+.pane-tab.status-parked .pane-tab-dot { background: transparent; box-shadow: inset 0 0 0 1px var(--woofson-text-dim); }
+.pane-tab.status-parked:not(.active) .pane-tab-name { font-style: italic; }
+.pane-title-note { font-size: 10px; font-weight: 500; color: var(--woofson-text-dim); margin-left: 4px; }
