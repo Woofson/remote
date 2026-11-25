@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub clipboard: ClipboardConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub recording: RecordingConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +192,36 @@ impl Default for LoggingConfig {
     }
 }
 
+/// Session recording (#31): where recordings are kept and for how long.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecordingConfig {
+    /// Folder for recordings. Empty = `<data_dir>/recordings`.
+    pub dir: String,
+    /// Recordings older than this many days are deleted. 0 = keep until the size limit.
+    pub keep_days: u64,
+    /// When all recordings together pass this many GB, the oldest are deleted. 0 = no limit.
+    pub max_total_gb: u64,
+}
+
+impl Default for RecordingConfig {
+    fn default() -> Self {
+        Self { dir: String::new(), keep_days: 30, max_total_gb: 20 }
+    }
+}
+
+impl RecordingConfig {
+    /// The recordings folder, resolved against the data folder.
+    pub fn folder(&self, data_dir: &str) -> PathBuf {
+        let d = self.dir.trim();
+        if d.is_empty() { Path::new(data_dir).join("recordings") } else { PathBuf::from(d) }
+    }
+
+    pub fn max_total_bytes(&self) -> u64 {
+        self.max_total_gb.saturating_mul(1024 * 1024 * 1024)
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -199,6 +231,7 @@ impl Default for AppConfig {
             oidc: OidcConfig::default(),
             clipboard: ClipboardConfig::default(),
             logging: LoggingConfig::default(),
+            recording: RecordingConfig::default(),
         }
     }
 }

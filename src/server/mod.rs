@@ -36,6 +36,7 @@ use uuid::Uuid;
 mod branding;
 mod email;
 mod proxy;
+mod recordings;
 mod security;
 mod share;
 
@@ -136,6 +137,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/groups", get(api_list_groups).post(api_create_group))
         .route("/api/groups/:id", put(api_update_group).delete(api_delete_group))
         .route("/api/groups/:id/members", put(api_set_group_members))
+        .route("/api/groups/:id/recording", put(api_set_group_recording))
         .route(
             "/api/connections/:id/permissions",
             get(api_get_connection_permissions).put(api_set_connection_permissions),
@@ -186,6 +188,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws/share/:token", get(share::ws_share_handler))
         .route("/api/connections/:id/wake", post(api_wake_connection))
         .route("/api/shares/:token", get(share::api_share_info))
+        .route("/api/recordings", get(recordings::api_list_recordings))
+        .route("/api/recordings/share-targets", get(recordings::api_recording_share_targets))
+        .route("/api/recordings/:id", axum::routing::delete(recordings::api_delete_recording))
+        .route("/api/recordings/:id/data", get(recordings::api_recording_data))
+        .route("/api/recordings/:id/download", get(recordings::api_recording_download))
+        .route("/api/recordings/:id/shares", put(recordings::api_set_recording_shares))
         // Static Frontend Files
         .fallback(static_file_handler)
         .layer(TraceLayer::new_for_http())
@@ -1161,6 +1169,44 @@ pub struct CreateGroupPayload {
     pub description: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct GroupRecordingPayload {
+    pub record_sessions: bool,
+}
+
+/// Admins: record the sessions of every member of a group (#31).
+pub async fn api_set_group_recording(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<GroupRecordingPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let name = state.db.list_groups().ok().and_then(|g| g.into_iter().find(|g| g.id == id)).map(|g| g.name);
+    let found = state
+        .db
+        .set_group_recording(&id, payload.record_sessions)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    if !found {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Group not found" }))));
+    }
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "RECORDING_SETTING",
+        None,
+        None,
+        Some(&format!(
+            "session recording turned {} for group '{}'",
+            if payload.record_sessions { "on" } else { "off" },
+            name.unwrap_or_default()
+        )),
+        None,
+    );
+    Ok(Json(json!({ "record_sessions": payload.record_sessions })))
+}
+
 pub async fn api_create_group(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1240,6 +1286,31 @@ pub struct SaveConnectionPayload {
     pub view_only: Option<bool>,
     /// Admins: the user this connection belongs to (default: the creator).
     pub owner_id: Option<String>,
+    /// Admins: record sessions on this connection (#31). Ignored for everyone else.
+    pub record_sessions: Option<bool>,
+}
+
+/// Admins only: turn session recording on or off for a connection, logging a change (#31).
+fn apply_connection_recording(state: &AppState, claims: &Claims, conn_id: &str, conn_name: &str, want: Option<bool>) -> Result<(), (StatusCode, Json<Value>)> {
+    let Some(on) = want.filter(|_| claims.role == "admin") else { return Ok(()) };
+    let was = state.db.connection_records_sessions(conn_id).unwrap_or(false);
+    if was == on {
+        return Ok(());
+    }
+    state
+        .db
+        .set_connection_recording(conn_id, on)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "RECORDING_SETTING",
+        Some(conn_id),
+        Some(conn_name),
+        Some(if on { "session recording turned on" } else { "session recording turned off" }),
+        None,
+    );
+    Ok(())
 }
 
 pub async fn api_create_connection(
@@ -1336,6 +1407,8 @@ pub async fn api_create_connection(
             Json(json!({ "error": e.to_string() })),
         )
     })?;
+
+    apply_connection_recording(&state, &claims, &record.id, &record.name, payload.record_sessions)?;
 
     Ok(Json(json!({ "id": id, "message": "Connection created successfully" })))
 }
@@ -1450,6 +1523,8 @@ pub async fn api_update_connection(
             Json(json!({ "error": e.to_string() })),
         )
     })?;
+
+    apply_connection_recording(&state, &claims, &record.id, &record.name, payload.record_sessions)?;
 
     Ok(Json(json!({ "message": "Connection updated" })))
 }
@@ -2529,6 +2604,42 @@ pub async fn ws_tunnel_handler(
         .private_key_enc
         .and_then(|k| decrypt_secret(&k, &cfg.server.jwt_secret).ok());
 
+    // Session recording (#31): required by the connection or by one of the user's groups.
+    // Terminal sessions only for now; desktop recording follows in a later step.
+    let is_terminal = !matches!(conn_rec.protocol.as_str(), "rdp" | "vnc");
+    let must_record = is_terminal
+        && state
+            .db
+            .session_recording_required(&conn_rec.id, &user.id)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    let recorder = if must_record {
+        let audit = {
+            let db = state.db.clone();
+            let (uid, uname, cid, cname, ip_text) =
+                (user.id.clone(), user.username.clone(), conn_rec.id.clone(), conn_rec.name.clone(), ip.as_opt().map(str::to_string));
+            Box::new(move |action: &'static str, details: String| {
+                db.log_audit(Some(&uid), &uname, action, Some(&cid), Some(&cname), Some(&details), ip_text.as_deref())
+            })
+        };
+        let start = crate::recording::RecordingStart {
+            folder: cfg.recording.folder(&cfg.server.data_dir),
+            master_secret: cfg.server.jwt_secret.clone(),
+            user_id: user.id.clone(),
+            username: user.username.clone(),
+            connection_id: conn_rec.id.clone(),
+            connection_name: conn_rec.name.clone(),
+            protocol: conn_rec.protocol.clone(),
+            cols,
+            rows,
+        };
+        Some(crate::recording::Recorder::start(state.db.clone(), start, audit).map_err(|e| {
+            tracing::warn!("Recording could not start for {} on {}: {}", user.username, conn_rec.name, e);
+            e
+        }))
+    } else {
+        None
+    };
+
     // Every session runs behind a relay that can share it with others (#32).
     let hub_cfg = {
         let db = state.db.clone();
@@ -2570,6 +2681,7 @@ pub async fn ws_tunnel_handler(
                 };
                 db.log_audit(Some(&who_id), &who, action, Some(&conn_id), Some(&conn_name), Some(&details), ip_text.as_deref());
             }),
+            recorder: None,
         }
     };
     let shares = state.shares.clone();
@@ -2580,7 +2692,20 @@ pub async fn ws_tunnel_handler(
         move |details: String| db.log_audit(Some(&uid), &uname, "WAKE", Some(&cid), Some(&cname), Some(&details), ip_text.as_deref())
     };
 
-    Ok(ws.on_upgrade(move |socket| async move {
+    Ok(ws.on_upgrade(move |mut socket| async move {
+        let mut hub_cfg = hub_cfg;
+        match recorder {
+            Some(Ok(rec)) => hub_cfg.recorder = Some(rec),
+            Some(Err(_)) => {
+                // Sessions that must be recorded do not run unrecorded.
+                use axum::extract::ws::Message;
+                let msg = "This connection is recorded, but recording could not start on the server. Ask an administrator to check the recordings folder.";
+                let _ = socket.send(Message::Text(json!({ "type": "error", "message": msg }).to_string())).await;
+                let _ = socket.send(Message::Close(None)).await;
+                return;
+            }
+            None => {}
+        }
         let mut socket = crate::protocols::hub::start(socket, hub_cfg, shares);
         // Wake-on-LAN (#35): wake the machine first when it does not answer.
         if conn_rec.protocol != "local_pty" {

@@ -209,6 +209,8 @@ pub struct HubConfig {
     pub share_rights: Box<dyn Fn() -> (bool, bool) + Send + Sync>,
     /// Called for share events (activity log).
     pub on_event: Box<dyn Fn(ShareEvent) + Send + Sync>,
+    /// Records the session (#31): terminal output and size changes, never input.
+    pub recorder: Option<crate::recording::Recorder>,
 }
 
 /// Put a hub between the owner's WebSocket and the session. The protocol code gets the
@@ -247,11 +249,12 @@ struct Hub {
     term_buf_bytes: usize,
     cols: u16,
     rows: u16,
+    recorder: Option<crate::recording::Recorder>,
 }
 
 async fn run(
     owner_ws: WebSocket,
-    cfg: HubConfig,
+    mut cfg: HubConfig,
     registry: Arc<ShareRegistry>,
     proto_in: mpsc::Sender<Message>,
     mut proto_out: mpsc::Receiver<Message>,
@@ -271,8 +274,10 @@ async fn run(
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<HubCmd>(16);
     let (guest_in_tx, mut guest_in_rx) = mpsc::channel::<(u64, Option<Message>)>(256);
 
+    let recorder = cfg.recorder.take();
     let mut hub = Hub {
         session_id: new_token(12),
+        recorder,
         cols: cfg.cols,
         rows: cfg.rows,
         cfg,
@@ -299,6 +304,7 @@ async fn run(
                 "id": hub.session_id,
                 "can_share": can_share,
                 "can_share_control": can_share_control,
+                "recording": hub.recorder.is_some(),
             })
             .to_string(),
         ))
@@ -378,6 +384,13 @@ impl Hub {
             Message::Binary(b) => b.len(),
             _ => return,
         };
+        if let Some(rec) = self.recorder.as_mut() {
+            match m {
+                Message::Text(t) => rec.output(t.as_bytes()),
+                Message::Binary(b) => rec.output(b),
+                _ => {}
+            }
+        }
         self.term_buf.push_back(m.clone());
         self.term_buf_bytes += len;
         while self.term_buf_bytes > TERM_REPLAY_BYTES {
@@ -436,6 +449,9 @@ impl Hub {
                             if self.cfg.kind == SessionKind::Terminal {
                                 let size = self.term_size_msg();
                                 self.to_guests(&size);
+                                if let Some(rec) = self.recorder.as_mut() {
+                                    rec.resize(self.cols, self.rows);
+                                }
                             }
                         }
                     }
@@ -578,6 +594,7 @@ impl Hub {
                     "owner": self.cfg.owner_name,
                     "mode": g.mode.as_str(),
                     "protocol": self.cfg.protocol,
+                    "recording": self.recorder.is_some(),
                 })
                 .to_string(),
             ));
@@ -707,6 +724,9 @@ impl Hub {
     }
 
     fn finish(&mut self) {
+        if let Some(mut rec) = self.recorder.take() {
+            rec.finish();
+        }
         self.registry.remove_session(&self.session_id);
         for (_, g) in self.guests.drain() {
             let _ = g.tx.try_send(close_msg("The shared session has ended"));

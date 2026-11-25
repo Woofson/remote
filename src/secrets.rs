@@ -65,18 +65,29 @@ pub fn resolve_master_secret(configured: &str, data_dir: &Path, db: &Database) -
     if !configured.is_empty() && !old_keys.contains(&configured) {
         old_keys.insert(0, configured);
     }
+    let convert = |enc: &str| {
+        if decrypt_secret(enc, &secret).is_ok() {
+            return Reencrypt::Keep;
+        }
+        old_keys
+            .iter()
+            .find_map(|old| decrypt_secret(enc, old).ok())
+            .and_then(|plain| encrypt_secret(&plain, &secret).ok())
+            .map_or(Reencrypt::Unreadable, Reencrypt::Replace)
+    };
     let (converted, unreadable) = db
-        .reencrypt_connection_secrets(|enc| {
-            if decrypt_secret(enc, &secret).is_ok() {
-                return Reencrypt::Keep;
-            }
-            old_keys
-                .iter()
-                .find_map(|old| decrypt_secret(enc, old).ok())
-                .and_then(|plain| encrypt_secret(&plain, &secret).ok())
-                .map_or(Reencrypt::Unreadable, Reencrypt::Replace)
-        })
+        .reencrypt_connection_secrets(convert)
         .map_err(|e| format!("Failed to re-encrypt saved credentials: {}", e))?;
+    // Session recordings (#31) are unlocked by keys stored the same way.
+    let (rec_converted, rec_unreadable) = db
+        .reencrypt_recording_keys(convert)
+        .map_err(|e| format!("Failed to re-encrypt recording keys: {}", e))?;
+    if rec_converted > 0 {
+        info!("Secrets: re-encrypted {} recording key(s) with the new secret", rec_converted);
+    }
+    if rec_unreadable > 0 {
+        warn!("Secrets: {} recording(s) can no longer be unlocked", rec_unreadable);
+    }
 
     if converted > 0 {
         info!("Secrets: re-encrypted {} saved connection credential(s) with the new secret", converted);

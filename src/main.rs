@@ -95,6 +95,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
+    // Session recordings (#31): close off ones the last run left open, then keep within
+    // the keep time and size limit (checked every hour, with the current config).
+    {
+        let rec_folder = config.recording.folder(&config.server.data_dir);
+        remoted::recording::close_interrupted(&app_state.db, &rec_folder);
+        let db = app_state.db.clone();
+        let cfg = app_state.config.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                tick.tick().await;
+                let (folder, days, max) = {
+                    let c = cfg.read();
+                    (c.recording.folder(&c.server.data_dir), c.recording.keep_days, c.recording.max_total_bytes())
+                };
+                let db = db.clone();
+                let _ = tokio::task::spawn_blocking(move || remoted::recording::cleanup(&db, &folder, days, max)).await;
+            }
+        });
+    }
+
     let router = create_router(app_state);
 
     let listener = tokio::net::TcpListener::bind(&config.server.bind_address).await?;

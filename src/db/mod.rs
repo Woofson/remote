@@ -7,6 +7,9 @@ use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
+mod recordings;
+pub use recordings::{RecordingRecord, RecordingShare};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
@@ -78,6 +81,9 @@ pub struct Group {
     pub name: String,
     pub description: Option<String>,
     pub created_at: String,
+    /// Sessions of members are recorded (#31).
+    #[serde(default)]
+    pub record_sessions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,6 +138,9 @@ pub struct ConnectionSafe {
     /// Admins only: owner's username and the names of users/groups it is assigned to.
     pub owner_name: Option<String>,
     pub assigned_to: Vec<String>,
+    /// Sessions on this connection are recorded (#31).
+    #[serde(default)]
+    pub record_sessions: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -336,6 +345,10 @@ impl Database {
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_clipboard TEXT NOT NULL DEFAULT 'bidirectional';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN allow_transfer TEXT NOT NULL DEFAULT 'full';", []);
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN view_only INTEGER NOT NULL DEFAULT 0;", []);
+        // Session recording (#31): set only through the admin calls, never by a plain connection save.
+        let _ = conn.execute("ALTER TABLE connections ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE groups ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
+        conn.execute_batch(recordings::SCHEMA)?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_preferences (
@@ -809,13 +822,14 @@ impl Database {
 
     pub fn list_groups(&self) -> SqlResult<Vec<Group>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, name, description, created_at FROM groups ORDER BY name ASC")?;
+        let mut stmt = conn.prepare("SELECT id, name, description, created_at, record_sessions FROM groups ORDER BY name ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok(Group {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get(2)?,
                 created_at: row.get(3)?,
+                record_sessions: row.get::<_, i64>(4)? != 0,
             })
         })?;
         let mut list = Vec::new();
@@ -838,6 +852,7 @@ impl Database {
             name: name.to_string(),
             description: description.map(|s| s.to_string()),
             created_at: now,
+            record_sessions: false,
         })
     }
 
@@ -893,7 +908,7 @@ impl Database {
                     (password_enc IS NOT NULL AND password_enc != '') as has_pw,
                     (private_key_enc IS NOT NULL AND private_key_enc != '') as has_key,
                     settings_json, icon, tags, is_global, allow_clipboard, allow_transfer, view_only,
-                    created_by, created_at, updated_at
+                    created_by, created_at, updated_at, record_sessions
              FROM connections
              WHERE (?1 = 1) OR (is_global = 1) OR (created_by = ?2)
                 OR (id IN (SELECT connection_id FROM connection_permissions cp 
@@ -923,6 +938,7 @@ impl Database {
                 row.get::<_, Option<String>>(15)?,
                 row.get::<_, String>(16)?,
                 row.get::<_, String>(17)?,
+                row.get::<_, i64>(18)? != 0,
             ))
         })?;
 
@@ -947,6 +963,7 @@ impl Database {
                 created_by,
                 created_at,
                 updated_at,
+                record_sessions,
             ) = r?;
 
             let is_owner = created_by.as_deref() == Some(&user.id);
@@ -1042,6 +1059,7 @@ impl Database {
                 access_group: if access == "group" { access_group } else { None },
                 owner_name: None,
                 assigned_to: Vec::new(),
+                record_sessions,
             });
         }
 

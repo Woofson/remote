@@ -3,6 +3,7 @@ pub mod config;
 pub mod db;
 pub mod icons;
 pub mod protocols;
+pub mod recording;
 pub mod secrets;
 pub mod themes;
 pub mod server;
@@ -526,5 +527,78 @@ mod tests {
         assert_eq!(info.height, 1080);
         assert_eq!(info.name, "Worktop VNC");
         server_thread.join().unwrap();
+    }
+
+    #[test]
+    fn recording_rules_and_sharing() {
+        use db::{RecordingRecord, RecordingShare};
+        let db = Database::new_in_memory().unwrap();
+        let alice = test_user("alice", "operator");
+        let bob = test_user("bob", "operator");
+        let carol = test_user("carol", "viewer");
+        for u in [&alice, &bob, &carol] {
+            db.create_user(u).unwrap();
+        }
+        let conn = test_conn("box", false);
+        db.save_connection(&conn).unwrap();
+
+        // Off by default; on through the connection or through a group.
+        assert!(!db.session_recording_required(&conn.id, &alice.id).unwrap());
+        assert!(db.set_connection_recording(&conn.id, true).unwrap());
+        assert!(db.session_recording_required(&conn.id, &alice.id).unwrap());
+        // A plain connection save (what an owner can do) leaves the switch alone.
+        db.save_connection(&conn).unwrap();
+        assert!(db.connection_records_sessions(&conn.id).unwrap());
+        db.set_connection_recording(&conn.id, false).unwrap();
+        let team = db.create_group("team", None).unwrap();
+        db.set_group_members(&team.id, &[bob.id.clone()]).unwrap();
+        db.set_group_recording(&team.id, true).unwrap();
+        assert!(db.session_recording_required(&conn.id, &bob.id).unwrap());
+        assert!(!db.session_recording_required(&conn.id, &alice.id).unwrap());
+
+        let rec = RecordingRecord {
+            id: "r1".into(),
+            user_id: alice.id.clone(),
+            username: "alice".into(),
+            connection_id: Some(conn.id.clone()),
+            connection_name: "box".into(),
+            protocol: "ssh".into(),
+            kind: "terminal".into(),
+            started_at: "2026-11-25T10:00:00Z".into(),
+            ended_at: None,
+            duration_ms: 0,
+            size_bytes: 0,
+            status: "done".into(),
+            file_name: "r1.rrec".into(),
+            key_enc: "k".into(),
+        };
+        db.create_recording(&rec).unwrap();
+        assert_eq!(db.list_recordings_for_user(&alice.id).unwrap().len(), 1);
+        assert!(db.list_recordings_for_user(&bob.id).unwrap().is_empty());
+        assert_eq!(db.recording_share_access("r1", &bob.id).unwrap(), None);
+
+        // Shared with the group (watch only) and with carol (download).
+        db.replace_recording_shares(
+            "r1",
+            &[
+                RecordingShare { user_id: None, group_id: Some(team.id.clone()), name: None, allow_download: false },
+                RecordingShare { user_id: Some(carol.id.clone()), group_id: None, name: None, allow_download: true },
+            ],
+            &alice.id,
+        )
+        .unwrap();
+        assert_eq!(db.recording_share_access("r1", &bob.id).unwrap(), Some(false));
+        assert_eq!(db.recording_share_access("r1", &carol.id).unwrap(), Some(true));
+        let bobs = db.list_recordings_for_user(&bob.id).unwrap();
+        assert_eq!(bobs.len(), 1);
+        assert_eq!(bobs[0].1, Some(false));
+        assert_eq!(db.list_recordings_for_user(&alice.id).unwrap()[0].1, None);
+        assert_eq!(db.list_recording_shares("r1").unwrap().len(), 2);
+
+        // Leaving the group ends bob's access; deleting the recording removes its shares.
+        db.set_group_members(&team.id, &[]).unwrap();
+        assert_eq!(db.recording_share_access("r1", &bob.id).unwrap(), None);
+        assert!(db.delete_recording("r1").unwrap());
+        assert!(db.list_recording_shares("r1").unwrap().is_empty());
     }
 }

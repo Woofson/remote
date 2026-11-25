@@ -585,6 +585,51 @@
       </div>
     </div>
 
+    <!-- Recording player (#31) -->
+    <div id="rec-player" class="modal-overlay" style="display:none;">
+      <div class="modal-box rec-player-box" id="rec-player-box" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="rec-player-title">
+        <div class="ui-dialog-header rec-player-header" id="rec-player-header">
+          <span id="rec-player-title" class="modal-title">Recording</span>
+          <div class="rec-player-head-actions">
+            <button type="button" class="rec-head-btn" id="rec-player-download" title="Download">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            </button>
+            <button type="button" class="ui-dialog-close" title="Close (Esc)" onclick="closeRecordingPlayer()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+          </div>
+        </div>
+        <div class="rec-player-screen" id="rec-player-screen"><div class="rec-player-term" id="rec-player-term"></div></div>
+        <div class="rec-player-controls">
+          <button type="button" class="rec-ctl-btn" id="rec-play-btn" title="Play / pause (Space)"></button>
+          <span class="rec-time" id="rec-time">0:00 / 0:00</span>
+          <input type="range" id="rec-seek" class="rec-seek" min="0" max="1000" value="0" step="1" aria-label="Position" />
+          <select id="rec-speed" class="form-input rec-speed" title="Speed">
+            <option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option>
+          </select>
+          <label class="pw-check rec-skip" title="Shorten pauses longer than 2 seconds"><input type="checkbox" id="rec-skip-idle" checked /> <span>Skip pauses</span></label>
+          <input type="search" id="rec-find" class="form-input rec-find" placeholder="Find text" title="Enter jumps to the next place this text appears" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Share a recording (#31) -->
+    <div id="rec-share" class="modal-overlay ui-dialog-overlay" style="display:none;">
+      <div class="modal-box ui-dialog-box rec-share-box" id="rec-share-box" role="dialog" aria-modal="true" aria-labelledby="rec-share-title">
+        <div class="ui-dialog-header" id="rec-share-header">
+          <span id="rec-share-title" class="modal-title">Share recording</span>
+          <button type="button" class="ui-dialog-close" title="Close" onclick="closeRecordingShare()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
+        </div>
+        <div class="ui-dialog-body">
+          <p class="pw-hint" style="margin-top: 0;">People you add can watch this recording in Remote. Tick "Download" to also let them save a copy. They cannot delete it or share it further, and every viewing is written to the activity log.</p>
+          <div id="rec-share-list" class="assign-list"></div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="addRecordingShareRow()">+ Add person or group</button>
+        </div>
+        <div class="ui-dialog-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeRecordingShare()">Cancel</button>
+          <button type="button" class="btn btn-accent" id="rec-share-save">Save</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Admin: Reset a user's password -->
     <div id="pw-reset" class="modal-overlay ui-dialog-overlay" style="display:none;">
       <div class="modal-box ui-dialog-box" id="pw-reset-box" role="dialog" aria-modal="true" aria-labelledby="pw-reset-title">
@@ -1079,6 +1124,12 @@
               <div class="pw-hint">Assigned users and groups see this connection in their directory. The owner and admins can always edit it; edit by assignment covers details, not access rules.</div>
             </div>
 
+            <!-- Session recording (#31, admins) -->
+            <div id="conn-record-group" class="assign-section" style="display:none;">
+              <label class="pw-check" style="font-size: 12px; font-weight: 600;"><input type="checkbox" id="conn-record-sessions" /> <span>Record sessions</span></label>
+              <div class="pw-hint">Every session on this connection is recorded, and the user sees a REC marker while it runs. Recordings appear under Recordings in the Admin panel. For now this covers SSH, Telnet and local shell sessions; desktop sessions (RDP, VNC) follow in a later update. To record everything a person does, switch recording on for one of their groups instead.</div>
+            </div>
+
             <!-- Security & RBAC Policy Section -->
             <div style="background: var(--woofson-bg-header, #202024); padding: 12px; border-radius: var(--radius-md, 6px); border: 1px solid var(--woofson-border, #3f3f46); display: flex; flex-direction: column; gap: 10px;">
               <div style="font-size: 11px; font-weight: 700; color: var(--woofson-accent, #f59e0b); text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
@@ -1147,6 +1198,7 @@
             <button type="button" class="panel-nav-btn active" data-panel-page="users" data-keywords="users groups members accounts password reset role disable enable add delete">Users &amp; Groups</button>
             <button type="button" class="panel-nav-btn" data-panel-page="connections" data-keywords="connections global private owner assigned assignment shared local terminal scope">Connections</button>
             <button type="button" class="panel-nav-btn" data-panel-page="activity" data-keywords="activity audit log access denied login password history">Activity Log</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="recordings" data-keywords="recordings recording session playback replay watch download share delete storage audit">Recordings</button>
             <button type="button" class="panel-nav-btn" data-panel-page="security" data-keywords="security two-factor 2fa totp authenticator session timeout idle lock lifetime expiry policy">Security</button>
             <button type="button" class="panel-nav-btn" data-panel-page="email" data-keywords="email mail smtp password reset forgot notifications sender public address">Email</button>
             <button type="button" class="panel-nav-btn" data-panel-page="branding" data-keywords="branding login lock screen logo title welcome wallpaper background accent colour color reset default">Branding</button>
@@ -1218,6 +1270,24 @@
           </table>
         
             </section>
+            <section class="panel-page" data-page="recordings">
+              <div class="panel-page-header"><h3>Recordings</h3><span class="text-muted text-sm" id="admin-rec-count"></span></div>
+              <p class="pw-hint" id="admin-rec-storage" style="margin: 0 0 10px 0;"></p>
+              <div class="panel-filters rec-filters">
+                <input type="search" id="admin-rec-filter" class="form-input" placeholder="Filter by user or connection" />
+                <select id="admin-rec-user" class="form-input"><option value="">All users</option></select>
+                <div class="rec-content-search">
+                  <input type="search" id="admin-rec-content" class="form-input" placeholder="Text inside recordings…" />
+                  <button type="button" class="btn btn-secondary btn-sm" id="admin-rec-content-btn">Search</button>
+                </div>
+              </div>
+              <div id="admin-rec-note" class="pw-hint" style="display:none; margin: 0 0 8px 0;"></div>
+              <table class="data-table">
+                <thead><tr><th>Started</th><th>User</th><th>Connection</th><th>Length</th><th>Size</th><th>Shared with</th><th>Actions</th></tr></thead>
+                <tbody id="admin-rec-body"></tbody>
+              </table>
+              <p class="pw-hint">Switch recording on per connection (connection editor, Access tab) or per group (Users &amp; Groups). Only what the browser shows is recorded, never keystrokes. Files are stored encrypted.</p>
+            </section>
             <section class="panel-page" data-page="security">
               <div class="panel-page-header"><h3>Security</h3></div>
               <div id="admin-security-body"></div>
@@ -1258,6 +1328,7 @@
             <button type="button" class="panel-nav-btn" data-panel-page="security" data-keywords="security two-factor 2fa totp authenticator recovery codes phone">Security</button>
             <button type="button" class="panel-nav-btn" data-panel-page="appearance" data-keywords="appearance theme colours colors dark light">Appearance</button>
             <button type="button" class="panel-nav-btn" data-panel-page="sessions" data-keywords="sessions close disconnect confirm button pane">Sessions</button>
+            <button type="button" class="panel-nav-btn" data-panel-page="recordings" data-keywords="recordings recording playback replay watch download share shared with me">Recordings</button>
             <button type="button" class="panel-nav-btn" data-panel-page="shortcuts" data-keywords="shortcuts keyboard keys hotkeys">Shortcuts</button>
           </nav>
           <div class="panel-content">
@@ -1354,6 +1425,27 @@
                   <option value="hidden">Hidden</option>
                 </select>
               </div>
+            </section>
+            <section class="panel-page" data-page="recordings">
+              <div class="panel-page-header"><h3>Recordings</h3><span class="text-muted text-sm" id="my-rec-count"></span></div>
+              <p class="pw-hint" id="my-rec-intro" style="margin: 0 0 10px 0;"></p>
+              <div class="panel-filters rec-filters">
+                <input type="search" id="my-rec-filter" class="form-input" placeholder="Filter by connection or person" />
+                <select id="my-rec-user" class="form-input">
+                  <option value="">All recordings</option>
+                  <option value="own">My sessions</option>
+                  <option value="shared">Shared with me</option>
+                </select>
+                <div class="rec-content-search">
+                  <input type="search" id="my-rec-content" class="form-input" placeholder="Text inside recordings…" />
+                  <button type="button" class="btn btn-secondary btn-sm" id="my-rec-content-btn">Search</button>
+                </div>
+              </div>
+              <div id="my-rec-note" class="pw-hint" style="display:none; margin: 0 0 8px 0;"></div>
+              <table class="data-table">
+                <thead><tr><th>Started</th><th>From</th><th>Connection</th><th>Length</th><th>Size</th><th>Shared with</th><th>Actions</th></tr></thead>
+                <tbody id="my-rec-body"></tbody>
+              </table>
             </section>
             <section class="panel-page" data-page="shortcuts">
               <div class="panel-page-header"><h3>Keyboard shortcuts</h3></div>
@@ -1590,5 +1682,6 @@
   </div>
 
   <script src="app.js?v=__REMOTE_VERSION__"></script>
+  <script src="recordings.js?v=__REMOTE_VERSION__"></script>
 </body>
 </html>

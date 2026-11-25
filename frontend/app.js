@@ -1876,6 +1876,7 @@ async function handleSaveConnection(e) {
   if (isAdminUser) {
     const owner = document.getElementById('conn-owner').value;
     if (owner) payload.owner_id = owner;
+    payload.record_sessions = document.getElementById('conn-record-sessions').checked;
   }
 
   const url = id ? `api/connections/${id}` : 'api/connections';
@@ -3359,6 +3360,7 @@ function teardownSession(pane) {
   pane.paused = false;
   pane.sessionId = null;
   pane.share = null;
+  pane.recording = false;
   if (document.getElementById('pane-share-dropdown')?.dataset.tab === String(pane.tabId)) document.getElementById('pane-share-dropdown').remove();
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
@@ -3568,7 +3570,11 @@ function renderPaneHeader(paneIndex) {
       const viewOnlyTag = tagText
         ? ` <span class="pane-title-tag">${escapeHtml(tagText)}</span>`
         : '';
-      titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
+      // Recorded sessions say so, for the owner and for share viewers (#31).
+      const recTag = sess.recording
+        ? ' <span class="pane-title-tag pane-rec-tag" title="This session is being recorded">REC</span>'
+        : '';
+      titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${recTag}${viewOnlyTag}`;
     } else if (sess.parked && sess.lastConn) {
       const c = sess.lastConn;
       titleEl.innerHTML = `${connIconHtml(c.icon, c.protocol, 'conn-icon-sm')} ${escapeHtml(c.name)} <span class="pane-title-note">not connected</span>`;
@@ -3843,7 +3849,9 @@ function handleSessionMeta(pane, msg, term) {
       pane.canShare = !!msg.can_share;
       pane.canShareControl = !!msg.can_share_control;
       pane.share = { links: [], viewers: [] };
+      pane.recording = !!msg.recording;
       updateShareButton(pane);
+      if (pane.recording && state.panes[pane.id] === pane) renderPaneHeader(pane.id);
       return true;
     case 'share_state':
       if (pane.copyNextLink && msg.links && msg.links.length > ((pane.share && pane.share.links.length) || 0)) {
@@ -3859,6 +3867,8 @@ function handleSessionMeta(pane, msg, term) {
       return true;
     case 'shared':
       pane.sharedInfo = msg;
+      pane.recording = !!msg.recording;
+      if (pane.recording && state.panes[pane.id] === pane) renderPaneHeader(pane.id);
       return true;
     case 'term_size':
       if (term && pane.conn && pane.conn.shareToken) {
@@ -5829,6 +5839,7 @@ function renderGroups() {
           <div class="group-row-name">${escapeHtml(g.name)}
             <span class="group-row-meta">· ${members.length} member${members.length === 1 ? '' : 's'}${members.length ? ': ' + members.map(escapeHtml).join(', ') : ''}</span>
           </div>
+          <button class="btn btn-secondary btn-sm group-rec-btn${g.record_sessions ? ' on' : ''}" data-group-action="recording" data-group-id="${escapeHtml(g.id)}" title="${g.record_sessions ? 'Sessions of all members are recorded. Click to stop.' : 'Record the sessions of all members'}">${g.record_sessions ? 'Recording on' : 'Recording off'}</button>
           <button class="btn btn-secondary btn-sm" data-group-action="members" data-group-id="${escapeHtml(g.id)}">Members</button>
           <button class="btn btn-secondary btn-sm" data-group-action="rename" data-group-id="${escapeHtml(g.id)}">Rename</button>
           <button class="btn btn-secondary btn-sm text-danger" data-group-action="delete" data-group-id="${escapeHtml(g.id)}">Delete</button>
@@ -5845,7 +5856,20 @@ document.addEventListener('click', (e) => {
   if (btn.dataset.groupAction === 'members') openGroupMembers(group);
   if (btn.dataset.groupAction === 'rename') renameGroup(group);
   if (btn.dataset.groupAction === 'delete') deleteGroup(group);
+  if (btn.dataset.groupAction === 'recording') setGroupRecording(group, !group.record_sessions);
 });
+
+/** Record the sessions of every member of a group (#31). */
+async function setGroupRecording(group, on) {
+  if (on && !(await uiConfirm(`Every session opened by members of "${group.name}" will be recorded. They see a REC marker while it runs. Continue?`, { title: 'Record group sessions', okText: 'Turn on' }))) return;
+  const res = await apiFetch(`api/groups/${encodeURIComponent(group.id)}/recording`, { method: 'PUT', body: JSON.stringify({ record_sessions: on }) });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not change recording'), 'danger');
+    return;
+  }
+  showToast(on ? `Sessions of "${group.name}" are now recorded` : `Recording turned off for "${group.name}"`, 'success');
+  loadGroups();
+}
 
 async function createGroup() {
   const name = await uiPrompt('', { title: 'New group', placeholder: 'e.g. Finance', okText: 'Create' });
@@ -5972,6 +5996,9 @@ async function prepareAssignments(conn) {
   const isAdm = state.currentUser && state.currentUser.role === 'admin';
   list.innerHTML = '';
   section.style.display = isAdm ? '' : 'none';
+  // Session recording is an admin decision (#31); the server ignores it from anyone else.
+  document.getElementById('conn-record-group').style.display = isAdm ? '' : 'none';
+  document.getElementById('conn-record-sessions').checked = !!(conn && conn.record_sessions);
   if (!isAdm) return;
 
   try {
@@ -7335,6 +7362,11 @@ async function loadAdminSecurity() {
         <option value="off" ${p.sharing === 'off' ? 'selected' : ''}>Off</option>
       </select>
     </div>
+    <div class="settings-section-title">Session recordings</div>
+    <div class="sec-row">
+      <div class="sec-label">Sharing recordings<div class="pw-hint">Users can share their own recordings with other users or groups, watch-only or with download. Admins can share any recording. Turning it off also stops access through shares already made; they come back if you turn it on again.</div></div>
+      <label class="pw-check"><input type="checkbox" id="sec-rec-sharing" ${p.recording_sharing ? 'checked' : ''}/> <span>Allow sharing recordings</span></label>
+    </div>
     <div class="sec-actions">
       <span class="pw-error" id="sec-error"></span>
       <button type="button" class="btn btn-accent btn-sm" onclick="saveSecurityPolicy()">Save</button>
@@ -7352,6 +7384,7 @@ async function saveSecurityPolicy() {
     lock_requires_2fa: document.getElementById('sec-lock-2fa').checked,
     require_2fa_roles: [...document.querySelectorAll('.sec-role:checked')].map((b) => b.value),
     sharing: document.getElementById('sec-sharing').value,
+    recording_sharing: document.getElementById('sec-rec-sharing').checked,
   };
   const me = state.currentUser || {};
   if (policy.require_2fa_roles.includes(me.role) && !me.two_factor_enabled

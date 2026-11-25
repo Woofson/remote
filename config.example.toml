@@ -66,3 +66,12 @@ max_text_size_bytes = 1048576
 
 [logging]
 level = "info"
+
+[recording]
+# Session recordings (turned on per connection or per group by an admin).
+# Folder for recordings; empty = "<data_dir>/recordings". Files are encrypted with the server's secret.
+dir = ""
+# Delete recordings older than this many days (0 = keep until the size limit is reached)
+keep_days = 30
+# When all recordings together pass this many GB, the oldest are deleted first (0 = no limit)
+max_total_gb = 20

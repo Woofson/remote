@@ -3824,6 +3824,24 @@ body.float-dragging .float-body { pointer-events: none; }
   white-space: nowrap;
 }
 .pane-conn-name:has(.pane-title-tag) { max-width: 340px; }
+.pane-rec-tag {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+.pane-rec-tag::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #ef4444;
+  vertical-align: 1px;
+  animation: rec-blink 1.6s ease-in-out infinite;
+}
+@keyframes rec-blink { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .pane-rec-tag::before { animation: none; } }
 
 /* ==========================================================================
    PHONES AND TABLETS (#33): key bar, keyboard input, touchpad pointer
@@ -3910,3 +3928,81 @@ body.float-dragging .float-body { pointer-events: none; }
 .wol-wait input { width: 80px; }
 @media (max-width: 600px) { .wol-grid { grid-template-columns: 1fr; } }
 .wol-wait span { white-space: nowrap; }
+
+/* Session recording (#31) */
+.group-rec-btn.on { color: #f87171 !important; border-color: rgba(239, 68, 68, 0.5) !important; }
+.rec-filters { grid-template-columns: 2fr 1fr 2fr; }
+.rec-content-search { display: flex; gap: 6px; min-width: 0; }
+.rec-content-search .form-input { flex: 1; }
+
+#rec-player { z-index: 1400; }
+.rec-player-box {
+  width: min(1100px, 96vw);
+  height: min(720px, 90vh);
+  min-width: 420px;
+  min-height: 300px;
+  max-width: 98vw;
+  max-height: 96vh;
+  resize: both;
+  outline: none;
+}
+.rec-player-header { cursor: grab; gap: 8px; }
+.rec-player-header:active { cursor: grabbing; }
+.rec-player-header .modal-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rec-player-head-actions { display: flex; align-items: center; gap: 4px; }
+.rec-head-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--woofson-text-main, #f4f4f5);
+  border-radius: var(--radius, 6px);
+  opacity: 0.7;
+  cursor: pointer;
+}
+.rec-head-btn:hover { background: rgba(255, 255, 255, 0.08); opacity: 1; }
+.rec-player-screen {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  background: var(--woofson-bg-main, #121214);
+  display: flex;
+}
+.rec-player-term { margin: auto; }
+.rec-player-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--woofson-border, #3f3f46);
+  background: var(--woofson-bg-header, #202024);
+}
+.rec-ctl-btn {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--woofson-border, #3f3f46);
+  background: transparent;
+  color: var(--woofson-accent, #f59e0b);
+  border-radius: var(--radius, 6px);
+  cursor: pointer;
+}
+.rec-ctl-btn:hover { background: rgba(245, 158, 11, 0.18); border-color: var(--woofson-accent, #f59e0b); }
+.rec-time { font-family: var(--font-mono); font-size: 11px; color: var(--woofson-text-dim); white-space: nowrap; min-width: 92px; }
+.rec-seek { flex: 1; min-width: 80px; accent-color: var(--woofson-accent, #f59e0b); }
+.rec-speed { width: 64px; height: 26px; padding: 0 6px; flex: none; }
+.rec-skip { font-size: 11px; white-space: nowrap; margin: 0; }
+.rec-find { width: 150px; height: 26px; flex: none; }
+@media (max-width: 700px) {
+  .rec-player-box { min-width: 0; width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; resize: none; }
+  .rec-player-controls { flex-wrap: wrap; }
+  .rec-find { flex: 1; width: auto; }
+  .rec-filters { grid-template-columns: 1fr; }
+}

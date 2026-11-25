@@ -24,6 +24,8 @@ pub struct SecurityPolicy {
     pub require_2fa_roles: Vec<String>,
     /// Sharing live sessions (#32): "full" (watch or control), "view" (watch-only links) or "off".
     pub sharing: String,
+    /// Users may share session recordings with other users and groups (#31). Off by default.
+    pub recording_sharing: bool,
 }
 
 impl Default for SecurityPolicy {
@@ -35,6 +37,7 @@ impl Default for SecurityPolicy {
             lock_requires_2fa: false,
             require_2fa_roles: Vec::new(),
             sharing: "full".into(),
+            recording_sharing: false,
         }
     }
 }
