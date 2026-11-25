@@ -1963,6 +1963,7 @@ function connectToTarget(connectionId, opts = {}) {
   pane.conn = conn;
   pane.type = conn.protocol;
   pane.lastError = null;
+  pane.endReason = null;
   pane.statsColor = '';
   pane.status = 'connecting';
   statsEl.textContent = 'Connecting...';
@@ -2013,7 +2014,7 @@ function connectToTarget(connectionId, opts = {}) {
     // Dropped by the network or a proxy (not closed by either side) after the desktop was up:
     // reconnect a few times on its own; Windows and VNC keep the desktop running meanwhile.
     const dropped = ev && ev.code === 1006 && pane.socket === ws && ws.openedAt && Date.now() - ws.openedAt > 10000;
-    const retry = dropped && (conn.protocol === 'rdp' || conn.protocol === 'vnc') && (pane.autoReconnects || 0) < 3;
+    const retry = dropped && !pane.endReason && (conn.protocol === 'rdp' || conn.protocol === 'vnc') && (pane.autoReconnects || 0) < 3;
     if (pane.authPending) {
       pane.authPending = false;
       closeUiDialog(null);
@@ -2044,7 +2045,9 @@ function connectToTarget(connectionId, opts = {}) {
 
     const errBanner = pane.lastError
       ? `<div style="max-width: 480px; margin-top: 6px; padding: 8px 12px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; color: #fca5a5; font-size: 11px; line-height: 1.4; font-family: var(--font-mono, monospace); word-break: break-word;">${escapeHtml(pane.lastError)}</div>`
-      : '';
+      : pane.endReason
+        ? `<div class="session-end-note">Ended by the remote computer (${escapeHtml(pane.endReason)}).</div>`
+        : '';
 
     // Display a clean Reconnect banner
     bodyEl.innerHTML = `
@@ -2384,6 +2387,9 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
         } else if (msg.type === 'error') {
           pane.lastError = msg.message;
           showToast(msg.message, 'danger');
+        } else if (msg.type === 'ended') {
+          // Ended on purpose on the remote side (Start menu > Disconnect, sign-out): no reconnect.
+          pane.endReason = msg.reason || 'session ended';
         }
       } catch (err) {}
     } else {

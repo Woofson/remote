@@ -673,12 +673,13 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
     let is_running_ws_writer = Arc::clone(&is_running);
 
     // WebSocket Outbound Writer Task
-    let ws_writer_task = tokio::spawn(async move {
+    let mut ws_writer_task = tokio::spawn(async move {
         while let Some(msg) = ws_out_rx.recv().await {
             if !is_running_ws_writer.load(Ordering::Relaxed) {
                 break;
             }
-            if ws_tx.send(msg).await.is_err() {
+            let closing = matches!(msg, Message::Close(_));
+            if ws_tx.send(msg).await.is_err() || closing {
                 break;
             }
         }
@@ -990,6 +991,7 @@ async fn process_and_send_frame(
 
     // Process output events from the IronRDP client
     let output_loop = async move {
+        let mut ended_normally = false;
         let mut initial_size_sent = false;
         let mut current_w = 0u16;
         let mut current_h = 0u16;
@@ -1051,6 +1053,18 @@ async fn process_and_send_frame(
                     match reason {
                         Ok(graceful) => {
                             info!("RDP Gateway: Session disconnected gracefully: {:?}", graceful);
+                            // Ended on purpose (Start menu > Disconnect, sign-out, admin): tell the
+                            // browser and close properly, so it does not reconnect as after a drop.
+                            let _ = ws_out_tx_events
+                                .send(Message::Text(json!({ "type": "ended", "reason": graceful.description() }).to_string()))
+                                .await;
+                            let _ = ws_out_tx_events
+                                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                                    code: 1000,
+                                    reason: "Session ended".into(),
+                                })))
+                                .await;
+                            ended_normally = true;
                         }
                         Err(err) => {
                             let mut session_details = vec![format!("{}", err)];
@@ -1077,9 +1091,15 @@ async fn process_and_send_frame(
                 _ => {}
             }
         }
+        ended_normally
     };
 
-    output_loop.await;
+    let ended_normally = output_loop.await;
+
+    // Let the "ended" notice and the close reach the browser before tearing down.
+    if ended_normally {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), &mut ws_writer_task).await;
+    }
 
     is_running.store(false, Ordering::Relaxed);
     let _ = input_sender.send(RdpInputEvent::Close);
