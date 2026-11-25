@@ -204,9 +204,9 @@ pub struct HubConfig {
     pub rows: u16,
     /// Guests with control may paste into the session (the connection allows browser to remote).
     pub guest_clipboard: bool,
-    /// Sharing allowed at all, and with control.
-    pub can_share: bool,
-    pub can_share_control: bool,
+    /// Sharing allowed at all, and with control: asked each time, so admin changes apply
+    /// to sessions that are already open.
+    pub share_rights: Box<dyn Fn() -> (bool, bool) + Send + Sync>,
     /// Called for share events (activity log).
     pub on_event: Box<dyn Fn(ShareEvent) + Send + Sync>,
 }
@@ -290,14 +290,15 @@ async fn run(
         term_buf_bytes: 0,
     };
 
+    let (can_share, can_share_control) = (hub.cfg.share_rights)();
     let _ = hub
         .owner_tx
         .send(Message::Text(
             json!({
                 "type": "session",
                 "id": hub.session_id,
-                "can_share": hub.cfg.can_share,
-                "can_share_control": hub.cfg.can_share_control,
+                "can_share": can_share,
+                "can_share_control": can_share_control,
             })
             .to_string(),
         ))
@@ -622,10 +623,11 @@ impl Hub {
 
     async fn create_link(&mut self, v: &Value) {
         let control = v.get("mode").and_then(|x| x.as_str()) == Some("control");
-        let refuse = if !self.cfg.can_share {
+        let (can_share, can_share_control) = (self.cfg.share_rights)();
+        let refuse = if !can_share {
             Some("Sharing is turned off by the administrator")
-        } else if control && !self.cfg.can_share_control {
-            Some("Only view-only sharing is allowed")
+        } else if control && !can_share_control {
+            Some("Only watch-only links are allowed by the administrator")
         } else if self.links.len() >= MAX_LINKS {
             Some("Too many share links for this session")
         } else {

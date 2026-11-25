@@ -22,6 +22,8 @@ pub struct SecurityPolicy {
     pub lock_requires_2fa: bool,
     /// Roles whose local accounts must use two-factor authentication.
     pub require_2fa_roles: Vec<String>,
+    /// Sharing live sessions (#32): "full" (watch or control), "view" (watch-only links) or "off".
+    pub sharing: String,
 }
 
 impl Default for SecurityPolicy {
@@ -32,6 +34,7 @@ impl Default for SecurityPolicy {
             idle_action: "lock".into(),
             lock_requires_2fa: false,
             require_2fa_roles: Vec::new(),
+            sharing: "full".into(),
         }
     }
 }
@@ -56,7 +59,19 @@ impl SecurityPolicy {
         if let Some(r) = self.require_2fa_roles.iter().find(|r| !ROLES.contains(&r.as_str())) {
             return Err(format!("Unknown role '{}'", r));
         }
+        if !matches!(self.sharing.as_str(), "full" | "view" | "off") {
+            return Err("Session sharing must be full, view or off".into());
+        }
         Ok(())
+    }
+
+    /// May users share their sessions at all, and with control?
+    pub fn share_rights(&self) -> (bool, bool) {
+        match self.sharing.as_str() {
+            "off" => (false, false),
+            "view" => (true, false),
+            _ => (true, true),
+        }
     }
 
     pub fn requires_2fa(&self, role: &str) -> bool {
@@ -204,6 +219,22 @@ impl LoginLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sharing_rule() {
+        let mut p = SecurityPolicy::default();
+        assert_eq!(p.share_rights(), (true, true));
+        p.sharing = "view".into();
+        assert_eq!(p.share_rights(), (true, false));
+        p.sharing = "off".into();
+        assert_eq!(p.share_rights(), (false, false));
+        assert!(p.validate().is_ok());
+        p.sharing = "maybe".into();
+        assert!(p.validate().is_err());
+        // Settings saved before sharing existed load as "full".
+        let old: SecurityPolicy = serde_json::from_str(r#"{"max_login_hours":24}"#).unwrap();
+        assert_eq!(old.sharing, "full");
+    }
 
     #[test]
     fn limiter_blocks_after_free_attempts() {

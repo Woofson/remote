@@ -6855,6 +6855,15 @@ async function loadAdminSecurity() {
         <option value="logout" ${p.idle_action === 'logout' ? 'selected' : ''}>Sign out</option>
       </select>
     </div>
+    <div class="settings-section-title">Session sharing</div>
+    <div class="sec-row">
+      <div class="sec-label">Sharing live sessions<div class="pw-hint">Users can share a session they have open through a link; viewers sign in with their own login. Turning it off also stops people joining with links already given out. People already watching stay until the owner removes them or closes the session.</div></div>
+      <select id="sec-sharing" class="form-input sec-select">
+        <option value="full" ${p.sharing === 'full' ? 'selected' : ''}>Allowed: watch or control</option>
+        <option value="view" ${p.sharing === 'view' ? 'selected' : ''}>Watch-only links only</option>
+        <option value="off" ${p.sharing === 'off' ? 'selected' : ''}>Off</option>
+      </select>
+    </div>
     <div class="sec-actions">
       <span class="pw-error" id="sec-error"></span>
       <button type="button" class="btn btn-accent btn-sm" onclick="saveSecurityPolicy()">Save</button>
@@ -6871,6 +6880,7 @@ async function saveSecurityPolicy() {
     idle_action: document.getElementById('sec-idle-action').value,
     lock_requires_2fa: document.getElementById('sec-lock-2fa').checked,
     require_2fa_roles: [...document.querySelectorAll('.sec-role:checked')].map((b) => b.value),
+    sharing: document.getElementById('sec-sharing').value,
   };
   const me = state.currentUser || {};
   if (policy.require_2fa_roles.includes(me.role) && !me.two_factor_enabled

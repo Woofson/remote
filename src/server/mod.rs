@@ -2475,8 +2475,10 @@ pub async fn ws_tunnel_handler(
             cols,
             rows,
             guest_clipboard: conn_perms.can_clipboard && matches!(conn_rec.allow_clipboard.as_str(), "bidirectional" | "host_to_remote"),
-            can_share: true,
-            can_share_control: true,
+            share_rights: {
+                let policy = state.policy.clone();
+                Box::new(move || policy.read().share_rights())
+            },
             on_event: Box::new(move |ev| {
                 use crate::protocols::hub::ShareEvent;
                 let (who_id, who, action, details) = match ev {

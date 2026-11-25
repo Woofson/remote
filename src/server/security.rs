@@ -339,12 +339,13 @@ pub async fn api_set_security_policy(
         None,
         None,
         Some(&format!(
-            "login {} h, idle {} min ({}), lock-screen 2FA {}, 2FA required for: {}",
+            "login {} h, idle {} min ({}), lock-screen 2FA {}, 2FA required for: {}, sharing {}",
             policy.max_login_hours,
             policy.idle_minutes,
             policy.idle_action,
             if policy.lock_requires_2fa { "on" } else { "off" },
-            roles
+            roles,
+            policy.sharing
         )),
         None,
     );

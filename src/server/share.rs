@@ -9,6 +9,19 @@ pub struct ShareWsQuery {
     pub token: Option<String>,
 }
 
+/// Admin rules (#32): sharing off stops joining with links already given out; view-only
+/// sharing stops control links.
+fn check_allowed(state: &AppState, link: &crate::protocols::hub::ShareLink) -> Result<(), (StatusCode, Json<Value>)> {
+    let (can_share, can_control) = state.policy.read().share_rights();
+    if !can_share {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Session sharing is turned off by the administrator" }))));
+    }
+    if link.mode == crate::protocols::hub::ShareMode::Control && !can_control {
+        return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Only watch-only sharing is allowed; ask for a new link" }))));
+    }
+    Ok(())
+}
+
 fn not_found() -> (StatusCode, Json<Value>) {
     (StatusCode::NOT_FOUND, Json(json!({ "error": "This share link has expired, was cancelled, or the session has ended" })))
 }
@@ -21,6 +34,7 @@ pub async fn api_share_info(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     extract_claims(&state, &headers)?;
     let link = state.shares.lookup(&token).ok_or_else(not_found)?;
+    check_allowed(&state, &link)?;
     Ok(Json(link.public_view()))
 }
 
@@ -38,6 +52,7 @@ pub async fn ws_share_handler(
         extract_claims(&state, &headers)?
     };
     let link = state.shares.lookup(&token).ok_or_else(not_found)?;
+    check_allowed(&state, &link)?;
     let user = state
         .db
         .get_user_by_id(&claims.sub)
