@@ -2263,8 +2263,11 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
   term.onData((data) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (pane.conn && pane.conn.view_only) return;
-    ws.send(data);
+    ws.send(applyTerminalTouchMods(pane, data));
   });
+
+  // Phones and tablets (#33): key bar with Esc, Tab, Ctrl, Alt, arrows and F-keys.
+  setupTerminalKeybar(pane, ws, term, bodyEl);
 
   term.onResize(({ cols, rows }) => {
     sendTerminalResize(cols, rows);
@@ -2710,11 +2713,427 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
 
   canvas.addEventListener('paste', handleCanvasPaste);
 
+  // Phones and tablets (#33): finger gestures, zoom, on-screen keyboard and a key bar.
+  setupTouchInput(pane, ws, bodyEl, { canvas, sendPointer, sendKey });
+
   canvas.focus();
 }
 
+// ================= Phones and tablets (#33) =================
+// Touchpad mode (default): one finger moves the pointer, tap clicks, two-finger tap right-clicks,
+// two-finger drag scrolls, long press starts a drag. Touchscreen mode: tap clicks where the finger
+// is, drag drags, long press right-clicks. Pinch zooms in both; while zoomed, two fingers pan.
+// A key bar adds the keys phones lack; the keyboard button opens the device keyboard.
+
+function isTouchDevice() {
+  return window.matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints > 0 && window.matchMedia('(hover: none)').matches);
+}
+
+const KEYBAR_MORE = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'Home', 'End', 'PageUp', 'PageDown', 'Delete', 'Insert'];
+const KEYBAR_LABELS = { Escape: 'Esc', ArrowLeft: '←', ArrowUp: '↑', ArrowDown: '↓', ArrowRight: '→', PageUp: 'PgUp', PageDown: 'PgDn', Delete: 'Del', Insert: 'Ins' };
+
+/** The key bar under a session on touch devices. `press(key, button)` handles a key. */
+function buildKeybar(pane, el, kind, press) {
+  const btn = (k, label, title, cls = '') => `<button type="button" class="kb-key ${cls}" data-k="${k}" title="${title}">${label}</button>`;
+  const keyBtn = (k) => btn(k, KEYBAR_LABELS[k] || k, k);
+  const bar = document.createElement('div');
+  bar.className = 'touch-keybar';
+  bar.innerHTML = `
+    <div class="kb-row">
+      ${btn('kbd', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>', 'Show or hide the keyboard', 'kb-icon')}
+      ${keyBtn('Escape')}${keyBtn('Tab')}
+      ${btn('ctrl', 'Ctrl', 'Ctrl: applies to the next key', 'kb-mod')}
+      ${btn('alt', 'Alt', 'Alt: applies to the next key', 'kb-mod')}
+      ${kind === 'graphics' ? btn('meta', 'Win', 'Windows key: applies to the next key (double-tap to press it alone)', 'kb-mod') : ''}
+      ${keyBtn('ArrowLeft')}${keyBtn('ArrowUp')}${keyBtn('ArrowDown')}${keyBtn('ArrowRight')}
+      ${btn('fn', 'Fn', 'More keys: F1 to F12, Home, End, Page Up/Down, Delete', 'kb-toggle')}
+      ${kind === 'graphics' ? btn('cad', 'Ctrl+Alt+Del', 'Send Ctrl+Alt+Del') : ''}
+      ${kind === 'graphics' ? btn('mode', '', 'Switch between touchpad and touchscreen mode', 'kb-mode') : ''}
+    </div>
+    <div class="kb-row kb-more" hidden>${KEYBAR_MORE.map(keyBtn).join('')}</div>`;
+  el.appendChild(bar);
+  el.classList.add('has-keybar');
+  // Pressing a key must not take focus away from the keyboard input.
+  bar.addEventListener('pointerdown', (e) => e.preventDefault());
+  bar.addEventListener('mousedown', (e) => e.preventDefault());
+  const api = {
+    updateMods() {
+      bar.querySelectorAll('.kb-mod').forEach((m) => m.classList.toggle('active', !!pane.touchMods[m.dataset.k]));
+    },
+    setMode(text) {
+      const m = bar.querySelector('.kb-mode');
+      if (m) m.textContent = text;
+    },
+    el: bar,
+  };
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-k]');
+    if (!b) return;
+    e.stopPropagation();
+    const k = b.dataset.k;
+    if (k === 'ctrl' || k === 'alt' || k === 'meta') {
+      pane.touchMods[k] = !pane.touchMods[k];
+    } else if (k === 'fn') {
+      const more = bar.querySelector('.kb-more');
+      more.hidden = !more.hidden;
+      b.classList.toggle('active', !more.hidden);
+    } else {
+      press(k, b);
+    }
+    api.updateMods();
+  });
+  return api;
+}
+
+/** Touch gestures, zoom, keyboard and key bar for a remote desktop. */
+function setupTouchInput(pane, ws, el, { canvas, sendPointer, sendKey }) {
+  if (!isTouchDevice()) return;
+  canvas.style.touchAction = 'none';
+  pane.touchMods = { ctrl: false, alt: false, meta: false };
+  const view = { s: 1, tx: 0, ty: 0 };
+  const cursor = { x: Math.round(canvas.width / 2), y: Math.round(canvas.height / 2) };
+  let tMask = 0;
+  let bar = null;
+  const mode = () => (sessionPrefs.touchMode === 'touchscreen' ? 'touchscreen' : 'touchpad');
+  const modeLabel = () => (mode() === 'touchpad' ? 'Touchpad' : 'Tap');
+
+  // Pointer marker for touchpad mode (the remote pointer may not be drawn in the picture).
+  const marker = document.createElement('div');
+  marker.className = 'touch-cursor';
+  marker.innerHTML = '<svg viewBox="0 0 16 24" width="16" height="24"><path d="M1 1 L1 19 L5.5 14.5 L8.5 22 L11.5 20.8 L8.6 13.4 L15 13.4 Z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+  el.appendChild(marker);
+
+  const toRemote = (cx, cy) => {
+    const r = canvas.getBoundingClientRect();
+    return {
+      x: Math.max(0, Math.min(canvas.width - 1, Math.round(((cx - r.left) * canvas.width) / r.width))),
+      y: Math.max(0, Math.min(canvas.height - 1, Math.round(((cy - r.top) * canvas.height) / r.height))),
+    };
+  };
+  const placeMarker = () => {
+    if (mode() !== 'touchpad') { marker.style.display = 'none'; return; }
+    const r = canvas.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    marker.style.display = '';
+    marker.style.left = `${r.left - er.left + (cursor.x * r.width) / canvas.width}px`;
+    marker.style.top = `${r.top - er.top + (cursor.y * r.height) / canvas.height}px`;
+  };
+  const applyView = () => {
+    canvas.style.transformOrigin = '0 0';
+    canvas.style.transform = view.s > 1.001 ? `translate(${view.tx}px, ${view.ty}px) scale(${view.s})` : '';
+    placeMarker();
+  };
+  const clampView = () => {
+    if (view.s <= 1.001) { view.s = 1; view.tx = 0; view.ty = 0; return; }
+    const W = canvas.offsetWidth;
+    const H = canvas.offsetHeight;
+    view.tx = Math.min(0, Math.max(W - W * view.s, view.tx));
+    view.ty = Math.min(0, Math.max(H - H * view.s, view.ty));
+  };
+  const zoomAt = (cx, cy, s) => {
+    const er = el.getBoundingClientRect();
+    const ex = cx - er.left - canvas.offsetLeft;
+    const ey = cy - er.top - canvas.offsetTop;
+    const lx = (ex - view.tx) / view.s;
+    const ly = (ey - view.ty) / view.s;
+    view.s = Math.max(1, Math.min(4, s));
+    view.tx = ex - lx * view.s;
+    view.ty = ey - ly * view.s;
+    clampView();
+    applyView();
+  };
+  const pan = (dx, dy) => { view.tx += dx; view.ty += dy; clampView(); applyView(); };
+  // While zoomed in touchpad mode, the view follows the pointer.
+  const followCursor = () => {
+    if (view.s <= 1.001) return;
+    const r = canvas.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const px = r.left + (cursor.x * r.width) / canvas.width;
+    const py = r.top + (cursor.y * r.height) / canvas.height;
+    const m = 40;
+    let dx = 0;
+    let dy = 0;
+    if (px < er.left + m) dx = er.left + m - px;
+    if (px > er.right - m) dx = er.right - m - px;
+    if (py < er.top + m) dy = er.top + m - py;
+    if (py > er.bottom - 50 - m) dy = er.bottom - 50 - m - py;
+    if (dx || dy) pan(dx, dy);
+  };
+
+  const move = (mask) => sendPointer(mask, cursor.x, cursor.y, true);
+  const click = (button) => { move(button); move(0); };
+  const wheel = (down) => { sendPointer(tMask | (down ? 16 : 8), cursor.x, cursor.y, true); move(tMask); };
+
+  // ---- keyboard ----
+  const kbInput = document.createElement('textarea');
+  kbInput.className = 'touch-kb-input';
+  kbInput.setAttribute('autocapitalize', 'off');
+  kbInput.setAttribute('autocomplete', 'off');
+  kbInput.setAttribute('autocorrect', 'off');
+  kbInput.setAttribute('spellcheck', 'false');
+  kbInput.setAttribute('aria-label', 'Keyboard input for the remote computer');
+  el.appendChild(kbInput);
+
+  let g = null;
+  const pt = (t) => ({ x: t.clientX, y: t.clientY });
+  const mid = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 });
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (document.activeElement !== kbInput) canvas.focus({ preventScroll: true });
+    const ts = e.touches;
+    if (ts.length === 1 && !g) {
+      const p = pt(ts[0]);
+      g = { type: 'one', t0: Date.now(), p0: p, last: p, moved: false, dragging: false, long: false };
+      g.timer = setTimeout(() => {
+        if (!g || g.type !== 'one' || g.moved) return;
+        g.long = true;
+        if (navigator.vibrate) navigator.vibrate(25);
+        if (mode() === 'touchpad') {
+          tMask = 1; // long press, then move: drag
+          g.dragging = true;
+          move(1);
+        } else {
+          Object.assign(cursor, toRemote(g.p0.x, g.p0.y));
+          click(4); // long press: right click where the finger is
+        }
+      }, 500);
+    } else if (ts.length >= 2) {
+      if (g && g.type === 'one') {
+        clearTimeout(g.timer);
+        if (g.dragging) { tMask = 0; move(0); }
+      }
+      const m = mid(ts[0], ts[1]);
+      g = { type: 'two', t0: Date.now(), d0: dist(ts[0], ts[1]) || 1, s0: view.s, m0: m, last: m, moved: false, pinch: false, acc: 0 };
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (!g) return;
+    const ts = e.touches;
+    if (g.type === 'one' && ts.length === 1) {
+      const p = pt(ts[0]);
+      if (!g.moved && Math.hypot(p.x - g.p0.x, p.y - g.p0.y) > 8) { g.moved = true; clearTimeout(g.timer); }
+      if (!g.moved) return;
+      if (mode() === 'touchpad') {
+        const r = canvas.getBoundingClientRect();
+        const speed = (canvas.width / r.width) * 1.3;
+        cursor.x = Math.round(Math.max(0, Math.min(canvas.width - 1, cursor.x + (p.x - g.last.x) * speed)));
+        cursor.y = Math.round(Math.max(0, Math.min(canvas.height - 1, cursor.y + (p.y - g.last.y) * speed)));
+        move(tMask);
+        placeMarker();
+        followCursor();
+      } else {
+        if (!g.dragging) {
+          g.dragging = true;
+          Object.assign(cursor, toRemote(g.p0.x, g.p0.y));
+          tMask = 1;
+          move(1);
+        }
+        Object.assign(cursor, toRemote(p.x, p.y));
+        move(1);
+      }
+      g.last = p;
+    } else if (g.type === 'two' && ts.length >= 2) {
+      const m = mid(ts[0], ts[1]);
+      const d = dist(ts[0], ts[1]);
+      if (!g.moved && (Math.abs(d - g.d0) > 12 || Math.hypot(m.x - g.m0.x, m.y - g.m0.y) > 8)) g.moved = true;
+      if (!g.pinch && Math.abs(d / g.d0 - 1) > 0.12) g.pinch = true;
+      if (g.pinch) {
+        zoomAt(m.x, m.y, g.s0 * (d / g.d0));
+        pan(m.x - g.last.x, m.y - g.last.y);
+      } else if (view.s > 1.001) {
+        pan(m.x - g.last.x, m.y - g.last.y);
+      } else {
+        // Two-finger drag scrolls: finger up scrolls the page down, as on a phone.
+        g.acc += m.y - g.last.y;
+        while (Math.abs(g.acc) >= 28) {
+          wheel(g.acc < 0);
+          g.acc += g.acc < 0 ? 28 : -28;
+        }
+      }
+      g.last = m;
+    }
+  }, { passive: false });
+
+  const end = (e) => {
+    e.preventDefault();
+    if (!g) return;
+    if (g.type === 'one') {
+      clearTimeout(g.timer);
+      if (g.dragging) {
+        tMask = 0;
+        move(0);
+      } else if (!g.moved && !g.long && Date.now() - g.t0 < 350) {
+        if (mode() === 'touchscreen') Object.assign(cursor, toRemote(g.p0.x, g.p0.y));
+        click(1);
+        placeMarker();
+      }
+      g = null;
+    } else if (g.type === 'two') {
+      if (e.touches.length > 0) return; // wait until all fingers are up
+      if (!g.moved && Date.now() - g.t0 < 400) {
+        if (mode() === 'touchscreen') Object.assign(cursor, toRemote(g.m0.x, g.m0.y));
+        click(4); // two-finger tap: right click
+      }
+      g = null;
+    }
+  };
+  canvas.addEventListener('touchend', end, { passive: false });
+  canvas.addEventListener('touchcancel', end, { passive: false });
+
+  const MOD_CODES = { ctrl: 'ControlLeft', alt: 'AltLeft', meta: 'MetaLeft' };
+  const activeMods = () => Object.keys(MOD_CODES).filter((m) => pane.touchMods[m]);
+  const clearMods = () => {
+    pane.touchMods.ctrl = pane.touchMods.alt = pane.touchMods.meta = false;
+    if (bar) bar.updateMods();
+  };
+  const tapCode = (code) => {
+    const mods = activeMods();
+    mods.forEach((m) => sendKey(true, { code: MOD_CODES[m], key: '' }));
+    sendKey(true, { code, key: '' });
+    sendKey(false, { code, key: '' });
+    mods.slice().reverse().forEach((m) => sendKey(false, { code: MOD_CODES[m], key: '' }));
+    clearMods();
+  };
+  const codeForChar = (ch) => {
+    if (/^[a-z]$/i.test(ch)) return `Key${ch.toUpperCase()}`;
+    if (/^[0-9]$/.test(ch)) return `Digit${ch}`;
+    if (ch === ' ') return 'Space';
+    return null;
+  };
+  const typeText = (text) => {
+    for (const ch of text) {
+      if (ch === '\n') { tapCode('Enter'); continue; }
+      const code = codeForChar(ch);
+      if (activeMods().length && code) { tapCode(code); continue; }
+      sendKey(true, { key: ch, code: '' });
+      sendKey(false, { key: ch, code: '' });
+    }
+  };
+  let composing = false;
+  kbInput.addEventListener('compositionstart', () => { composing = true; });
+  kbInput.addEventListener('compositionend', (e) => {
+    composing = false;
+    typeText(e.data || '');
+    kbInput.value = '';
+  });
+  kbInput.addEventListener('input', (e) => {
+    if (composing || e.isComposing) return;
+    if (e.inputType === 'insertText' && e.data) typeText(e.data);
+    else if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') tapCode('Enter');
+    else if (e.inputType === 'deleteContentBackward') tapCode('Backspace');
+    kbInput.value = '';
+  });
+  // A hardware keyboard on a tablet sends real keys; the input event handles typed characters.
+  const hardwareKey = (down) => (e) => {
+    if (e.isComposing || e.key === 'Unidentified' || e.key === 'Process') return;
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) return;
+    if (isFsToolbarKey(e)) return;
+    e.preventDefault();
+    sendKey(down, e);
+  };
+  kbInput.addEventListener('keydown', hardwareKey(true));
+  kbInput.addEventListener('keyup', hardwareKey(false));
+
+  // ---- key bar (not for view-only sessions) ----
+  if (!(pane.conn && pane.conn.view_only)) {
+    bar = buildKeybar(pane, el, 'graphics', (k) => {
+      if (k === 'kbd') {
+        if (document.activeElement === kbInput) kbInput.blur();
+        else kbInput.focus({ preventScroll: true });
+      } else if (k === 'cad') {
+        ['ControlLeft', 'AltLeft', 'Delete'].forEach((c) => sendKey(true, { code: c, key: '' }));
+        ['Delete', 'AltLeft', 'ControlLeft'].forEach((c) => sendKey(false, { code: c, key: '' }));
+        clearMods();
+      } else if (k === 'mode') {
+        sessionPrefs.touchMode = mode() === 'touchpad' ? 'touchscreen' : 'touchpad';
+        saveSessionPrefs();
+        bar.setMode(modeLabel());
+        placeMarker();
+        showToast(mode() === 'touchpad' ? 'Touchpad mode: drag to move the pointer, tap to click' : 'Touchscreen mode: tap where you want to click');
+      } else {
+        tapCode(k);
+      }
+    });
+    bar.setMode(modeLabel());
+    // Double-tapping Win presses it on its own (opens the Start menu).
+    bar.el.querySelector('[data-k="meta"]')?.addEventListener('dblclick', () => {
+      pane.touchMods.meta = false;
+      sendKey(true, { code: 'MetaLeft', key: '' });
+      sendKey(false, { code: 'MetaLeft', key: '' });
+      bar.updateMods();
+    });
+  }
+
+  // A new remote screen size (resize, reconnect) resets the zoom and keeps the pointer inside.
+  let sized = false;
+  const resetView = () => {
+    view.s = 1; view.tx = 0; view.ty = 0;
+    if (!sized) {
+      // The real screen size has arrived: start the pointer in the middle.
+      sized = true;
+      cursor.x = Math.round(canvas.width / 2);
+      cursor.y = Math.round(canvas.height / 2);
+    }
+    cursor.x = Math.min(cursor.x, canvas.width - 1);
+    cursor.y = Math.min(cursor.y, canvas.height - 1);
+    applyView();
+  };
+  new MutationObserver(resetView).observe(canvas, { attributes: true, attributeFilter: ['width', 'height'] });
+  new ResizeObserver(() => { clampView(); applyView(); }).observe(el);
+  applyView();
+}
+
+/** Key bar for terminals on touch devices. */
+function setupTerminalKeybar(pane, ws, term, el) {
+  if (!isTouchDevice() || (pane.conn && pane.conn.view_only)) return;
+  pane.touchMods = { ctrl: false, alt: false };
+  const FKEYS = { F1: '\x1bOP', F2: '\x1bOQ', F3: '\x1bOR', F4: '\x1bOS', F5: '\x1b[15~', F6: '\x1b[17~', F7: '\x1b[18~', F8: '\x1b[19~', F9: '\x1b[20~', F10: '\x1b[21~', F11: '\x1b[23~', F12: '\x1b[24~' };
+  const TILDE = { Insert: 2, Delete: 3, PageUp: 5, PageDown: 6 };
+  const CURSOR = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D', Home: 'H', End: 'F' };
+  pane.terminalKeybar = buildKeybar(pane, el, 'terminal', (k) => {
+    if (k === 'kbd') {
+      if (term.textarea && document.activeElement === term.textarea) term.blur();
+      else term.focus();
+      return;
+    }
+    const mod = 1 + (pane.touchMods.alt ? 2 : 0) + (pane.touchMods.ctrl ? 4 : 0);
+    let seq = '';
+    if (k === 'Escape') seq = '\x1b';
+    else if (k === 'Tab') seq = '\t';
+    else if (CURSOR[k]) {
+      const app = term.modes && term.modes.applicationCursorKeysMode;
+      seq = mod > 1 ? `\x1b[1;${mod}${CURSOR[k]}` : `${app ? '\x1bO' : '\x1b['}${CURSOR[k]}`;
+    } else if (TILDE[k]) seq = mod > 1 ? `\x1b[${TILDE[k]};${mod}~` : `\x1b[${TILDE[k]}~`;
+    else if (FKEYS[k]) seq = FKEYS[k];
+    if (!seq) return;
+    if (pane.touchMods.alt && (k === 'Escape' || k === 'Tab' || FKEYS[k])) seq = `\x1b${seq}`;
+    pane.touchMods.ctrl = pane.touchMods.alt = false;
+    if (ws.readyState === WebSocket.OPEN) ws.send(seq);
+  });
+}
+
+/** Sticky Ctrl / Alt from the key bar turn the next typed character into a control key. */
+function applyTerminalTouchMods(pane, data) {
+  const m = pane.touchMods;
+  if (!m || (!m.ctrl && !m.alt) || data.length !== 1) return data;
+  let out = data;
+  if (m.ctrl) {
+    const c = data.toUpperCase().charCodeAt(0);
+    if (c >= 64 && c <= 95) out = String.fromCharCode(c - 64);
+    else if (data === ' ') out = '\x00';
+  }
+  if (m.alt) out = `\x1b${out}`;
+  m.ctrl = m.alt = false;
+  if (pane.terminalKeybar) pane.terminalKeybar.updateMods();
+  return out;
+}
+
 // Session preferences (Settings > Sessions), saved per user on the server.
-const SESSION_PREF_DEFAULTS = { confirmClose: true, closeButton: 'subtle' };
+const SESSION_PREF_DEFAULTS = { confirmClose: true, closeButton: 'subtle', touchMode: 'touchpad' };
 let sessionPrefs = { ...SESSION_PREF_DEFAULTS };
 
 function applySessionPrefs(p) {
