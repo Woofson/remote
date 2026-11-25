@@ -184,6 +184,7 @@ pub fn create_router(state: AppState) -> Router {
         // WebSocket Remote Gateway Tunnel
         .route("/ws/tunnel/:connection_id", get(ws_tunnel_handler))
         .route("/ws/share/:token", get(share::ws_share_handler))
+        .route("/api/connections/:id/wake", post(api_wake_connection))
         .route("/api/shares/:token", get(share::api_share_info))
         // Static Frontend Files
         .fallback(static_file_handler)
@@ -2403,6 +2404,78 @@ pub async fn api_set_connection_scope(
     Ok(Json(json!({ "is_global": payload.is_global })))
 }
 
+/// Wake-on-LAN before connecting (#35): if the machine does not answer, send the magic packet
+/// and wait until it does (telling the browser), or give up after the configured time.
+async fn wake_before_connect(
+    socket: &mut crate::protocols::hub::HubSocket,
+    w: &crate::protocols::wol::WakeSettings,
+    host: &str,
+    port: u16,
+    name: &str,
+    audit: impl Fn(String),
+) -> bool {
+    use crate::protocols::wol::{reachable, send_wake};
+    use std::time::{Duration, Instant};
+    if reachable(host, port, Duration::from_millis(1500)).await {
+        return true;
+    }
+    if let Err(e) = send_wake(w) {
+        let _ = socket
+            .send(axum::extract::ws::Message::Text(json!({ "type": "error", "message": format!("Could not send the wake-up packet: {e}") }).to_string()))
+            .await;
+        return false;
+    }
+    audit(format!("wake-up packet to {} (on connect)", w.mac_text()));
+    let _ = socket
+        .send(axum::extract::ws::Message::Text(json!({ "type": "waking", "seconds": w.wait_secs }).to_string()))
+        .await;
+    let start = Instant::now();
+    let mut last_packet = Instant::now();
+    while start.elapsed() < Duration::from_secs(w.wait_secs) {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        if reachable(host, port, Duration::from_secs(2)).await {
+            // Services may still be starting; give them a moment.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            return true;
+        }
+        if last_packet.elapsed() >= Duration::from_secs(20) {
+            let _ = send_wake(w);
+            last_packet = Instant::now();
+        }
+    }
+    let _ = socket
+        .send(axum::extract::ws::Message::Text(
+            json!({ "type": "error", "message": format!("{name} did not wake up within {} seconds", w.wait_secs) }).to_string(),
+        ))
+        .await;
+    false
+}
+
+/// Send the wake-up packet for a connection ("Wake" in the connections list).
+pub async fn api_wake_connection(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ip: ClientIp,
+    AxumPath(connection_id): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    let authz = authorize_connection(&state, &claims, &connection_id, "Connect")?;
+    let w = crate::protocols::wol::WakeSettings::from_settings(&authz.conn.settings_json)
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "This connection has no Wake-on-LAN address" }))))?;
+    crate::protocols::wol::send_wake(&w)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": format!("Could not send the wake-up packet: {e}") }))))?;
+    state.db.log_audit(
+        Some(&authz.user.id),
+        &authz.user.username,
+        "WAKE",
+        Some(&authz.conn.id),
+        Some(&authz.conn.name),
+        Some(&format!("wake-up packet to {}", w.mac_text())),
+        ip.as_opt(),
+    );
+    Ok(Json(json!({ "message": "Wake-up packet sent" })))
+}
+
 // ================= WebSocket Gateway Handler =================
 
 #[derive(Deserialize)]
@@ -2500,9 +2573,23 @@ pub async fn ws_tunnel_handler(
         }
     };
     let shares = state.shares.clone();
+    let wake_audit = {
+        let db = state.db.clone();
+        let (uid, uname, cid, cname, ip_text) =
+            (user.id.clone(), user.username.clone(), conn_rec.id.clone(), conn_rec.name.clone(), ip.as_opt().map(str::to_string));
+        move |details: String| db.log_audit(Some(&uid), &uname, "WAKE", Some(&cid), Some(&cname), Some(&details), ip_text.as_deref())
+    };
 
     Ok(ws.on_upgrade(move |socket| async move {
         let mut socket = crate::protocols::hub::start(socket, hub_cfg, shares);
+        // Wake-on-LAN (#35): wake the machine first when it does not answer.
+        if conn_rec.protocol != "local_pty" {
+            if let Some(w) = crate::protocols::wol::WakeSettings::from_settings(&conn_rec.settings_json).filter(|w| w.on_connect) {
+                if !wake_before_connect(&mut socket, &w, &conn_rec.host, conn_rec.port as u16, &conn_rec.name, wake_audit).await {
+                    return;
+                }
+            }
+        }
         match conn_rec.protocol.as_str() {
             "local_pty" => {
                 let shell = serde_json::from_str::<Value>(&conn_rec.settings_json)

@@ -1416,6 +1416,7 @@ function setupDirectory() {
       const id = btn.dataset.id;
       if (btn.dataset.dirAction === 'connect') connectToTarget(id);
       if (btn.dataset.dirAction === 'link') copyTextToClipboard(connectionLink(id));
+      if (btn.dataset.dirAction === 'wake') wakeConnection(id);
       if (btn.dataset.dirAction === 'edit') openEditConnectionModal(id);
       if (btn.dataset.dirAction === 'delete') deleteConnection(id);
     });
@@ -1483,6 +1484,7 @@ function renderConnectionsTable() {
           <div class="dir-policies">${policies}</div>
           <div class="dir-actions">
             <button class="btn btn-accent btn-sm" data-dir-action="connect" data-id="${escapeHtml(c.id)}" title="Connect in pane ${pane}" ${perms.can_connect === false ? 'disabled' : ''}>Connect</button>
+            ${connHasWake(c) && perms.can_connect !== false ? `<button class="dir-icon-btn" data-dir-action="wake" data-id="${escapeHtml(c.id)}" title="Wake: send a Wake-on-LAN packet to start this machine"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></svg></button>` : ''}
             <button class="dir-icon-btn" data-dir-action="link" data-id="${escapeHtml(c.id)}" title="Copy link (for bookmarks and shortcuts)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></button>
             ${canEdit ? `<button class="dir-icon-btn" data-dir-action="edit" data-id="${escapeHtml(c.id)}" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button>` : ''}
             ${canEdit ? `<button class="dir-icon-btn danger" data-dir-action="delete" data-id="${escapeHtml(c.id)}" title="Delete"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>` : ''}
@@ -1516,6 +1518,7 @@ function setConnIcon(ref) {
 function openAddConnectionModal() {
   resetConnEditor();
   document.getElementById('connection-edit-title').textContent = 'New Connection Target';
+  fillWakeFields({});
   document.getElementById('conn-id').value = '';
   document.getElementById('conn-name').value = '';
   document.getElementById('conn-protocol').value = 'ssh';
@@ -1629,8 +1632,9 @@ function openEditConnectionModal(id) {
   if (driveRedir) driveRedir.checked = !!settings.enable_drive_redirection;
   const audio = document.getElementById('conn-rdp-audio');
   if (audio) audio.checked = !!settings.enable_audio;
+  fillWakeFields(settings);
 
-  onProtocolChanged();
+  onProtocolChanged({ keepPort: true });
   document.getElementById('connection-edit-modal').style.display = 'flex';
 }
 
@@ -1703,7 +1707,7 @@ async function fillLocalShellSelect(current) {
   }
 }
 
-function onProtocolChanged() {
+function onProtocolChanged(opts = {}) {
   const proto = document.getElementById('conn-protocol').value;
   const isLocal = proto === 'local_pty';
   const isSsh = proto === 'ssh';
@@ -1727,13 +1731,18 @@ function onProtocolChanged() {
   if (loginNote) loginNote.style.display = isLocal ? '' : 'none';
   const testRow = document.getElementById('group-test');
   if (testRow) testRow.style.display = isLocal ? 'none' : '';
+  const wolGroup = document.getElementById('group-wol');
+  if (wolGroup) wolGroup.style.display = isLocal ? 'none' : '';
   const iconVal = document.getElementById('conn-icon');
   if (iconVal && !iconVal.value) setConnIcon('');
 
-  if (proto === 'vnc') document.getElementById('conn-port').value = '5900';
-  if (proto === 'rdp') document.getElementById('conn-port').value = '3389';
-  if (proto === 'ssh') document.getElementById('conn-port').value = '22';
-  if (proto === 'telnet') document.getElementById('conn-port').value = '23';
+  // Default port for the protocol, unless a saved connection is being opened or the port was
+  // changed by hand (it used to be reset on every edit, losing custom ports on save).
+  const DEFAULT_PORTS = { vnc: '5900', rdp: '3389', ssh: '22', telnet: '23' };
+  const portEl = document.getElementById('conn-port');
+  if (!opts.keepPort && DEFAULT_PORTS[proto] && (!portEl.value || Object.values(DEFAULT_PORTS).includes(String(portEl.value)))) {
+    portEl.value = DEFAULT_PORTS[proto];
+  }
 }
 
 /** Check the form before saving; marks fields and the tab holding the first problem. */
@@ -1745,6 +1754,10 @@ function validateConnForm() {
     problems.push({ tab, msg, id });
   };
   document.querySelectorAll('#connection-edit-form .invalid').forEach((el) => el.classList.remove('invalid'));
+  const mac = document.getElementById('conn-wol-mac');
+  if (mac && mac.value.trim() && !/^([0-9a-f]{2}[:-]?){5}[0-9a-f]{2}$/i.test(mac.value.trim().replace(/\./g, ''))) {
+    mark('conn-wol-mac', 'general', 'The Wake-on-LAN MAC address should look like a4:bb:6d:12:34:56');
+  }
   document.querySelectorAll('.conn-tab').forEach((b) => b.classList.remove('has-error'));
 
   const proto = document.getElementById('conn-protocol').value;
@@ -1787,6 +1800,31 @@ async function testConnectionTarget() {
   }
 }
 
+// ---- Wake-on-LAN (#35) ----
+function fillWakeFields(settings) {
+  const st = settings || {};
+  document.getElementById('conn-wol-mac').value = st.wol_mac || '';
+  document.getElementById('conn-wol-broadcast').value = st.wol_broadcast || '';
+  document.getElementById('conn-wol-port').value = st.wol_port || '';
+  document.getElementById('conn-wol-on-connect').checked = !!st.wol_on_connect;
+  document.getElementById('conn-wol-wait').value = st.wol_wait || '';
+}
+
+function connHasWake(c) {
+  try {
+    return !!(c.protocol !== 'local_pty' && c.settings_json && JSON.parse(c.settings_json).wol_mac);
+  } catch (e) {
+    return false;
+  }
+}
+
+async function wakeConnection(id) {
+  const c = state.connections.find((x) => x.id === id);
+  const res = await apiFetch(`api/connections/${encodeURIComponent(id)}/wake`, { method: 'POST' });
+  if (res.ok) showToast(`Wake-up packet sent to ${c ? c.name : 'the machine'}. It may take a minute to start.`, 'success');
+  else showToast(await readError(res, 'Could not send the wake-up packet'), 'danger');
+}
+
 async function handleSaveConnection(e) {
   e.preventDefault();
   if (!validateConnForm()) return;
@@ -1810,6 +1848,12 @@ async function handleSaveConnection(e) {
     shell: document.getElementById('conn-protocol').value === 'local_pty'
       ? (document.getElementById('conn-local-shell')?.value || null)
       : null,
+    // Wake-on-LAN (#35)
+    wol_mac: document.getElementById('conn-wol-mac').value.trim() || null,
+    wol_broadcast: document.getElementById('conn-wol-broadcast').value.trim() || null,
+    wol_port: parseInt(document.getElementById('conn-wol-port').value, 10) || null,
+    wol_on_connect: document.getElementById('conn-wol-on-connect').checked,
+    wol_wait: parseInt(document.getElementById('conn-wol-wait').value, 10) || null,
   };
 
   const payload = {
@@ -2222,6 +2266,10 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
       try {
         const msg = JSON.parse(e.data);
         if (handleSessionMeta(pane, msg, term)) return;
+        if (msg.type === 'waking') {
+          term.write(`\r\n\x1b[33mWaking up ${pane.conn ? pane.conn.name : 'the machine'}… (waiting up to ${msg.seconds} seconds)\x1b[0m\r\n`);
+          return;
+        }
         if (msg.type === 'error') {
           pane.lastError = msg.message;
           term.write(`\r\n\x1b[31m[Remote Error]: ${msg.message}\x1b[0m\r\n`);
@@ -2401,16 +2449,16 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   bodyEl.appendChild(syncEl);
   let gotFrame = false;
   let syncTimers = [];
-  const showSync = (text) => {
+  const showSync = (text, hint = '') => {
     syncEl.querySelector('.pane-sync-text').textContent = text;
-    syncEl.querySelector('.pane-sync-hint').textContent = '';
+    syncEl.querySelector('.pane-sync-hint').textContent = hint;
     syncEl.classList.add('visible');
     syncTimers.forEach(clearTimeout);
     syncTimers = [
       setTimeout(() => {
-        syncEl.querySelector('.pane-sync-hint').textContent = 'Still waiting for the remote computer. On a slow connection this can take a while.';
+        if (!hint) syncEl.querySelector('.pane-sync-hint').textContent = 'Still waiting for the remote computer. On a slow connection this can take a while.';
       }, 6000),
-      setTimeout(() => hideSync(), 60000),
+      setTimeout(() => hideSync(), hint ? 660000 : 60000),
     ];
   };
   const hideSync = () => {
@@ -2440,6 +2488,10 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
       try {
         const msg = JSON.parse(e.data);
         if (handleSessionMeta(pane, msg)) return;
+        if (msg.type === 'waking') {
+          showSync(`Waking up ${pane.conn ? pane.conn.name : 'the machine'}…`, `Starting it with Wake-on-LAN; this can take up to ${msg.seconds} seconds.`);
+          return;
+        }
         if (msg.type === 'init') {
           if (gotFrame && canvas.width && canvas.height) {
             // New size after a resize: keep the old picture, stretched and dimmed, until the

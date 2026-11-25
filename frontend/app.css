@@ -3892,3 +3892,21 @@ body.float-dragging .float-body { pointer-events: none; }
   height: 24px;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
 }
+
+/* Wake-on-LAN fields in the connection editor (#35) */
+.wol-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-header);
+}
+.wol-title { font-size: 11px; font-weight: 700; color: var(--woofson-accent); text-transform: uppercase; letter-spacing: 0.5px; }
+.wol-grid { display: grid; grid-template-columns: 1.4fr 1.2fr 0.6fr; gap: 10px; }
+.wol-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.wol-wait { display: inline-flex; align-items: center; gap: 6px; }
+.wol-wait input { width: 80px; }
+@media (max-width: 600px) { .wol-grid { grid-template-columns: 1fr; } }
+.wol-wait span { white-space: nowrap; }

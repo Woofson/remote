@@ -917,6 +917,30 @@
               </div>
             </div>
 
+            <!-- Wake-on-LAN (#35) -->
+            <div class="wol-group" id="group-wol">
+              <div class="wol-title">Wake-on-LAN</div>
+              <div class="wol-grid">
+                <div class="form-group">
+                  <label style="font-size: 11px; font-weight: 600;">MAC address</label>
+                  <input type="text" id="conn-wol-mac" class="form-input" placeholder="e.g. a4:bb:6d:12:34:56" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 11px; font-weight: 600;">Broadcast address</label>
+                  <input type="text" id="conn-wol-broadcast" class="form-input" placeholder="255.255.255.255" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 11px; font-weight: 600;">Port</label>
+                  <input type="number" id="conn-wol-port" class="form-input" min="1" max="65535" placeholder="9" />
+                </div>
+              </div>
+              <div class="wol-row">
+                <label class="pw-check"><input type="checkbox" id="conn-wol-on-connect" /> <span>Wake before connecting</span></label>
+                <span class="wol-wait"><span class="text-sm text-muted">wait up to</span><input type="number" id="conn-wol-wait" class="form-input" min="10" max="600" placeholder="120" /><span class="text-sm text-muted">seconds</span></span>
+              </div>
+              <p class="pw-hint">Leave the MAC address empty if the machine is always on. The wake-up packet goes out from the Remote server, so it must be on the same network as the machine (or the broadcast address must reach it).</p>
+            </div>
+
             <!-- Test connection -->
             <div class="test-row" id="group-test">
               <button type="button" class="btn btn-secondary btn-sm" onclick="testConnectionTarget()">Test connection</button>
