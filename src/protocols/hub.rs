@@ -238,6 +238,8 @@ struct Hub {
     registry: Arc<ShareRegistry>,
     proto_in: mpsc::Sender<Message>,
     owner_tx: mpsc::Sender<Message>,
+    /// Ahead of everything queued in `owner_tx`: a desktop's "ended" notice and close.
+    owner_urgent: mpsc::Sender<Message>,
     cmd_tx: mpsc::Sender<HubCmd>,
     guests: HashMap<u64, GuestConn>,
     next_guest: u64,
@@ -261,8 +263,18 @@ async fn run(
 ) {
     let (mut owner_sink, mut owner_stream) = owner_ws.split();
     let (owner_tx, mut owner_rx) = mpsc::channel::<Message>(256);
+    let (owner_urgent, mut urgent_rx) = mpsc::channel::<Message>(8);
     tokio::spawn(async move {
-        while let Some(m) = owner_rx.recv().await {
+        loop {
+            // Urgent messages first; pictures still queued after a close are dropped.
+            let m = tokio::select! {
+                biased;
+                Some(m) = urgent_rx.recv() => m,
+                m = owner_rx.recv() => match m {
+                    Some(m) => m,
+                    None => break,
+                },
+            };
             let closing = matches!(m, Message::Close(_));
             if owner_sink.send(m).await.is_err() || closing {
                 break;
@@ -284,6 +296,7 @@ async fn run(
         registry,
         proto_in,
         owner_tx,
+        owner_urgent,
         cmd_tx,
         guests: HashMap::new(),
         next_guest: 1,
@@ -388,7 +401,16 @@ impl Hub {
                 let _ = g.tx.try_send(close_msg("The shared session has ended"));
             }
         }
-        let _ = self.owner_tx.send(m).await;
+        // A desktop ended on purpose (Start > Disconnect): the notice and the close go out
+        // at once, past pictures still waiting, so the browser does not take it for a
+        // dropped connection and reconnect. Terminals keep order so their last output shows.
+        let urgent = self.cfg.kind == SessionKind::Graphics
+            && (closing || matches!(&m, Message::Text(t) if control_type(t).as_deref() == Some("ended")));
+        if urgent {
+            let _ = self.owner_urgent.send(m).await;
+        } else {
+            let _ = self.owner_tx.send(m).await;
+        }
         closing
     }
 

@@ -676,12 +676,19 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
 
     let is_running = Arc::new(AtomicBool::new(true));
     let is_running_ws_writer = Arc::clone(&is_running);
+    // Set once Windows ends the session: pictures still queued are skipped, so the "ended"
+    // notice and the close reach the browser at once instead of waiting behind them.
+    let skip_pictures = Arc::new(AtomicBool::new(false));
+    let skip_pictures_writer = Arc::clone(&skip_pictures);
 
     // WebSocket Outbound Writer Task
     let mut ws_writer_task = tokio::spawn(async move {
         while let Some(msg) = ws_out_rx.recv().await {
             if !is_running_ws_writer.load(Ordering::Relaxed) {
                 break;
+            }
+            if skip_pictures_writer.load(Ordering::Relaxed) && matches!(msg, Message::Binary(_)) {
+                continue;
             }
             let closing = matches!(msg, Message::Close(_));
             if ws_tx.send(msg).await.is_err() || closing {
@@ -1061,6 +1068,7 @@ async fn process_and_send_frame(
                     match reason {
                         Ok(graceful) => {
                             info!("RDP Gateway: Session disconnected gracefully: {:?}", graceful);
+                            skip_pictures.store(true, Ordering::Relaxed);
                             // Ended on purpose (Start menu > Disconnect, sign-out, admin): tell the
                             // browser and close properly, so it does not reconnect as after a drop.
                             let _ = ws_out_tx_events
