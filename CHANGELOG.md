@@ -4,6 +4,24 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.14.0] - 2026-11-25
+
+### Added
+- **Sound from RDP sessions** plays in the browser (#25). Turn on "Audio" in the connection settings; a speaker button in the pane header mutes it. If the browser blocks sound at first, one click or key press starts it.
+- **Direct links to connections** (#29): "Copy link" on a connection gives an address that opens it straight away, for bookmarks and desktop shortcuts. You are asked to sign in first if needed.
+- **Login and lock screen branding** (#30, Admin > Branding): your own logo, title, welcome text, accent colour and wallpapers (one picked at random per visit), with a one-click reset to Remote's defaults. Changes are recorded in the activity log.
+- **Movable and hideable toolbar** in full window and full screen: drag it by its grip (double-click the grip to put it back), or hide it completely. Bring it back with Alt+T or by holding the mouse at the top edge of the screen for a second. Remembered on your account.
+- The version in the corner now includes the build number.
+
+### Fixed
+- RDP display settings were ignored (#28): wallpaper, showing window contents while dragging, menu animations, themes and font smoothing now follow the connection settings.
+
+### Changed
+- The login and lock screens match Brum's look.
+- The RDP client code is now part of Remote (adapted from IronRDP, MIT licensed) so these settings and sound can be controlled; see `docs/rdp-client.md`.
+
+---
+
 ## [0.13.1] - 2026-11-19
 
 Covers everything since 0.8.1 (versions 0.9.0 to 0.13.0 were pushed to git without a release).
