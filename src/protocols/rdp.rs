@@ -566,8 +566,12 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_credssp(true)
         .with_tls(true)
         .with_pointer_software_rendering(true)
-        .with_compression(true)
-        .with_compression_level(2)
+        // No bulk compression: Windows keeps its compression history across the
+        // Deactivation-Reactivation that follows every resize, but the RDP library rebuilds
+        // its decompressor empty, so the first update after F10/F11/a pane resize failed and
+        // the session dropped. Remote decodes everything and sends the browser its own
+        // tiles anyway, so this only adds traffic between Remote and the Windows machine.
+        .with_compression(false)
         .with_client_build(2600)
         .with_client_dir("C:\\Windows\\System32")
         .with_client_name("Remote")

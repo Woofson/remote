@@ -29,19 +29,13 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 - Direct links that open a connection, for bookmarks and shortcuts ([#29](https://github.com/Woofson/remote/issues/29)).
 - Login and lock screen branding: logo, texts, accent colour and wallpapers, with reset to defaults ([#30](https://github.com/Woofson/remote/issues/30)).
 - Movable and hideable toolbar in full window and full screen.
-
-## Open bugs
-
-- Keyboard layouts: RDP now sends the chosen layout to Windows; awaiting a test on a real machine ([#6](https://github.com/Woofson/remote/issues/6)).
+- Keyboard layouts sent to Windows, "Auto" from the browser language; VNC dead keys ([#6](https://github.com/Woofson/remote/issues/6)).
+- Tabs: several sessions per pane, drag to reorder or move between panes, remembered per user, hidden remote desktops pause their screen updates ([#7](https://github.com/Woofson/remote/issues/7)).
+- Floating session windows: float out and dock back, move, resize, minimise, maximise, remembered per user ([#8](https://github.com/Woofson/remote/issues/8)).
 
 ---
 
-## Next: Workspace
-
-- Tabs: several sessions inside one pane ([#7](https://github.com/Woofson/remote/issues/7)).
-- Floating session windows ([#8](https://github.com/Woofson/remote/issues/8)).
-
-## Then: VDI
+## Next: VDI
 
 1. **Proxmox VM integration**: assign one or more VMs per user, show power state, start on connect, optional shutdown when idle ([#9](https://github.com/Woofson/remote/issues/9)).
 2. **Launcher page**: desktops and apps as tiles, following existing permissions ([#10](https://github.com/Woofson/remote/issues/10)).

@@ -44,6 +44,14 @@ the engine is carried inside the `remoted` crate instead.
   - `RdpInputEvent::SuppressOutput(bool)` pauses and resumes screen updates with
     the Suppress Output PDU while a session's tab or pane is hidden (#7).
 
+Known upstream issue: during the Deactivation-Reactivation Sequence (Windows runs
+one after every resize) `active_session` rebuilds the fast-path processor with
+`bulk_decompressor: None`, and `ironrdp-session` offers no way to keep the old
+one. Windows continues its compression history, so with bulk compression on, the
+first update after a resize fails ("NCRUSH: history offset too small"). Remote
+therefore connects with `with_compression(false)` (see `src/protocols/rdp.rs`).
+Worth reporting upstream; compression can be turned back on once fixed there.
+
 ## Syncing with a new upstream release
 
 1. Copy `config.rs`, `rdp.rs`, `ws.rs` and `clipboard.rs` from the new

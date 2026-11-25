@@ -3567,3 +3567,166 @@ body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* ==========================================================================
+   FLOATING SESSION WINDOWS (#8)
+   ========================================================================== */
+.viewport-grid { position: relative; }
+#float-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+  overflow: hidden;
+}
+.float-win {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  min-height: 200px;
+  pointer-events: auto;
+  background: var(--woofson-pane-bg, #000);
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.float-win.active {
+  border-color: var(--woofson-accent);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--woofson-accent);
+}
+.float-win.minimized { display: none; }
+.float-win.maximized {
+  left: 0 !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  border-radius: 0;
+}
+.float-win.maximized .float-rs { display: none; }
+
+/* Full-length title bar: drag to move, double-click to maximise. */
+.float-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0 6px 0 10px;
+  background: var(--woofson-bg-header);
+  border-bottom: 1px solid var(--woofson-border);
+  cursor: grab;
+  user-select: none;
+}
+.float-win.maximized .float-head { cursor: default; }
+.float-head .pane-conn-name { max-width: none; min-width: 0; flex-shrink: 1; }
+.float-head-fill { flex: 1; }
+.float-head .pane-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--woofson-bg-panel);
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  color: var(--woofson-text-muted);
+  cursor: pointer;
+}
+.float-head .pane-btn:hover { color: var(--woofson-text-main); background: var(--woofson-bg-active); }
+.float-head .pane-btn .icon { width: 14px; height: 14px; }
+.float-head .float-kbd-btn {
+  width: auto;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+.float-head .pane-close-btn:hover { color: var(--woofson-danger, #ef4444); }
+
+.float-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--woofson-pane-bg, #000);
+}
+
+/* Resize edges and corners. */
+.float-rs { position: absolute; z-index: 2; }
+.float-rs-n, .float-rs-s { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.float-rs-n { top: -3px; }
+.float-rs-s { bottom: -3px; }
+.float-rs-e, .float-rs-w { top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.float-rs-e { right: -3px; }
+.float-rs-w { left: -3px; }
+.float-rs-ne, .float-rs-nw, .float-rs-se, .float-rs-sw { width: 12px; height: 12px; }
+.float-rs-ne { top: -3px; right: -3px; cursor: nesw-resize; }
+.float-rs-sw { bottom: -3px; left: -3px; cursor: nesw-resize; }
+.float-rs-nw { top: -3px; left: -3px; cursor: nwse-resize; }
+.float-rs-se { bottom: -3px; right: -3px; cursor: nwse-resize; }
+body.float-dragging, body.float-dragging * { user-select: none !important; }
+body.float-dragging .float-body { pointer-events: none; }
+
+/* Minimised windows: a small bar at the bottom of the workspace. */
+#float-dock-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  max-width: calc(100% - 40px);
+  overflow-x: auto;
+  padding: 5px;
+  pointer-events: auto;
+  background: var(--woofson-bg-header);
+  border: 1px solid var(--woofson-border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 100000;
+}
+.float-dock-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  max-width: 180px;
+  padding: 0 10px;
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-panel);
+  color: var(--woofson-text-main);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.float-dock-item:hover { border-color: var(--woofson-accent); }
+.float-dock-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-dock-item .conn-icon-sm { width: 13px; height: 13px; }
+
+/* Dock menu */
+.dock-menu-title {
+  padding: 8px 12px;
+  font-weight: 700;
+  font-size: 11px;
+  color: var(--woofson-accent);
+  background: var(--woofson-bg-void);
+  border-bottom: 1px solid var(--woofson-border);
+}
+.dock-menu-list { padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.dock-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 11px;
+}
+.dock-menu-item span { font-size: 10px; color: var(--woofson-text-dim); font-weight: 500; }

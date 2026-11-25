@@ -563,6 +563,7 @@ function finishLogin(data, password) {
   // Panes left open from an expired login belong to that user only.
   if (previous && previous !== data.user.username) {
     stopTabsSaving();
+    closeAllFloats();
     for (let i = 1; i <= 4; i++) resetPaneTabs(i);
   }
   if (data.must_change_password) state.loginPassword = password;
@@ -670,6 +671,7 @@ function logout() {
     fetch('api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${state.jwtToken}` }, keepalive: true }).catch(() => {});
   }
   stopTabsSaving();
+  closeAllFloats();
   for (let i = 1; i <= 4; i++) {
     resetPaneTabs(i);
   }
@@ -1307,14 +1309,17 @@ async function handleUpdateProfile(e) {
 }
 
 function activatePane(index) {
+  index = paneKey(index);
   state.activePaneIndex = index;
+  if (!isFloatKey(index)) state.lastGridPane = index;
   for (let i = 1; i <= 4; i++) {
     const p = document.getElementById(`pane-${i}`);
     if (p) p.classList.toggle('active', i === index);
   }
+  document.querySelectorAll('.float-win').forEach((w) => w.classList.toggle('active', w.dataset.key === index));
   const activeInfo = document.getElementById('active-pane-info');
   if (activeInfo) {
-    activeInfo.textContent = `Active Pane: ${index}`;
+    activeInfo.textContent = isFloatKey(index) ? 'Active: floating window' : `Active Pane: ${index}`;
   }
 
   const activePane = state.panes[index];
@@ -1455,7 +1460,7 @@ function renderConnectionsTable() {
     return;
   }
 
-  const pane = state.activePaneIndex;
+  const pane = connectTargetPane();
   listEl.innerHTML = rows
     .map((c) => {
       const perms = c.user_permissions || {};
@@ -1934,19 +1939,22 @@ function connectToTarget(connectionId, opts = {}) {
   const conn = state.connections.find(c => c.id === connectionId);
   if (!conn) return;
 
-  const wantNewTab = state.newTabPane === state.activePaneIndex;
+  // New sessions go into the grid; with a floating window selected, into the last used pane.
+  const target = connectTargetPane();
+  const wantNewTab = state.newTabPane === target;
   closeConnectionsModal();
   let pane = opts.session;
   if (!pane) {
     // A remembered tab of this connection in the pane is used rather than adding a second one.
-    const remembered = state.paneTabs[state.activePaneIndex].find(t => t.parked && t.lastConn && t.lastConn.id === connectionId);
-    pane = state.panes[state.activePaneIndex];
+    const remembered = state.paneTabs[target].find(t => t.parked && t.lastConn && t.lastConn.id === connectionId);
+    pane = state.panes[target];
     if (remembered) {
       if (remembered !== pane) switchTab(remembered.tabId);
       pane = remembered;
     } else if (pane.socket || pane.parked || (wantNewTab && pane.conn)) {
-      pane = addPaneTab(state.activePaneIndex);
+      pane = addPaneTab(target);
     }
+    activatePane(pane.id);
   }
   const paneIndex = pane.id;
 
@@ -1994,7 +2002,7 @@ function connectToTarget(connectionId, opts = {}) {
     pane.status = 'connected';
     statsEl.textContent = `${latency} ms`;
     renderPaneTabs(pane.id);
-    showToast(`Connected to ${conn.name} [Pane ${pane.id}]`);
+    showToast(`Connected to ${conn.name} [${isFloatKey(pane.id) ? 'window' : `Pane ${pane.id}`}]`);
 
     if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled' && !(conn.user_permissions && !conn.user_permissions.can_transfer)) {
       if (conn.has_password || conn.has_private_key) {
@@ -2895,8 +2903,8 @@ function initPaneTabs() {
 }
 
 function findTab(tabId) {
-  for (let i = 1; i <= 4; i++) {
-    const t = (state.paneTabs[i] || []).find(s => s.tabId === tabId);
+  for (const list of Object.values(state.paneTabs || {})) {
+    const t = list.find(s => s.tabId === tabId);
     if (t) return t;
   }
   return null;
@@ -2952,7 +2960,8 @@ function reconnectTab(tabId) {
 function clearTab(tabId) {
   const sess = findTab(tabId);
   if (!sess) return;
-  if (state.paneTabs[sess.id].length > 1) removeTab(sess);
+  if (isFloatKey(sess.id)) closeFloat(sess.id);
+  else if (state.paneTabs[sess.id].length > 1) removeTab(sess);
   else disconnectSession(sess);
 }
 
@@ -2964,7 +2973,8 @@ async function requestCloseTab(tabId) {
     const ok = await uiConfirm(`Disconnect from ${sess.conn.name}?`, { title: 'Close session', okText: 'Disconnect', danger: true });
     if (!ok) return;
   }
-  if (state.paneTabs[sess.id].length > 1) removeTab(sess);
+  if (isFloatKey(sess.id)) closeFloat(sess.id);
+  else if (state.paneTabs[sess.id].length > 1) removeTab(sess);
   else disconnectSession(sess);
 }
 
@@ -3023,6 +3033,8 @@ function renderPaneHeader(paneIndex) {
     protoEl.textContent = conn ? (PROTOCOL_LABELS[conn.protocol] || conn.protocol.toUpperCase()) : '';
     protoEl.style.display = conn ? 'inline-block' : 'none';
   }
+  const floatBtn = document.getElementById(`pane-${paneIndex}-float-btn`);
+  if (floatBtn) floatBtn.style.display = (conn || sess.parked) && floatsAllowed() ? '' : 'none';
   renderPaneTabs(paneIndex);
   refreshPaneStats(sess);
   updatePaneKbdBadge(paneIndex);
@@ -3107,7 +3119,8 @@ function parkSession(sess, conn) {
 /** After sign-in: bring back the saved tabs, unless sessions are already open on this page. */
 function restoreRememberedTabs() {
   const saved = state.userPrefs && state.userPrefs.tabs;
-  const busy = [1, 2, 3, 4].some(i => state.paneTabs[i].some(t => t.conn || t.socket || t.parked));
+  const savedFloats = state.userPrefs && Array.isArray(state.userPrefs.floats) ? state.userPrefs.floats : [];
+  const busy = floatKeys().length > 0 || [1, 2, 3, 4].some(i => state.paneTabs[i].some(t => t.conn || t.socket || t.parked));
   if (saved && typeof saved === 'object' && !busy) {
     for (let i = 1; i <= 4; i++) {
       const entry = saved[i];
@@ -3130,8 +3143,9 @@ function restoreRememberedTabs() {
       showSelectedTab(i);
       renderPaneHeader(i);
     }
-    lastTabsSaved = JSON.stringify(saved);
   }
+  // After the tabs: on a phone the windows are added to pane 1 as extra tabs.
+  if (!busy) restoreRememberedFloats(savedFloats);
   state.tabsReady = true;
 }
 
@@ -3147,10 +3161,11 @@ function scheduleTabsSave() {
       if (!list.length) continue;
       snap[i] = { ids: list.map(t => (t.conn || t.lastConn).id), active: Math.max(0, list.indexOf(state.panes[i])) };
     }
-    const json = JSON.stringify(snap);
+    const payload = { tabs: snap, floats: floatSnapshot() };
+    const json = JSON.stringify(payload);
     if (json === lastTabsSaved) return;
     lastTabsSaved = json;
-    apiFetch('api/me/preferences', { method: 'PUT', body: JSON.stringify({ tabs: snap }) }).catch(() => {});
+    apiFetch('api/me/preferences', { method: 'PUT', body: json }).catch(() => {});
   }, 800);
 }
 
@@ -3168,7 +3183,7 @@ function stopTabsSaving() {
  */
 function moveTab(tabId, toPane, toIndex) {
   const sess = findTab(tabId);
-  if (!sess) return;
+  if (!sess || isFloatKey(sess.id)) return;
   const from = sess.id;
   const src = state.paneTabs[from];
   const idx = src.indexOf(sess);
@@ -3179,6 +3194,15 @@ function moveTab(tabId, toPane, toIndex) {
     renderPaneTabs(from);
     return;
   }
+  detachFromPane(sess);
+  attachToPane(sess, toPane, toIndex);
+}
+
+/** Take a session out of its grid pane; an emptied pane gets a fresh empty tab. */
+function detachFromPane(sess) {
+  const from = sess.id;
+  const src = state.paneTabs[from];
+  const idx = src.indexOf(sess);
   const wasShown = state.panes[from] === sess;
   src.splice(idx, 1);
   if (!src.length) {
@@ -3192,7 +3216,10 @@ function moveTab(tabId, toPane, toIndex) {
   }
   showSelectedTab(from);
   renderPaneHeader(from);
+}
 
+/** Put a session into a grid pane as a tab and show it; an unused empty tab there is dropped. */
+function attachToPane(sess, toPane, toIndex) {
   const dst = state.paneTabs[toPane];
   if (dst.length === 1 && !dst[0].conn && !dst[0].socket && !dst[0].lastConn) {
     dst[0].el.remove();
@@ -3203,6 +3230,373 @@ function moveTab(tabId, toPane, toIndex) {
   dst.splice(Math.max(0, Math.min(toIndex == null ? dst.length : toIndex, dst.length)), 0, sess);
   switchTab(sess.tabId);
 }
+
+// ================= Floating session windows (#8) =================
+// A floating window holds one session record, like a tab; its key is "f1", "f2", ... and it
+// uses the same element ids as a pane (pane-f1-title, pane-f1-stats, ...), so the pane code
+// (header, keyboard, sound, reconnect) works for it unchanged.
+const MAX_FLOATS = 12;
+const FLOAT_MIN_W = 320;
+const FLOAT_MIN_H = 200;
+let nextFloatNum = 1;
+let floatZ = 10;
+
+function paneKey(k) { return typeof k === 'string' && /^\d+$/.test(k) ? Number(k) : k; }
+function isFloatKey(k) { return typeof k === 'string' && /^f\d+$/.test(k); }
+function floatKeys() { return Object.keys(state.paneTabs || {}).filter(isFloatKey); }
+/** Floating needs a mouse and a screen wider than a phone; elsewhere sessions stay tabs. */
+function floatsAllowed() { return !isPhoneWidth() && !window.matchMedia('(pointer: coarse)').matches; }
+/** The grid pane new connections open in (the last used one while a window is selected). */
+function connectTargetPane() {
+  return isFloatKey(state.activePaneIndex) ? (state.lastGridPane || 1) : state.activePaneIndex;
+}
+function visiblePaneCount() {
+  const l = state.paneLayout;
+  return l === 1 || l === '1' ? 1 : (l === 2 || l === '2v' || l === '2h') ? 2 : (l === 3 || l === '3') ? 3 : 4;
+}
+
+const FLOAT_ICONS = {
+  dock: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/><path d="m9 9 3 3 3-3"/></svg>',
+  min: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 18h14"/></svg>',
+  max: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg>',
+  unmax: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="8" width="12" height="12" rx="1.5"/><path d="M8 8V5.5A1.5 1.5 0 0 1 9.5 4H18.5A1.5 1.5 0 0 1 20 5.5V14.5A1.5 1.5 0 0 1 18.5 16H16"/></svg>',
+  close: '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+};
+
+/** "Float" button in a pane header: the selected session leaves the grid, still connected. */
+function floatPane(paneIndex) {
+  const sess = state.panes[paneIndex];
+  if (!sess || !(sess.conn || sess.parked)) return;
+  if (!floatsAllowed()) {
+    showToast('Floating windows need a larger screen with a mouse; sessions stay as tabs here.', 'warning');
+    return;
+  }
+  if (floatKeys().length >= MAX_FLOATS) {
+    showToast(`At most ${MAX_FLOATS} floating windows`, 'warning');
+    return;
+  }
+  detachFromPane(sess);
+  openFloatWindow(sess);
+}
+
+/** Build a window for a session and show it on top. */
+function openFloatWindow(sess, geom = null) {
+  const key = `f${nextFloatNum++}`;
+  const layer = document.getElementById('float-layer');
+  const lw = layer.clientWidth || window.innerWidth;
+  const lh = layer.clientHeight || window.innerHeight;
+  const n = floatKeys().length;
+  const f = {
+    x: 40 + (n % 8) * 28, y: 24 + (n % 8) * 28,
+    w: Math.min(960, Math.round(lw * 0.6)), h: Math.min(640, Math.round(lh * 0.65)),
+    minimized: false, maximized: false,
+    ...(geom || {}),
+  };
+  const win = document.createElement('div');
+  win.className = 'float-win';
+  win.id = `pane-${key}`;
+  win.dataset.key = key;
+  win.innerHTML = `
+    <div class="float-head" onpointerdown="startFloatMove(event, '${key}')" ondblclick="if (!event.target.closest('button')) toggleFloatMax('${key}')">
+      <span class="pane-conn-name" id="pane-${key}-title"></span>
+      <span class="pane-protocol-badge" id="pane-${key}-proto" style="display:none;"></span>
+      <span class="float-head-fill"></span>
+      <span class="pane-fps-pill" id="pane-${key}-stats" style="display:none;"></span>
+      <button class="pane-btn pane-audio-btn" id="pane-${key}-audio-btn" title="Mute sound" onclick="togglePaneAudio('${key}')" style="display:none;"></button>
+      <button class="pane-btn float-kbd-btn" id="pane-${key}-kbd-btn" onclick="openPaneKbdMenu(event, '${key}')" style="display:none;"><span id="pane-${key}-kbd-label"></span></button>
+      <button class="pane-btn" title="Dock into a pane" onclick="openDockMenu(event, '${key}')">${FLOAT_ICONS.dock}</button>
+      <button class="pane-btn" title="Minimise" onclick="minimizeFloat('${key}')">${FLOAT_ICONS.min}</button>
+      <button class="pane-btn float-max-btn" title="Maximise" onclick="toggleFloatMax('${key}')">${FLOAT_ICONS.max}</button>
+      <button class="pane-btn pane-close-btn" title="Close" onclick="requestCloseTab(${sess.tabId})">${FLOAT_ICONS.close}</button>
+    </div>
+    <div class="float-body" id="pane-${key}-body"></div>
+    ${['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'].map(d => `<div class="float-rs float-rs-${d}" onpointerdown="startFloatResize(event, '${key}', '${d}')"></div>`).join('')}
+  `;
+  layer.appendChild(win);
+  win.addEventListener('pointerdown', () => focusFloat(key), true);
+
+  sess.id = key;
+  sess.float = f;
+  state.paneTabs[key] = [sess];
+  state.panes[key] = sess;
+  document.getElementById(`pane-${key}-body`).appendChild(sess.el);
+  sess.el.classList.remove('hidden');
+  applyFloatGeom(key);
+  if (!f.minimized) focusFloat(key);
+  renderPaneHeader(key);
+  renderFloatDock();
+  return key;
+}
+
+/** Position, size and state of a window, kept inside the workspace. */
+function applyFloatGeom(key) {
+  const sess = state.panes[key];
+  const win = document.getElementById(`pane-${key}`);
+  if (!sess || !win || !sess.float) return;
+  const f = sess.float;
+  const layer = document.getElementById('float-layer');
+  const lw = layer.clientWidth || window.innerWidth;
+  const lh = layer.clientHeight || window.innerHeight;
+  f.w = Math.max(FLOAT_MIN_W, Math.min(f.w, lw));
+  f.h = Math.max(FLOAT_MIN_H, Math.min(f.h, lh));
+  // Keep at least the title bar reachable.
+  f.x = Math.max(120 - f.w, Math.min(f.x, lw - 120));
+  f.y = Math.max(0, Math.min(f.y, lh - 36));
+  win.style.left = `${f.x}px`;
+  win.style.top = `${f.y}px`;
+  win.style.width = `${f.w}px`;
+  win.style.height = `${f.h}px`;
+  win.classList.toggle('maximized', !!f.maximized);
+  win.classList.toggle('minimized', !!f.minimized);
+  const maxBtn = win.querySelector('.float-max-btn');
+  if (maxBtn) {
+    maxBtn.innerHTML = f.maximized ? FLOAT_ICONS.unmax : FLOAT_ICONS.max;
+    maxBtn.title = f.maximized ? 'Restore size' : 'Maximise';
+  }
+}
+
+/** Bring a window to the front and make it the target for typing, clipboard and the toolbar. */
+function focusFloat(key) {
+  const win = document.getElementById(`pane-${key}`);
+  if (!win) return;
+  win.style.zIndex = String(++floatZ);
+  if (state.activePaneIndex !== key) activatePane(key);
+}
+
+function focusFloatSession(key) {
+  const sess = state.panes[key];
+  if (!sess) return;
+  showSelectedTab(key); // re-fits a terminal
+  setTimeout(() => {
+    if (sess.terminal) sess.terminal.focus();
+    else if (sess.canvas) sess.canvas.focus();
+  }, 40);
+}
+
+function minimizeFloat(key) {
+  const sess = state.panes[key];
+  if (!sess || !sess.float) return;
+  sess.float.minimized = true;
+  applyFloatGeom(key);
+  if (state.activePaneIndex === key) activatePane(state.lastGridPane || 1);
+  renderFloatDock();
+  scheduleTabsSave();
+}
+
+function restoreFloat(key) {
+  const sess = state.panes[key];
+  if (!sess || !sess.float) return;
+  sess.float.minimized = false;
+  applyFloatGeom(key);
+  focusFloat(key);
+  focusFloatSession(key);
+  renderFloatDock();
+  scheduleTabsSave();
+}
+
+function toggleFloatMax(key) {
+  const sess = state.panes[key];
+  if (!sess || !sess.float) return;
+  sess.float.maximized = !sess.float.maximized;
+  sess.float.minimized = false;
+  applyFloatGeom(key);
+  focusFloat(key);
+  focusFloatSession(key);
+  renderFloatDock();
+  scheduleTabsSave();
+}
+
+/** Close a window and its session. */
+function closeFloat(key) {
+  const sess = state.panes[key];
+  if (sess) {
+    teardownSession(sess);
+    sess.conn = null;
+  }
+  document.getElementById(`pane-${key}`)?.remove();
+  delete state.panes[key];
+  delete state.paneTabs[key];
+  if (state.activePaneIndex === key) activatePane(state.lastGridPane || 1);
+  renderFloatDock();
+  scheduleTabsSave();
+}
+
+function closeAllFloats() {
+  for (const key of floatKeys()) closeFloat(key);
+}
+
+/** Put a window's session back into a grid pane as a tab (still connected). */
+function dockFloat(key, toPane) {
+  const sess = state.panes[key];
+  if (!sess) return;
+  document.getElementById('pane-dock-dropdown')?.remove();
+  document.getElementById(`pane-${key}`)?.remove();
+  delete state.panes[key];
+  delete state.paneTabs[key];
+  sess.float = null;
+  attachToPane(sess, paneKey(toPane), null);
+  renderFloatDock();
+  scheduleTabsSave();
+}
+
+/** Small menu on a window's dock button: which pane to put the session in. */
+function openDockMenu(e, key) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  document.getElementById('pane-dock-dropdown')?.remove();
+  const popup = document.createElement('div');
+  popup.id = 'pane-dock-dropdown';
+  popup.className = 'pane-settings-dropdown';
+  const panes = Array.from({ length: visiblePaneCount() }, (_, k) => k + 1);
+  popup.innerHTML = `
+    <div class="dock-menu-title">Dock into</div>
+    <div class="dock-menu-list">
+      ${panes.map(i => {
+        const c = state.panes[i] && (state.panes[i].conn || state.panes[i].lastConn);
+        const note = state.paneTabs[i].some(t => t.conn || t.parked) ? `as a new tab next to ${escapeHtml(c ? c.name : 'its sessions')}` : 'empty';
+        return `<button type="button" class="btn btn-sm dock-menu-item" onclick="dockFloat('${key}', ${i})"><strong>Pane ${i}</strong><span>${note}</span></button>`;
+      }).join('')}
+    </div>`;
+  document.body.appendChild(popup);
+  const btn = e && e.currentTarget;
+  const r = btn ? btn.getBoundingClientRect() : { bottom: 80, left: 80 };
+  popup.style.position = 'fixed';
+  popup.style.top = `${r.bottom + 4}px`;
+  popup.style.left = `${Math.min(window.innerWidth - 250, Math.max(10, r.left - 120))}px`;
+  popup.style.width = '240px';
+  popup.style.zIndex = '2000';
+  const closeHandler = (evt) => {
+    if (!popup.contains(evt.target)) {
+      popup.remove();
+      document.removeEventListener('pointerdown', closeHandler, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', closeHandler, true), 0);
+}
+
+/** Bar at the bottom of the workspace with the minimised windows. */
+function renderFloatDock() {
+  const bar = document.getElementById('float-dock-bar');
+  if (!bar) return;
+  const mins = floatKeys().filter(k => state.panes[k] && state.panes[k].float && state.panes[k].float.minimized);
+  bar.style.display = mins.length ? '' : 'none';
+  bar.innerHTML = mins.map((k) => {
+    const sess = state.panes[k];
+    const c = sess.conn || sess.lastConn;
+    const name = c ? c.name : 'Window';
+    const icon = c ? connIconHtml(c.icon, c.protocol, 'conn-icon-sm') : '';
+    return `<button type="button" class="float-dock-item" title="Restore ${escapeHtml(name)}" onclick="restoreFloat('${k}')">${icon}<span>${escapeHtml(name)}</span></button>`;
+  }).join('');
+}
+
+/** Drag a window by its title bar. */
+function startFloatMove(e, key) {
+  if (e.button !== 0 || e.target.closest('button')) return;
+  const sess = state.panes[key];
+  if (!sess || !sess.float || sess.float.maximized) return;
+  e.preventDefault();
+  const head = e.currentTarget;
+  const f = sess.float;
+  const start = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y };
+  head.setPointerCapture(e.pointerId);
+  document.body.classList.add('float-dragging');
+  const move = (ev) => {
+    f.x = start.fx + ev.clientX - start.x;
+    f.y = start.fy + ev.clientY - start.y;
+    applyFloatGeom(key);
+  };
+  const up = () => {
+    head.removeEventListener('pointermove', move);
+    head.removeEventListener('pointerup', up);
+    head.removeEventListener('pointercancel', up);
+    document.body.classList.remove('float-dragging');
+    scheduleTabsSave();
+  };
+  head.addEventListener('pointermove', move);
+  head.addEventListener('pointerup', up);
+  head.addEventListener('pointercancel', up);
+}
+
+/** Resize a window from an edge or corner. */
+function startFloatResize(e, key, dir) {
+  if (e.button !== 0) return;
+  const sess = state.panes[key];
+  if (!sess || !sess.float || sess.float.maximized) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.currentTarget;
+  const f = sess.float;
+  const s0 = { x: e.clientX, y: e.clientY, fx: f.x, fy: f.y, fw: f.w, fh: f.h };
+  handle.setPointerCapture(e.pointerId);
+  document.body.classList.add('float-dragging');
+  const move = (ev) => {
+    const dx = ev.clientX - s0.x;
+    const dy = ev.clientY - s0.y;
+    if (dir.includes('e')) f.w = Math.max(FLOAT_MIN_W, s0.fw + dx);
+    if (dir.includes('s')) f.h = Math.max(FLOAT_MIN_H, s0.fh + dy);
+    if (dir.includes('w')) { f.w = Math.max(FLOAT_MIN_W, s0.fw - dx); f.x = s0.fx + s0.fw - f.w; }
+    if (dir.includes('n')) { f.h = Math.max(FLOAT_MIN_H, s0.fh - dy); f.y = s0.fy + s0.fh - f.h; }
+    applyFloatGeom(key);
+  };
+  const up = () => {
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', up);
+    handle.removeEventListener('pointercancel', up);
+    document.body.classList.remove('float-dragging');
+    scheduleTabsSave();
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', up);
+  handle.addEventListener('pointercancel', up);
+}
+
+/** What is saved for the windows (step 3): connection, position, size and state. */
+function floatSnapshot() {
+  return floatKeys().map((k) => {
+    const t = state.panes[k];
+    const c = t && (t.conn || (t.parked && t.lastConn));
+    if (!c || !t.float) return null;
+    const f = t.float;
+    return { id: c.id, x: Math.round(f.x), y: Math.round(f.y), w: Math.round(f.w), h: Math.round(f.h), min: !!f.minimized, max: !!f.maximized };
+  }).filter(Boolean).slice(0, MAX_FLOATS);
+}
+
+/** Saved windows come back unconnected; on phones and tablets they become tabs in pane 1. */
+function restoreRememberedFloats(saved) {
+  for (const w of saved.slice(0, MAX_FLOATS)) {
+    const c = state.connections.find(x => x.id === w.id);
+    if (!c || (c.user_permissions && c.user_permissions.can_connect === false)) continue;
+    if (floatsAllowed()) {
+      const sess = makeSession('f0');
+      parkSession(sess, c);
+      openFloatWindow(sess, {
+        x: Number(w.x) || 40, y: Number(w.y) || 24, w: Number(w.w) || 800, h: Number(w.h) || 520,
+        minimized: !!w.min, maximized: !!w.max,
+      });
+    } else {
+      const list = state.paneTabs[1];
+      let sess = list[0];
+      if (sess.conn || sess.parked || sess.socket) {
+        sess = makeSession(1);
+        document.getElementById('pane-1-body').appendChild(sess.el);
+        list.push(sess);
+      }
+      parkSession(sess, c);
+      showSelectedTab(1);
+      renderPaneHeader(1);
+    }
+  }
+}
+
+// Keep windows inside the workspace when the browser window changes size; on a phone-sized
+// window they go back into the grid as tabs.
+window.addEventListener('resize', () => {
+  if (!floatKeys().length) return;
+  if (!floatsAllowed()) {
+    for (const k of floatKeys()) dockFloat(k, state.lastGridPane || 1);
+    return;
+  }
+  for (const k of floatKeys()) applyFloatGeom(k);
+});
 
 // Dragging tabs with the mouse: along the strip to reorder, onto another pane to move it there.
 let tabDrag = null;
@@ -5680,6 +6074,7 @@ function effectivePaneKbdLayout(paneIndex) {
 
 /** Windows only reads the layout when a session starts, so a change reconnects the pane. */
 function setPaneKbdLayout(paneIndex, layoutId) {
+  paneIndex = paneKey(paneIndex);
   const pane = state.panes[paneIndex];
   if (!pane || !pane.conn) return;
   const before = effectivePaneKbdLayout(paneIndex);
@@ -5733,7 +6128,7 @@ function openPaneKbdMenu(e, paneIndex) {
   popup.innerHTML = `
     <div style="padding: 8px 12px; font-weight: 700; font-size: 11px; color: var(--woofson-accent); background: var(--woofson-bg-void); border-bottom: 1px solid var(--woofson-border); display: flex; justify-content: space-between; align-items: center;">
       <span style="display: flex; align-items: center; gap: 6px;">
-        ⌨️ Keyboard Layout (Pane ${paneIndex})
+        ⌨️ Keyboard Layout (${isFloatKey(paneIndex) ? 'window' : `Pane ${paneIndex}`})
       </span>
       <span style="font-size: 11px; color: var(--woofson-text-dim); cursor: pointer;" onclick="document.getElementById('pane-kbd-dropdown')?.remove();">✕</span>
     </div>
@@ -5743,7 +6138,7 @@ function openPaneKbdMenu(e, paneIndex) {
         return `
           <button type="button" class="btn btn-sm ${isSelected ? 'active' : ''}" 
                   style="display: flex; align-items: center; gap: 8px; padding: 6px 8px; font-size: 11px; width: 100%; text-align: left; justify-content: flex-start;"
-                  onclick="setPaneKbdLayout(${paneIndex}, '${l.id}'); document.getElementById('pane-kbd-dropdown')?.remove();">
+                  onclick="setPaneKbdLayout('${paneIndex}', '${l.id}'); document.getElementById('pane-kbd-dropdown')?.remove();">
             <span style="font-size: 14px;">${l.flag}</span>
             <span style="flex: 1; ${isSelected ? 'font-weight: 700; color: var(--woofson-accent);' : ''}">${l.name}</span>
             <span style="font-family: var(--font-mono); font-size: 10px; color: var(--woofson-text-dim);">${l.label}</span>
