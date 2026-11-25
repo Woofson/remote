@@ -2373,6 +2373,42 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
 
   watchSessionVisibility(pane, ws, bodyEl);
 
+  // Waiting notice over the screen: on a slow network the wait for the first picture (or the
+  // redraw after a resize) is long enough to look like a hang, so say what is happening.
+  const syncEl = document.createElement('div');
+  syncEl.className = 'pane-sync-overlay';
+  syncEl.innerHTML = '<div class="pane-sync-card"><span class="pane-sync-spinner"></span><span class="pane-sync-text"></span><span class="pane-sync-hint"></span></div>';
+  bodyEl.appendChild(syncEl);
+  let gotFrame = false;
+  let syncTimers = [];
+  const showSync = (text) => {
+    syncEl.querySelector('.pane-sync-text').textContent = text;
+    syncEl.querySelector('.pane-sync-hint').textContent = '';
+    syncEl.classList.add('visible');
+    syncTimers.forEach(clearTimeout);
+    syncTimers = [
+      setTimeout(() => {
+        syncEl.querySelector('.pane-sync-hint').textContent = 'Still waiting for the remote computer. On a slow connection this can take a while.';
+      }, 6000),
+      setTimeout(() => hideSync(), 60000),
+    ];
+  };
+  const hideSync = () => {
+    syncTimers.forEach(clearTimeout);
+    syncTimers = [];
+    syncEl.classList.remove('visible');
+  };
+  // Drawing has started: the notice goes away (a moment later, so it does not flicker).
+  const frameArrived = () => {
+    gotFrame = true;
+    if (syncEl.classList.contains('visible') && !syncTimers.hiding) {
+      syncTimers.hiding = true;
+      setTimeout(hideSync, 150);
+    }
+  };
+  showSync(`Connecting to ${pane.conn ? pane.conn.name : 'the remote computer'}…`);
+  ws.addEventListener('close', hideSync);
+
   // Background black fill
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2384,10 +2420,26 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'init') {
-          canvas.width = msg.width;
-          canvas.height = msg.height;
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          if (gotFrame && canvas.width && canvas.height) {
+            // New size after a resize: keep the old picture, stretched and dimmed, until the
+            // remote computer has redrawn, instead of a black screen.
+            const old = document.createElement('canvas');
+            old.width = canvas.width;
+            old.height = canvas.height;
+            old.getContext('2d').drawImage(canvas, 0, 0);
+            canvas.width = msg.width;
+            canvas.height = msg.height;
+            ctx.drawImage(old, 0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            showSync('Adjusting to the new size…');
+          } else {
+            canvas.width = msg.width;
+            canvas.height = msg.height;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            showSync(`Waiting for the first picture from ${pane.conn ? pane.conn.name : 'the remote computer'}…`);
+          }
         } else if (msg.type === 'clipboard_sync') {
           if (!pane.conn || pane.conn.allow_clipboard !== 'disabled' && pane.conn.allow_clipboard !== 'host_to_remote') {
             onRemoteClipboardSync(msg.text);
@@ -2415,6 +2467,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
         const pixelBytes = new Uint8ClampedArray(e.data, 9, w * h * 4);
         const imgData = new ImageData(pixelBytes, w, h);
         ctx.putImageData(imgData, x, y);
+        frameArrived();
       } else if (type === 0x03) {
         // Atomic Batch Tiles: [0x03, tile_count: u16, (x: u16, y: u16, w: u16, h: u16, rgba...)*count]
         const tileCount = dv.getUint16(1, false);
@@ -2434,6 +2487,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
           ctx.putImageData(imgData, x, y);
           offset += byteLen;
         }
+        frameArrived();
       } else if (type === 0x10) {
         // Sound: [0x10, PCM signed 16-bit little-endian, stereo, 44.1 kHz]
         playPaneAudio(pane, e.data);

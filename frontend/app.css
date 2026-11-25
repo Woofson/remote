@@ -3730,3 +3730,44 @@ body.float-dragging .float-body { pointer-events: none; }
   font-size: 11px;
 }
 .dock-menu-item span { font-size: 10px; color: var(--woofson-text-dim); font-weight: 500; }
+
+/* Waiting notice over a remote screen (connecting, redrawing after a resize). */
+.pane-sync-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 3;
+}
+.pane-sync-overlay.visible { opacity: 1; }
+.pane-sync-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, 80%);
+  padding: 14px 20px;
+  border-radius: 10px;
+  background: rgba(15, 15, 18, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #f4f4f5;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+.pane-sync-hint { font-size: 11px; font-weight: 500; color: #a1a1aa; line-height: 1.4; }
+.pane-sync-hint:empty { display: none; }
+.pane-sync-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--woofson-accent, #f59e0b);
+  animation: pane-sync-spin 0.9s linear infinite;
+}
+@keyframes pane-sync-spin { to { transform: rotate(360deg); } }
