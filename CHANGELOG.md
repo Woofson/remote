@@ -4,6 +4,35 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.21.1] - 2026-11-25
+
+Covers everything since 0.14.0 (versions 0.15.0 to 0.21.0 were pushed to git without a release).
+
+### Upgrading from 0.14.0: read first
+- **Session sharing is allowed by default.** Users can share a session they have open through a link (viewers sign in with their own Remote login). Change it under Admin > Security: watch-only links, or off.
+- **Session recording is off until an admin turns it on**, per connection (connection editor, Access tab) or per group (Users & Groups). Sharing recordings is off by default too.
+- **New optional `[recording]` section** in `config.toml`: folder (default `data/recordings`), days to keep (30) and total size limit (20 GB). Without it these defaults apply.
+- **Docker:** recordings live in `./remote/data/recordings`, inside the folder you already back up. `docker-compose.yml` shows how to put them on another disk or NAS.
+
+### Added
+- **Tabs inside a pane** (#7): several sessions per pane, "+" for a new tab, drag tabs to reorder them or move them to another pane without reconnecting. Open tabs are remembered on your account and come back unconnected after sign-in.
+- **Floating windows** (#8): float any session out of the grid into a window that can be moved, resized, minimised and maximised, and dock it back as a tab. Window positions are remembered.
+- **Share a live session** (#32): from the pane's share menu, watch only or with control, with a time limit; see and remove viewers. Viewers join the same session with their own login. Admin rule under Security.
+- **Session recording** (#31): terminal and desktop (RDP, VNC; picture only) sessions are recorded as the browser showed them, never keystrokes, and stored encrypted. A REC marker shows while recording. Admin > Recordings lists every recording with search inside terminal recordings, play, download, share and delete; Settings > Recordings shows your own and those shared with you. The player has a timeline, 1x to 8x speed, skip pauses and find text; desktop recordings can be saved as a video (.webm). Sessions that must be recorded are refused if recording cannot start. Everything is written to the activity log.
+- **Phones and tablets** (#33): touchpad or touchscreen mode for remote desktops, pinch to zoom, and a key bar with Esc, Tab, Ctrl, Alt, Win, arrows, F-keys and Ctrl+Alt+Del, also for terminals.
+- **Wake-on-LAN** (#35): wake a sleeping machine before connecting, or with the Wake button in the connections list.
+- **Keyboard layout for RDP** (#6): sessions start with the chosen layout ("Auto" follows the browser language); the pane's layout button switches it.
+- A waiting notice while a remote screen connects or redraws after a resize, instead of a black screen.
+- Hidden remote desktops (background tab, hidden pane) pause their screen updates to save bandwidth.
+
+### Fixed
+- Start menu > Disconnect in Windows no longer makes Remote reconnect, also when many screen updates were still on their way.
+- RDP sessions no longer drop after a resize (F10, F11, pane or window size).
+- VNC: typing after a pane resize, dead keys and stuck keys after Shift.
+- The connection editor kept replacing a saved custom port with the protocol's default.
+
+---
+
 ## [0.14.0] - 2026-11-25
 
 ### Added
