@@ -6,7 +6,7 @@ All agents and pair-programming sessions working on **Remote** must strictly adh
 
 ## 1. Product Vision
 
-* **Remote is a 2026 take on Apache Guacamole**: a browser-based remote access gateway for RDP, VNC, SSH, Telnet and local shells.
+* **Remote is the remote access gateway homelabbers dream of, and that companies can rely on**: browser-based access to RDP, VNC, SSH, Telnet and local shells, growing into VDI. Remote grows on its own terms: documentation, issues and UI describe what Remote does, without comparing it to other products.
 * **Three non-negotiables**: **lightweight**, **fast**, and **secure**. Every feature is weighed against memory footprint, latency, and attack surface.
 * **Workspace model**: many terminals and remote desktops open at once, arranged in one main pane, split across several panes, in tabs, or as floating windows.
 * **VDI direction**: Remote grows into a small-scale VDI for around 10 users. Each user has one or more Proxmox VMs, which Remote can power on and off. Whole desktops come first, then individual apps from different platforms in one place. Windows licensing is handled per VM by the owner. Tracked in issues #9 to #11.
@@ -127,7 +127,7 @@ Whenever creating or modifying windows, modals, panes, or toolbars:
 
 ## 10. Lightweight, Fast & Secure Engineering
 
-* **Single binary**: pure Rust backend with the frontend embedded. No Java, no `guacd`, no heavy runtime dependencies.
+* **Single binary**: pure Rust backend with the frontend embedded. No Java, no separate proxy daemon, no heavy runtime dependencies.
 * **Resource budget**: keep idle memory low (target tens of MB) and startup near-instant. Justify every new dependency.
 * **Security defaults**: no secrets committed to the repository, least-privilege default roles, encrypted stored credentials, audit logging. Security regressions are treated as critical bugs.
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Remote aims to be the go-to replacement for Apache Guacamole for 2027 to 2037 and beyond: lightweight, fast and secure, one small program instead of a Java stack. Many terminals and remote desktops can be open at once, arranged in panes, in tabs, or as floating windows.
+Remote aims to be the remote access gateway homelabbers dream of, and that companies can rely on: lightweight, fast and secure, in one small program. Many terminals and remote desktops can be open at once, arranged in panes, in tabs, or as floating windows.
 
 Longer term, Remote grows into a small-scale VDI for around 10 users: each user gets one or more Proxmox VMs, first as whole desktops, later as individual apps from different platforms in one place.
 
@@ -35,9 +35,9 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 
 ---
 
-## Next: Matching Guacamole
+## Next: Gateway essentials
 
-What Guacamole offers and Remote does not have yet, in the planned order:
+In the planned order:
 
 1. **Live session sharing**: share a running session through a link, view-only or with control ([#32](https://github.com/Woofson/remote/issues/32)).
 2. **Touch use on phones and tablets**: touchpad mode, on-screen keyboard and a bar with Esc, Ctrl, Alt, Win and arrows ([#33](https://github.com/Woofson/remote/issues/33)).
