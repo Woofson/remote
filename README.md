@@ -39,7 +39,7 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 - Direct links to saved connections (Copy link in the connection list) for bookmarks and desktop shortcuts.
 - Full window mode (`F10` or `Alt+W`), full screen per pane, and a lock screen that keeps your sessions running.
 - Terminal based on xterm.js with a bundled JetBrainsMono Nerd Font, so prompts like starship and tools like `eza --icons` display correctly. Full-screen programs such as tmux resize with the pane.
-- Keyboard layout per pane (NO, US, GB, SE, DK, FI, DE, FR, ES, IT, Auto).
+- Keyboard layout for RDP sessions, per connection or per pane (NO, US, GB, SE, DK, FI, DE, FR, ES, IT, or Auto from your browser language). VNC, SSH and terminals follow your own keyboard automatically.
 - Clipboard drawer for sending text to and fetching text from a session.
 - Themes shared with Brum (Woofsons Amber, Catppuccin, Nord, Dracula, Tokyo Night, Gruvbox, Solarized and more). Add your own `*.toml` theme files to `themes/` or `data/themes/`.
 

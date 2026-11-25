@@ -1539,7 +1539,7 @@ function openAddConnectionModal() {
   const domainEl = document.getElementById('conn-rdp-domain');
   if (domainEl) domainEl.value = '';
   const kbdEl = document.getElementById('conn-rdp-keyboard-layout');
-  if (kbdEl) kbdEl.value = localStorage.getItem('rd_default_kbd_layout') || 'no';
+  if (kbdEl) kbdEl.value = 'auto';
 
   const perfPresetEl = document.getElementById('conn-rdp-perf-preset');
   if (perfPresetEl) perfPresetEl.value = 'high_speed';
@@ -1597,7 +1597,7 @@ function openEditConnectionModal(id) {
   const domainEl = document.getElementById('conn-rdp-domain');
   if (domainEl) domainEl.value = settings.domain || '';
   const editKbdEl = document.getElementById('conn-rdp-keyboard-layout');
-  if (editKbdEl) editKbdEl.value = settings.keyboard_layout || 'no';
+  if (editKbdEl) editKbdEl.value = settings.keyboard_layout || 'auto';
 
   const perfPresetEl = document.getElementById('conn-rdp-perf-preset');
   if (perfPresetEl) perfPresetEl.value = settings.perf_preset || 'high_speed';
@@ -1786,7 +1786,7 @@ async function handleSaveConnection(e) {
     ssh_certificate: document.getElementById('conn-ssh-certificate') ? document.getElementById('conn-ssh-certificate').value.trim() || null : null,
     ignore_cert: document.getElementById('conn-rdp-ignore-cert') ? document.getElementById('conn-rdp-ignore-cert').value === 'true' : true,
     domain: document.getElementById('conn-rdp-domain') ? document.getElementById('conn-rdp-domain').value.trim() || null : null,
-    keyboard_layout: document.getElementById('conn-rdp-keyboard-layout') ? document.getElementById('conn-rdp-keyboard-layout').value : 'no',
+    keyboard_layout: document.getElementById('conn-rdp-keyboard-layout') ? document.getElementById('conn-rdp-keyboard-layout').value : 'auto',
     perf_preset: document.getElementById('conn-rdp-perf-preset') ? document.getElementById('conn-rdp-perf-preset').value : 'high_speed',
     color_depth: document.getElementById('conn-rdp-color-depth') ? parseInt(document.getElementById('conn-rdp-color-depth').value, 10) : 32,
     disable_wallpaper: document.getElementById('conn-rdp-disable-wallpaper') ? document.getElementById('conn-rdp-disable-wallpaper').checked : true,
@@ -1950,6 +1950,7 @@ function connectToTarget(connectionId) {
   pane.conn = conn;
   pane.type = conn.protocol;
   pane.lastError = null;
+  updatePaneKbdBadge(paneIndex);
 
   const rect = bodyEl.getBoundingClientRect();
   const initW = Math.min(3840, Math.max(640, Math.round(rect.width) || 1920));
@@ -1960,7 +1961,7 @@ function connectToTarget(connectionId) {
   // Relative to the page, so it also works under a sub-path behind a proxy.
   const wsBase = new URL('ws/tunnel/', location.href);
   wsBase.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsBase.href}${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}`;
+  const wsUrl = `${wsBase.href}${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}${conn.protocol === 'rdp' ? `&kbd=${encodeURIComponent(effectivePaneKbdLayout(paneIndex))}` : ''}`;
 
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
@@ -2494,6 +2495,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   }, { passive: false });
 
   // Key Inputs: Direct PS/2 Hardware Scancodes (with E0 extended flag) + Unicode fallback
+  const heldKeyChars = {};
   function sendKey(down, e) {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (pane.conn && pane.conn.view_only) return;
@@ -2506,7 +2508,19 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
       extended = ext ? 1 : 0;
     }
 
-    const unicode = (e.key && e.key.length === 1) ? e.key.charCodeAt(0) : 0;
+    // VNC gets the typed character. A dead key (^ ~ ¨ ´ ` on many European keyboards) types
+    // nothing by itself: the browser combines it with the next key (^ then e gives ê), so it is
+    // not sent. Windows (RDP) combines dead keys itself, so there the key is sent as usual.
+    const isVnc = pane.conn && pane.conn.protocol === 'vnc';
+    if (isVnc && (e.key === 'Dead' || e.key === 'Process')) return;
+
+    let unicode = (e.key && e.key.length === 1) ? e.key.codePointAt(0) : 0;
+    if (unicode > 0xffff) unicode = 0;
+    // Release the same character that was pressed (Shift or a dead key may have changed it since).
+    if (e.code) {
+      if (down) heldKeyChars[e.code] = unicode;
+      else if (e.code in heldKeyChars) { unicode = heldKeyChars[e.code]; delete heldKeyChars[e.code]; }
+    }
 
     const buf = new ArrayBuffer(6);
     const dv = new DataView(buf);
@@ -2749,6 +2763,7 @@ function disconnectPane(paneIndex) {
   }
   stopPaneAudio(pane);
   pane.conn = null;
+  updatePaneKbdBadge(paneIndex);
 
   document.getElementById(`pane-${paneIndex}-title`).textContent = 'Ready for Session';
   document.getElementById(`pane-${paneIndex}-proto`).style.display = 'none';
@@ -5131,35 +5146,73 @@ function openPaneSettingsMenu(e, paneIndex) {
 }
 
 // ================= Keyboard Layout & Locale Management =================
+// Only RDP uses a layout (#6): Remote sends key positions and Windows turns them into
+// letters with the layout it was told at connect. VNC, SSH and terminals receive the
+// characters your own keyboard typed, so they always follow it.
+
+/** Guess the user's keyboard from the browser language; US English when unknown. */
+function resolveAutoKbdLayout() {
+  const map = { nb: 'no', nn: 'no', no: 'no', sv: 'sv', da: 'da', fi: 'fi', de: 'de', fr: 'fr', es: 'es', it: 'it' };
+  for (const lang of (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || ''])) {
+    const [base, region] = String(lang).toLowerCase().split('-');
+    if (base === 'en') return region === 'gb' || region === 'ie' ? 'en_gb' : 'en_us';
+    if (map[base]) return map[base];
+  }
+  return 'en_us';
+}
+
+/** The layout chosen for a pane: its own choice for this connection, else the connection's, else Auto. */
 function getPaneKbdLayout(paneIndex) {
   const pane = state.panes[paneIndex];
+  if (pane && pane.conn && pane.kbdOverride && pane.kbdOverride.connId === pane.conn.id) return pane.kbdOverride.layout;
   if (pane && pane.conn && pane.conn.settings_json) {
     try {
       const s = JSON.parse(pane.conn.settings_json);
       if (s.keyboard_layout) return s.keyboard_layout;
     } catch (e) {}
   }
-  return localStorage.getItem(`rd_pane_kbd_${paneIndex}`) || localStorage.getItem('rd_default_kbd_layout') || 'no';
+  return 'auto';
 }
 
+/** The real layout sent to Windows ("auto" resolved). */
+function effectivePaneKbdLayout(paneIndex) {
+  const id = getPaneKbdLayout(paneIndex);
+  return id === 'auto' || !KEYBOARD_LAYOUTS.some(l => l.id === id) ? resolveAutoKbdLayout() : id;
+}
+
+/** Windows only reads the layout when a session starts, so a change reconnects the pane. */
 function setPaneKbdLayout(paneIndex, layoutId) {
-  localStorage.setItem(`rd_pane_kbd_${paneIndex}`, layoutId);
-  localStorage.setItem('rd_default_kbd_layout', layoutId);
+  const pane = state.panes[paneIndex];
+  if (!pane || !pane.conn) return;
+  const before = effectivePaneKbdLayout(paneIndex);
+  pane.kbdOverride = { connId: pane.conn.id, layout: layoutId };
   updatePaneKbdBadge(paneIndex);
   const layout = KEYBOARD_LAYOUTS.find(l => l.id === layoutId);
-  showToast(`Keyboard layout set to ${layout ? layout.name : layoutId.toUpperCase()}`);
+  if (effectivePaneKbdLayout(paneIndex) === before || pane.conn.protocol !== 'rdp') {
+    showToast(`Keyboard layout set to ${layout ? layout.name : layoutId.toUpperCase()}`);
+    return;
+  }
+  showToast(`Reconnecting with the ${layout ? layout.name : layoutId.toUpperCase()} keyboard layout…`);
+  const prev = state.activePaneIndex;
+  state.activePaneIndex = paneIndex;
+  connectToTarget(pane.conn.id);
+  state.activePaneIndex = prev;
 }
 
 function updatePaneKbdBadge(paneIndex) {
-  const layoutId = getPaneKbdLayout(paneIndex);
-  const layout = KEYBOARD_LAYOUTS.find(l => l.id === layoutId) || KEYBOARD_LAYOUTS[0];
-  const labelEl = document.getElementById(`pane-${paneIndex}-kbd-label`);
+  const pane = state.panes[paneIndex];
   const btnEl = document.getElementById(`pane-${paneIndex}-kbd-btn`);
-  if (labelEl) {
-    labelEl.textContent = `${layout.flag} ${layout.label}`;
-  }
+  const labelEl = document.getElementById(`pane-${paneIndex}-kbd-label`);
+  const isRdp = !!(pane && pane.conn && pane.conn.protocol === 'rdp');
+  if (btnEl) btnEl.style.display = isRdp ? '' : 'none';
+  if (!isRdp) return;
+  const chosen = getPaneKbdLayout(paneIndex);
+  const real = KEYBOARD_LAYOUTS.find(l => l.id === effectivePaneKbdLayout(paneIndex)) || KEYBOARD_LAYOUTS[0];
+  if (labelEl) labelEl.textContent = chosen === 'auto' ? `🌐 ${real.label}` : `${real.flag} ${real.label}`;
   if (btnEl) {
-    btnEl.title = `Keyboard Layout: ${layout.name} (${layout.label}) — Click to change`;
+    btnEl.title = chosen === 'auto'
+      ? `Keyboard layout: Auto (${real.name}, from your browser language). Click to change`
+      : `Keyboard layout: ${real.name}. Click to change`;
   }
 }
 

@@ -2407,6 +2407,8 @@ pub struct WsQuery {
     pub rows: Option<u16>,
     pub width: Option<u16>,
     pub height: Option<u16>,
+    /// Keyboard layout chosen in the browser for this session (overrides the connection's).
+    pub kbd: Option<String>,
 }
 
 pub async fn ws_tunnel_handler(
@@ -2549,6 +2551,11 @@ pub async fn ws_tunnel_handler(
                             keyboard_layout = Some(kl.trim().to_string());
                         }
                     }
+                }
+
+                // The browser sends the layout it resolved ("auto" becomes a real layout there).
+                if let Some(k) = query.kbd.as_deref().map(str::trim).filter(|k| crate::protocols::rdp::windows_keyboard_layout(k).is_some()) {
+                    keyboard_layout = Some(k.to_string());
                 }
 
                 let init_w = query.width.unwrap_or(1920).clamp(640, 3840);

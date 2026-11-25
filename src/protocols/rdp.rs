@@ -378,6 +378,24 @@ fn map_mouse_events(
     events
 }
 
+/// Windows keyboard layout id for a Remote layout name (#6). Windows starts the session
+/// with this layout when it is installed there; `None` (also for "auto") keeps the server's default.
+pub fn windows_keyboard_layout(id: &str) -> Option<u32> {
+    Some(match id {
+        "no" => 0x0414,
+        "en_us" => 0x0409,
+        "en_gb" => 0x0809,
+        "sv" => 0x041D,
+        "da" => 0x0406,
+        "fi" => 0x040B,
+        "de" => 0x0407,
+        "fr" => 0x040C,
+        "es" => 0x040A,
+        "it" => 0x0410,
+        _ => return None,
+    })
+}
+
 /// Convert standard keysyms to PS/2 Set 1 scancodes (and extended flag)
 fn keysym_to_scancode(keysym: u32) -> Option<(u8, bool)> {
     match keysym {
@@ -558,6 +576,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         .with_password(password)
         .with_clipboard(ClipboardType::Disable)
         .with_performance_flags(performance_flags(&params))
+        .with_keyboard_layout(params.keyboard_layout.as_deref().and_then(windows_keyboard_layout).unwrap_or(0))
         .with_static_channel(move |_props| {
             Some(ironrdp_cliprdr::Cliprdr::new(Box::new(backend_for_factory.clone())))
         });

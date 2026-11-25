@@ -553,6 +553,7 @@ pub struct ConfigBuilder {
     enable_credssp: Option<bool>,
     keyboard_type: Option<ironrdp_pdu::gcc::KeyboardType>,
     keyboard_subtype: Option<u32>,
+    keyboard_layout: Option<u32>,
     keyboard_functional_keys_count: Option<u32>,
     ime_file_name: Option<String>,
     dig_product_id: Option<String>,
@@ -670,6 +671,15 @@ impl ConfigBuilder {
     #[must_use]
     pub fn with_keyboard_type(mut self, ty: ironrdp_pdu::gcc::KeyboardType) -> Self {
         self.keyboard_type = Some(ty);
+        self
+    }
+
+    /// Windows keyboard layout id sent at connect (for example `0x0414` for Norwegian).
+    ///
+    /// Defaults to `0`, which lets the server pick its own default layout.
+    #[must_use]
+    pub fn with_keyboard_layout(mut self, layout: u32) -> Self {
+        self.keyboard_layout = Some(layout);
         self
     }
 
@@ -1178,7 +1188,7 @@ impl ConfigBuilder {
                 .keyboard_type
                 .unwrap_or(ironrdp_pdu::gcc::KeyboardType::IbmEnhanced),
             keyboard_subtype: self.keyboard_subtype.unwrap_or(0),
-            keyboard_layout: 0,
+            keyboard_layout: self.keyboard_layout.unwrap_or(0),
             keyboard_functional_keys_count: self.keyboard_functional_keys_count.unwrap_or(12),
             ime_file_name: self.ime_file_name.unwrap_or_default(),
             dig_product_id: self.dig_product_id.unwrap_or_default(),

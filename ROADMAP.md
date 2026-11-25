@@ -25,10 +25,14 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 - Email: SMTP settings, "Forgot password?" with single-use links, set-your-password invitations, security notices ([#27](https://github.com/Woofson/remote/issues/27)).
 - Reverse proxy support: sub-path hosting, session keepalive and reconnect, trusted proxies and real client IPs, forward-auth sign-in, health checks, tested Nginx/Caddy/Traefik/HAProxy examples ([#3](https://github.com/Woofson/remote/issues/3)).
 - Two-factor authentication (TOTP) with recovery codes; admin session rules: 2FA per role, login lifetime, idle lock or sign-out, server-enforced lock screen ([#26](https://github.com/Woofson/remote/issues/26)).
+- RDP sound in the browser and working display settings: wallpaper, window contents while dragging, animations, themes, font smoothing ([#25](https://github.com/Woofson/remote/issues/25), [#28](https://github.com/Woofson/remote/issues/28)).
+- Direct links that open a connection, for bookmarks and shortcuts ([#29](https://github.com/Woofson/remote/issues/29)).
+- Login and lock screen branding: logo, texts, accent colour and wallpapers, with reset to defaults ([#30](https://github.com/Woofson/remote/issues/30)).
+- Movable and hideable toolbar in full window and full screen.
 
 ## Open bugs
 
-- Keyboard layout "Auto" mode and non-RDP protocols need confirming ([#6](https://github.com/Woofson/remote/issues/6)).
+- Keyboard layouts: RDP now sends the chosen layout to Windows; awaiting a test on a real machine ([#6](https://github.com/Woofson/remote/issues/6)).
 
 ---
 
