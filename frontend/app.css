@@ -3508,8 +3508,10 @@ kbd {
 .fullscreen-mode .pane-tabs,
 .remote-pane.maximized-pane .pane-tabs { max-width: 46vw; }
 
-/* Phones: with several tabs, the buttons stay on the first row and the tabs get a row of their own. */
-@media (max-width: 640px) {
+/* Narrow panes (phones, or several panes side by side): with several tabs, the buttons stay on the
+   first row and the tabs get a row of their own. */
+.remote-pane { container-type: inline-size; container-name: pane; }
+@container pane (max-width: 640px) {
   .remote-pane.has-tabs .pane-header {
     height: auto;
     flex-wrap: wrap;
@@ -3529,3 +3531,21 @@ kbd {
   .fullscreen-mode .remote-pane.has-tabs .pane-header-left,
   .remote-pane.maximized-pane.has-tabs .pane-header-left { order: 0; flex: 1 1 auto; }
 }
+
+/* Dragging tabs (#7): a floating copy follows the mouse; a line shows where it lands. */
+.pane-tab.dragging { opacity: 0.4; }
+.pane-tab.drop-before { box-shadow: inset 3px 0 0 var(--woofson-accent); }
+.pane-tab.drop-after { box-shadow: inset -3px 0 0 var(--woofson-accent); }
+.pane-tab-ghost {
+  position: fixed;
+  z-index: 5000;
+  pointer-events: none;
+  opacity: 0.9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+body.tab-dragging, body.tab-dragging * { cursor: grabbing !important; }
+.remote-pane.tab-drop-target {
+  outline: 2px dashed var(--woofson-accent);
+  outline-offset: -4px;
+}
+.remote-pane:not(.has-tabs) .pane-conn-name { cursor: grab; }

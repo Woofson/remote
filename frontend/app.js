@@ -1983,11 +1983,11 @@ function connectToTarget(connectionId, opts = {}) {
     pane.status = 'connected';
     statsEl.textContent = `${latency} ms`;
     renderPaneTabs(pane.id);
-    showToast(`Connected to ${conn.name} [Pane ${paneIndex}]`);
+    showToast(`Connected to ${conn.name} [Pane ${pane.id}]`);
 
     if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled' && !(conn.user_permissions && !conn.user_permissions.can_transfer)) {
       if (conn.has_password || conn.has_private_key) {
-        loadSftpDirectory(paneIndex, '.');
+        loadSftpDirectory(pane.id, '.');
       } else {
         showSftpNote('File browsing needs a saved password or key for this connection.');
       }
@@ -2854,7 +2854,7 @@ function switchTab(tabId) {
   if (!sess) return;
   const i = sess.id;
   state.panes[i] = sess;
-  for (const t of state.paneTabs[i]) t.el.classList.toggle('hidden', t !== sess);
+  showSelectedTab(i);
   activatePane(i);
   renderPaneHeader(i);
   // A terminal measured while hidden has no size: fit it now that it is visible.
@@ -2970,6 +2970,7 @@ function renderPaneTabs(paneIndex) {
   const paneEl = document.getElementById(`pane-${paneIndex}`);
   const list = (state.paneTabs && state.paneTabs[paneIndex]) || [];
   const multi = list.length > 1;
+  if (tabDrag && tabDrag.active) return; // redrawn when the drag ends
   if (paneEl) paneEl.classList.toggle('has-tabs', multi);
   if (addBtn) addBtn.style.display = multi || list.some(t => t.conn) ? '' : 'none';
   if (!strip) return;
@@ -2981,8 +2982,8 @@ function renderPaneTabs(paneIndex) {
     const icon = c ? connIconHtml(c.icon, c.protocol, 'conn-icon-sm') : '';
     const status = t.conn ? t.status : 'idle';
     const tip = t.conn ? `${t.conn.name} (${PROTOCOL_LABELS[t.conn.protocol] || t.conn.protocol}, ${status})` : 'Empty tab';
-    return `<div class="pane-tab${t === active ? ' active' : ''} status-${status}" role="tab" title="${escapeHtml(tip)}"
-        onclick="event.stopPropagation(); switchTab(${t.tabId})" onauxclick="if (event.button === 1) { event.preventDefault(); event.stopPropagation(); requestCloseTab(${t.tabId}); }">
+    return `<div class="pane-tab${t === active ? ' active' : ''} status-${status}" role="tab" title="${escapeHtml(tip)}" data-tab-id="${t.tabId}"
+        onpointerdown="startTabDrag(event, ${t.tabId})" onclick="event.stopPropagation(); switchTab(${t.tabId})" onauxclick="if (event.button === 1) { event.preventDefault(); event.stopPropagation(); requestCloseTab(${t.tabId}); }">
         <span class="pane-tab-dot"></span>${icon}<span class="pane-tab-name">${escapeHtml(name)}</span>
         <button class="pane-tab-close" title="Close tab" onclick="event.stopPropagation(); requestCloseTab(${t.tabId})">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
@@ -2990,6 +2991,141 @@ function renderPaneTabs(paneIndex) {
       </div>`;
   }).join('');
   strip.querySelector('.pane-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+/** Show only the selected tab's screen in a pane; a terminal that was hidden is re-fitted. */
+function showSelectedTab(paneIndex) {
+  const sel = state.panes[paneIndex];
+  for (const t of state.paneTabs[paneIndex]) t.el.classList.toggle('hidden', t !== sel);
+  setTimeout(() => {
+    if (state.panes[paneIndex] === sel && sel.fitAddon && sel.terminal) {
+      try { sel.fitAddon.fit(); } catch (e) {}
+    }
+  }, 30);
+}
+
+/**
+ * Move a tab to a position in a pane: reorder within its own pane, or carry the live session
+ * to another pane without reconnecting. An emptied pane gets a fresh empty tab; a pane that
+ * only had an unused empty tab drops it.
+ */
+function moveTab(tabId, toPane, toIndex) {
+  const sess = findTab(tabId);
+  if (!sess) return;
+  const from = sess.id;
+  const src = state.paneTabs[from];
+  const idx = src.indexOf(sess);
+  if (from === toPane) {
+    src.splice(idx, 1);
+    if (toIndex > idx) toIndex--;
+    src.splice(Math.max(0, Math.min(toIndex, src.length)), 0, sess);
+    renderPaneTabs(from);
+    return;
+  }
+  const wasShown = state.panes[from] === sess;
+  src.splice(idx, 1);
+  if (!src.length) {
+    const fresh = makeSession(from);
+    document.getElementById(`pane-${from}-body`).appendChild(fresh.el);
+    src.push(fresh);
+    state.panes[from] = fresh;
+    disconnectSession(fresh);
+  } else if (wasShown) {
+    state.panes[from] = src[Math.min(idx, src.length - 1)];
+  }
+  showSelectedTab(from);
+  renderPaneHeader(from);
+
+  const dst = state.paneTabs[toPane];
+  if (dst.length === 1 && !dst[0].conn && !dst[0].socket && !dst[0].lastConn) {
+    dst[0].el.remove();
+    dst.length = 0;
+  }
+  sess.id = toPane;
+  document.getElementById(`pane-${toPane}-body`).appendChild(sess.el);
+  dst.splice(Math.max(0, Math.min(toIndex == null ? dst.length : toIndex, dst.length)), 0, sess);
+  switchTab(sess.tabId);
+}
+
+// Dragging tabs with the mouse: along the strip to reorder, onto another pane to move it there.
+let tabDrag = null;
+
+function startTabDrag(e, tabId) {
+  if (e.button !== 0 || e.pointerType === 'touch' || e.target.closest('.pane-tab-close')) return;
+  const tabEl = e.currentTarget;
+  tabDrag = { tabId, tabEl, pointerId: e.pointerId, x0: e.clientX, y0: e.clientY, active: false, ghost: null, target: null };
+  tabEl.setPointerCapture(e.pointerId);
+  tabEl.addEventListener('pointermove', onTabDragMove);
+  tabEl.addEventListener('pointerup', endTabDrag);
+  tabEl.addEventListener('pointercancel', endTabDrag);
+}
+
+function clearTabDropMarks() {
+  document.querySelectorAll('.pane-tab.drop-before, .pane-tab.drop-after').forEach(el => el.classList.remove('drop-before', 'drop-after'));
+  document.querySelectorAll('.remote-pane.tab-drop-target').forEach(el => el.classList.remove('tab-drop-target'));
+}
+
+function onTabDragMove(e) {
+  const d = tabDrag;
+  if (!d) return;
+  if (!d.active) {
+    if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < 6) return;
+    d.active = true;
+    d.ghost = d.tabEl.cloneNode(true);
+    d.ghost.classList.add('pane-tab-ghost');
+    d.ghost.removeAttribute('onclick');
+    d.ghost.removeAttribute('onpointerdown');
+    document.body.appendChild(d.ghost);
+    d.tabEl.classList.add('dragging');
+    document.body.classList.add('tab-dragging');
+  }
+  d.ghost.style.left = `${e.clientX + 8}px`;
+  d.ghost.style.top = `${e.clientY + 8}px`;
+
+  clearTabDropMarks();
+  d.target = null;
+  const src = findTab(d.tabId);
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  if (!src || !under) return;
+  const overTab = under.closest('.pane-tab[data-tab-id]');
+  const overPane = under.closest('.remote-pane');
+  const paneNum = overPane ? parseInt(overPane.id.replace('pane-', ''), 10) : null;
+  if (overTab && paneNum) {
+    const t = findTab(parseInt(overTab.dataset.tabId, 10));
+    if (t && t !== src) {
+      const r = overTab.getBoundingClientRect();
+      const after = e.clientX > r.left + r.width / 2;
+      overTab.classList.add(after ? 'drop-after' : 'drop-before');
+      const index = state.paneTabs[paneNum].indexOf(t) + (after ? 1 : 0);
+      d.target = { pane: paneNum, index };
+      if (paneNum !== src.id) overPane.classList.add('tab-drop-target');
+    }
+  } else if (paneNum && paneNum !== src.id) {
+    overPane.classList.add('tab-drop-target');
+    d.target = { pane: paneNum, index: null };
+  }
+}
+
+function endTabDrag(e) {
+  const d = tabDrag;
+  if (!d) return;
+  d.tabEl.removeEventListener('pointermove', onTabDragMove);
+  d.tabEl.removeEventListener('pointerup', endTabDrag);
+  d.tabEl.removeEventListener('pointercancel', endTabDrag);
+  try { d.tabEl.releasePointerCapture(d.pointerId); } catch (err) {}
+  clearTabDropMarks();
+  document.body.classList.remove('tab-dragging');
+  d.tabEl.classList.remove('dragging');
+  if (d.ghost) d.ghost.remove();
+  tabDrag = null;
+  if (!d.active) return;
+  // The click that follows a drag must not also select a tab or pane.
+  const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); };
+  document.addEventListener('click', swallow, true);
+  setTimeout(() => document.removeEventListener('click', swallow, true), 60);
+  const src = findTab(d.tabId);
+  if (e.type === 'pointerup' && d.target && src) moveTab(d.tabId, d.target.pane, d.target.index);
+  else if (src) renderPaneTabs(src.id);
 }
 
 // ================= Bi-Directional Clipboard Engine =================

@@ -815,6 +815,12 @@ pub fn connect_and_handshake_vnc(
 }
 
 #[inline]
+/// Remote's own resize request: `[251, 0xFF, w_hi, w_lo, h_hi, h_lo]`, turned into a proper
+/// SetDesktopSize message (or dropped) before anything is sent to the VNC server.
+fn is_resize_marker(pkt: &[u8]) -> bool {
+    pkt.len() == 6 && pkt[0] == 251 && pkt[1] == 0xFF
+}
+
 fn build_fbur_packet(incremental: u8, x: u16, y: u16, w: u16, h: u16) -> [u8; 10] {
     let mut fbur = [0u8; 10];
     fbur[0] = 3; // FramebufferUpdateRequest
@@ -1279,11 +1285,15 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
         let mut ext_desktop_screen: Option<(u32, u32)> = None; // (screen_id, flags)
 
         let mut msg_type_buf = [0u8; 1];
+        // A resize asked for in the middle of a screen update waits for the next round.
+        let mut deferred_resize: Option<Vec<u8>> = None;
         while is_running_clone.load(Ordering::Relaxed) {
             // 1. Drain any pending client-to-server packets (mouse, keys, clipboard, resize)
             let mut wrote_any = false;
-            while let Ok(pkt) = vnc_write_rx.try_recv() {
-                if pkt.len() >= 7 && pkt[0] == 251 && pkt[1] == 0xFF {
+            while let Some(pkt) = deferred_resize.take().or_else(|| vnc_write_rx.try_recv().ok()) {
+                // The resize marker is 6 bytes; it must never reach the VNC server as it is,
+                // or the server reads the following key presses as part of it.
+                if is_resize_marker(&pkt) {
                     // Internal marker for dynamic resize request: [251, 0xFF, w_hi, w_lo, h_hi, h_lo]
                     if let Some((screen_id, flags)) = ext_desktop_screen {
                         let req_w = u16::from_be_bytes([pkt[2], pkt[3]]);
@@ -1342,7 +1352,8 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
                         // Also flush any mouse/key events between rectangles for low input latency
                         let mut flushed_input = false;
                         while let Ok(pkt) = vnc_write_rx.try_recv() {
-                            if pkt.len() >= 7 && pkt[0] == 251 && pkt[1] == 0xFF {
+                            if is_resize_marker(&pkt) {
+                                deferred_resize = Some(pkt);
                                 continue;
                             }
                             let _ = stream.write_all(&pkt);
