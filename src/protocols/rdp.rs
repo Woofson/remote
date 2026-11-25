@@ -830,6 +830,11 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                                     physical_size: None,
                                 });
                             }
+                        } else if msg_type == Some("visibility") {
+                            // Hidden tab or pane (#7): Windows stops sending screen updates until shown.
+                            if let Some(visible) = val.get("visible").and_then(|v| v.as_bool()) {
+                                let _ = input_sender_rx.send(RdpInputEvent::SuppressOutput(!visible));
+                            }
                         }
                     }
                 }

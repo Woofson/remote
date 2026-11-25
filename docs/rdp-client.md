@@ -38,6 +38,11 @@ the engine is carried inside the `remoted` crate instead.
     caller supplies its own RDPSND channel through `with_static_channel`. Remote
     uses this to forward PCM audio to the browser (`WebAudioBackend` in
     `src/protocols/rdp.rs`).
+- **Later Remote-only additions** (not in the upstream patch; re-apply after a sync):
+  - `ConfigBuilder::with_keyboard_layout(id)` sends the Windows keyboard layout
+    at connect instead of `0` (#6).
+  - `RdpInputEvent::SuppressOutput(bool)` pauses and resumes screen updates with
+    the Suppress Output PDU while a session's tab or pane is hidden (#7).
 
 ## Syncing with a new upstream release
 
@@ -46,7 +51,7 @@ the engine is carried inside the `remoted` crate instead.
 2. Repeat the feature-flag and module-path replacements listed above.
 3. Re-apply `docs/upstream/ironrdp-client-performance-flags-external-audio.patch`
    (`patch -p1` from a directory where `src/` is the crate source), unless
-   upstream has merged an equivalent change.
+   upstream has merged an equivalent change, and the later Remote-only additions.
 4. Check the crate's dependency list against the "RDP client engine" block in
    `Cargo.toml`, then build and test an RDP session with sound and drive
    redirection.

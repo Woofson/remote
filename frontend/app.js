@@ -2360,6 +2360,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   resizeObserver.observe(bodyEl);
   pane.resizeObserver = resizeObserver;
 
+  watchSessionVisibility(pane, ws, bodyEl);
+
   // Background black fill
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -2752,8 +2754,52 @@ function updatePaneAudioButton(pane) {
   btn.title = blocked ? 'Sound is blocked by the browser: click to enable sound' : a.muted ? 'Unmute sound' : 'Mute sound';
 }
 
+/**
+ * Remote desktops that cannot be seen (hidden tab, pane hidden by the layout or by another
+ * pane in full window, browser tab in the background) ask the server to stop sending screen
+ * updates, saving bandwidth and CPU (#7). Pausing waits a moment so quick tab flicks do not
+ * cause churn; showing resumes at once and the server repaints the whole screen.
+ */
+const PAUSE_HIDDEN_AFTER_MS = 1500;
+function watchSessionVisibility(pane, ws, el) {
+  let onScreen = true;
+  let reported = true; // what the server was last told
+  let timer = null;
+  const report = (visible) => {
+    if (visible === reported || ws.readyState !== WebSocket.OPEN) return;
+    reported = visible;
+    pane.paused = !visible;
+    ws.send(JSON.stringify({ type: 'visibility', visible }));
+  };
+  const update = () => {
+    const visible = onScreen && !document.hidden;
+    clearTimeout(timer);
+    if (visible) report(true);
+    else timer = setTimeout(() => report(false), PAUSE_HIDDEN_AFTER_MS);
+  };
+  const io = new IntersectionObserver((entries) => {
+    onScreen = entries[entries.length - 1].isIntersecting;
+    update();
+  });
+  io.observe(el);
+  document.addEventListener('visibilitychange', update);
+  ws.addEventListener('open', update);
+  const stop = () => {
+    clearTimeout(timer);
+    io.disconnect();
+    document.removeEventListener('visibilitychange', update);
+  };
+  ws.addEventListener('close', stop);
+  pane.stopVisibilityWatch = stop;
+}
+
 /** Stop a session's connection and free its screen or terminal (the tab itself stays). */
 function teardownSession(pane) {
+  if (pane.stopVisibilityWatch) {
+    pane.stopVisibilityWatch();
+    pane.stopVisibilityWatch = null;
+  }
+  pane.paused = false;
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
     pane.resizeObserver = null;

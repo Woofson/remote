@@ -83,6 +83,9 @@ pub enum RdpInputEvent {
         channel_id: u32,
         messages: Vec<SvcMessage>,
     },
+    /// Remote addition: stop (`true`) or resume (`false`) screen updates while the session
+    /// is not visible (Suppress Output PDU, MS-RDPBCGR 2.2.11.3). Sound and input continue.
+    SuppressOutput(bool),
 }
 
 // ── RdpClient ─────────────────────────────────────────────────────────────────
@@ -846,6 +849,22 @@ async fn active_session(
                             warn!("Clipboard event received, but Cliprdr is not available");
                             Vec::new()
                         }
+                    }
+                    RdpInputEvent::SuppressOutput(pause) => {
+                        use ironrdp_pdu::geometry::InclusiveRectangle;
+                        use ironrdp_pdu::rdp::headers::ShareDataPdu;
+                        use ironrdp_pdu::rdp::suppress_output::SuppressOutputPdu;
+                        debug!(pause, "Suppress output");
+                        // Resuming names the whole desktop, which the server then repaints.
+                        let desktop_rect = (!pause).then(|| InclusiveRectangle {
+                            left: 0,
+                            top: 0,
+                            right: image.width().saturating_sub(1),
+                            bottom: image.height().saturating_sub(1),
+                        });
+                        let mut frame = WriteBuf::new();
+                        active_stage.encode_static(&mut frame, ShareDataPdu::SuppressOutput(SuppressOutputPdu { desktop_rect }))?;
+                        vec![ActiveStageOutput::ResponseFrame(frame.into_inner())]
                     }
                     RdpInputEvent::SendDvcMessages { channel_id, messages } => {
                         trace!(channel_id, ?messages, "Send DVC messages");

@@ -1278,6 +1278,9 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
 
     // Task 1: Single-owner VNC RFB stream loop (handles both reads & writes cleanly for TCP and TLS)
     let is_running_clone = is_running.clone();
+    // Hidden tab or pane (#7): no new frames are asked for until the session is shown again.
+    let paused = Arc::new(AtomicBool::new(false));
+    let paused_io = paused.clone();
     let vnc_io_handle = tokio::task::spawn_blocking(move || {
         let _ = stream.set_read_timeout(Some(Duration::from_secs(15)));
         let mut zlib_decompressor = Decompress::new(true);
@@ -1610,10 +1613,12 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
                         }
                     }
 
-                    // Request next incremental frame update
-                    let req = build_fbur_packet(1, 0, 0, info.width, info.height);
-                    let _ = stream.write_all(&req);
-                    let _ = stream.flush();
+                    // Request next incremental frame update (not while the session is hidden)
+                    if !paused_io.load(Ordering::Relaxed) {
+                        let req = build_fbur_packet(1, 0, 0, info.width, info.height);
+                        let _ = stream.write_all(&req);
+                        let _ = stream.flush();
+                    }
                 }
                 1 => {
                     // SetColourMapEntries: [padding: u8, first_color: u16, num_colors: u16, rgb: num_colors * 6]
@@ -1760,6 +1765,16 @@ pub async fn handle_vnc_session(mut socket: WebSocket, params: VncConnectionPara
                                                     pkt.extend_from_slice(&rw.to_be_bytes());
                                                     pkt.extend_from_slice(&rh.to_be_bytes());
                                                     let _ = vnc_write_tx.send(pkt);
+                                                }
+                                            }
+                                            "visibility" => {
+                                                if let Some(visible) = val.get("visible").and_then(|v| v.as_bool()) {
+                                                    let was_paused = paused.swap(!visible, Ordering::Relaxed);
+                                                    if visible && was_paused {
+                                                        // Shown again: one full frame restarts the update cycle.
+                                                        let fbur = build_fbur_packet(0, 0, 0, info.width, info.height);
+                                                        let _ = vnc_write_tx.send(fbur.to_vec());
+                                                    }
                                                 }
                                             }
                                             "refresh" => {
