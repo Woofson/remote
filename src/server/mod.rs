@@ -37,6 +37,7 @@ mod branding;
 mod email;
 mod proxy;
 mod security;
+mod share;
 
 pub use proxy::strip_base_path;
 use proxy::ClientIp;
@@ -59,6 +60,8 @@ pub struct AppState {
     pub sessions: Arc<SessionTracker>,
     /// Brake on repeated failed sign-in attempts.
     pub limiter: Arc<LoginLimiter>,
+    /// Open share links of live sessions (#32).
+    pub shares: Arc<crate::protocols::hub::ShareRegistry>,
 }
 
 /// Database key of the admin session policy.
@@ -180,6 +183,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/connections/:id/scope", post(api_set_connection_scope))
         // WebSocket Remote Gateway Tunnel
         .route("/ws/tunnel/:connection_id", get(ws_tunnel_handler))
+        .route("/ws/share/:token", get(share::ws_share_handler))
+        .route("/api/shares/:token", get(share::api_share_info))
         // Static Frontend Files
         .fallback(static_file_handler)
         .layer(TraceLayer::new_for_http())
@@ -2451,7 +2456,51 @@ pub async fn ws_tunnel_handler(
         .private_key_enc
         .and_then(|k| decrypt_secret(&k, &cfg.server.jwt_secret).ok());
 
-    Ok(ws.on_upgrade(move |mut socket| async move {
+    // Every session runs behind a relay that can share it with others (#32).
+    let hub_cfg = {
+        let db = state.db.clone();
+        let (owner_id, owner_login) = (user.id.clone(), user.username.clone());
+        let (conn_id, conn_name) = (conn_rec.id.clone(), conn_rec.name.clone());
+        let ip_text = ip.as_opt().map(str::to_string);
+        crate::protocols::hub::HubConfig {
+            owner_name: user.display_name.clone().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| user.username.clone()),
+            conn_name: conn_rec.name.clone(),
+            conn_icon: conn_rec.icon.clone(),
+            protocol: conn_rec.protocol.clone(),
+            kind: if matches!(conn_rec.protocol.as_str(), "rdp" | "vnc") {
+                crate::protocols::hub::SessionKind::Graphics
+            } else {
+                crate::protocols::hub::SessionKind::Terminal
+            },
+            cols,
+            rows,
+            guest_clipboard: conn_perms.can_clipboard && matches!(conn_rec.allow_clipboard.as_str(), "bidirectional" | "host_to_remote"),
+            can_share: true,
+            can_share_control: true,
+            on_event: Box::new(move |ev| {
+                use crate::protocols::hub::ShareEvent;
+                let (who_id, who, action, details) = match ev {
+                    ShareEvent::Created { mode, minutes } => (
+                        owner_id.clone(),
+                        owner_login.clone(),
+                        "SHARE_CREATED",
+                        format!("{} link, {}", mode.as_str(), minutes.map(|m| format!("{m} minutes")).unwrap_or_else(|| "until the session ends".into())),
+                    ),
+                    ShareEvent::Revoked => (owner_id.clone(), owner_login.clone(), "SHARE_REVOKED", "link cancelled".into()),
+                    ShareEvent::Joined { guest_id, guest_name, mode } => {
+                        (guest_id, guest_name, "SHARE_JOINED", format!("joined {owner_login}'s session ({})", mode.as_str()))
+                    }
+                    ShareEvent::Left { guest_id, guest_name } => (guest_id, guest_name, "SHARE_LEFT", format!("left {owner_login}'s session")),
+                    ShareEvent::Removed { guest_name } => (owner_id.clone(), owner_login.clone(), "SHARE_REMOVED", format!("removed {guest_name}")),
+                };
+                db.log_audit(Some(&who_id), &who, action, Some(&conn_id), Some(&conn_name), Some(&details), ip_text.as_deref());
+            }),
+        }
+    };
+    let shares = state.shares.clone();
+
+    Ok(ws.on_upgrade(move |socket| async move {
+        let mut socket = crate::protocols::hub::start(socket, hub_cfg, shares);
         match conn_rec.protocol.as_str() {
             "local_pty" => {
                 let shell = serde_json::from_str::<Value>(&conn_rec.settings_json)

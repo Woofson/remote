@@ -1,4 +1,5 @@
-use axum::extract::ws::{Message, WebSocket};
+use super::hub::HubSocket as WebSocket;
+use axum::extract::ws::Message;
 use futures_util::{SinkExt, StreamExt};
 use super::rdp_client::config::{ClipboardType, ConfigBuilder, Destination};
 use super::rdp_client::rdp::{RdpClient, RdpInputEvent, RdpOutputEvent};
@@ -835,6 +836,9 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                                     physical_size: None,
                                 });
                             }
+                        } else if msg_type == Some("refresh") {
+                            // A viewer joined a shared session (#32): redraw everything once.
+                            let _ = input_sender_rx.send(RdpInputEvent::RefreshScreen);
                         } else if msg_type == Some("visibility") {
                             // Hidden tab or pane (#7): Windows stops sending screen updates until shown.
                             if let Some(visible) = val.get("visible").and_then(|v| v.as_bool()) {

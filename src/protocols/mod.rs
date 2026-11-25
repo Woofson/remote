@@ -1,3 +1,4 @@
+pub mod hub;
 pub mod local_pty;
 pub mod net;
 pub mod ssh;

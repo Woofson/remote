@@ -37,6 +37,7 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 **Workspace**
 - One to four panes (single, side by side, stacked, triple, 2x2), picked from the layout menu or with `Alt+1` to `Alt+4`. Your last layout is remembered.
 - Tabs: several sessions in one pane. Opening a connection into a busy pane adds a tab, and sessions in hidden tabs keep running. Drag tabs to reorder them or onto another pane to move the live session there. Your tabs are remembered on your account and come back unconnected; each connects when you open it. Remote desktops in hidden tabs or panes pause their screen updates to save bandwidth.
+- Session sharing: share a live session through a link, watch only or with control; viewers sign in with their own Remote login.
 - Floating windows: pop any session out of the grid into a window you can move, resize, minimise and maximise, and dock it back into a pane. Windows are remembered on your account.
 - Direct links to saved connections (Copy link in the connection list) for bookmarks and desktop shortcuts.
 - Full window mode (`F10` or `Alt+W`), full screen per pane, and a lock screen that keeps your sessions running.

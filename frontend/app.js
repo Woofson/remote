@@ -234,6 +234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
   captureConnectLink();
+  captureShareLink();
   await checkAuth();
 });
 
@@ -391,7 +392,7 @@ function onAuthenticated() {
     modal.style.display = 'none';
   }
   updateHeaderProfile();
-  Promise.all([loadConnections(), prefsLoaded]).then(restoreRememberedTabs).then(openPendingConnection);
+  Promise.all([loadConnections(), prefsLoaded]).then(restoreRememberedTabs).then(openPendingConnection).then(openPendingShare);
   if (sessionStorage.getItem('remote_session_locked') === 'true') {
     lockSession();
   } else {
@@ -764,6 +765,7 @@ async function submitUnlockSession() {
       showToast('Session unlocked', 'success');
       if (sessionStorage.getItem(PENDING_CONNECT_KEY)) {
         openPendingConnection();
+        openPendingShare();
         return;
       }
 
@@ -1925,6 +1927,10 @@ function openPendingConnection() {
 
 // A link opened in a tab where Remote is already running only changes the "#" part.
 window.addEventListener('hashchange', () => {
+  if (captureShareLink()) {
+    if (state.currentUser) openPendingShare();
+    return;
+  }
   if (!captureConnectLink() || !state.currentUser) return;
   loadConnections().then(openPendingConnection);
 });
@@ -1936,7 +1942,9 @@ window.addEventListener('hashchange', () => {
  * closed by accident. With `opts.session` (reconnect) it reuses that exact tab.
  */
 function connectToTarget(connectionId, opts = {}) {
-  const conn = state.connections.find(c => c.id === connectionId);
+  // A shared session (#32) brings its own connection object; a reconnect reuses the tab's.
+  const prevConn = opts.session && (opts.session.conn || opts.session.lastConn);
+  const conn = opts.conn || (prevConn && prevConn.id === connectionId ? prevConn : null) || state.connections.find(c => c.id === connectionId);
   if (!conn) return;
 
   // New sessions go into the grid; with a floating window selected, into the last used pane.
@@ -1972,6 +1980,8 @@ function connectToTarget(connectionId, opts = {}) {
   pane.type = conn.protocol;
   pane.lastError = null;
   pane.endReason = null;
+  pane.sessionId = null;
+  pane.share = null;
   pane.statsColor = '';
   pane.status = 'connecting';
   statsEl.textContent = 'Connecting...';
@@ -1986,7 +1996,9 @@ function connectToTarget(connectionId, opts = {}) {
   // Relative to the page, so it also works under a sub-path behind a proxy.
   const wsBase = new URL('ws/tunnel/', location.href);
   wsBase.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsBase.href}${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}${conn.protocol === 'rdp' ? `&kbd=${encodeURIComponent(effectivePaneKbdLayout(paneIndex))}` : ''}`;
+  const wsUrl = conn.shareToken
+    ? `${new URL(`ws/share/${encodeURIComponent(conn.shareToken)}`, wsBase.href.replace(/ws\/tunnel\/$/, '')).href}?token=${encodeURIComponent(state.jwtToken)}`
+    : `${wsBase.href}${conn.id}?token=${encodeURIComponent(state.jwtToken)}&width=${initW}&height=${initH}&cols=${cols}&rows=${rows}${conn.protocol === 'rdp' ? `&kbd=${encodeURIComponent(effectivePaneKbdLayout(paneIndex))}` : ''}`;
 
   const ws = new WebSocket(wsUrl);
   ws.binaryType = 'arraybuffer';
@@ -2022,6 +2034,8 @@ function connectToTarget(connectionId, opts = {}) {
     // Dropped by the network or a proxy (not closed by either side) after the desktop was up:
     // reconnect a few times on its own; Windows and VNC keep the desktop running meanwhile.
     const dropped = ev && ev.code === 1006 && pane.socket === ws && ws.openedAt && Date.now() - ws.openedAt > 10000;
+    // Closed by the session relay (#32): the share ended, was cancelled, or the owner removed us.
+    if (ev && ev.code === 4000 && ev.reason) pane.endReason = ev.reason;
     const retry = dropped && !pane.endReason && (conn.protocol === 'rdp' || conn.protocol === 'vnc') && (pane.autoReconnects || 0) < 3;
     if (pane.authPending) {
       pane.authPending = false;
@@ -2054,7 +2068,7 @@ function connectToTarget(connectionId, opts = {}) {
     const errBanner = pane.lastError
       ? `<div style="max-width: 480px; margin-top: 6px; padding: 8px 12px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; color: #fca5a5; font-size: 11px; line-height: 1.4; font-family: var(--font-mono, monospace); word-break: break-word;">${escapeHtml(pane.lastError)}</div>`
       : pane.endReason
-        ? `<div class="session-end-note">Ended by the remote computer (${escapeHtml(pane.endReason)}).</div>`
+        ? `<div class="session-end-note">${conn.shareToken ? escapeHtml(pane.endReason) : `Ended by the remote computer (${escapeHtml(pane.endReason)}).`}</div>`
         : '';
 
     // Display a clean Reconnect banner
@@ -2065,7 +2079,7 @@ function connectToTarget(connectionId, opts = {}) {
         </div>
         <div style="display: flex; flex-direction: column; align-items: center;">
           <h3 style="margin: 0 0 4px 0; font-size: 14px; font-weight: 700; color: var(--woofson-text);">Session Disconnected</h3>
-          <p style="margin: 0; font-size: 11px; color: var(--woofson-text-muted);">Disconnected from <strong style="color: var(--woofson-accent);">${escapeHtml(conn.name)}</strong> (${escapeHtml(conn.host)}:${conn.port})</p>
+          <p style="margin: 0; font-size: 11px; color: var(--woofson-text-muted);">Disconnected from <strong style="color: var(--woofson-accent);">${escapeHtml(conn.name)}</strong>${conn.shareToken ? '' : ` (${escapeHtml(conn.host)}:${conn.port})`}</p>
           ${errBanner}
         </div>
         <div style="display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-top: 4px;">
@@ -2158,10 +2172,11 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     convertEol: false,
   });
 
-  // Fit Addon
+  // Fit Addon (not for viewers of a shared terminal: the owner's size is used, #32)
+  const sharedView = !!(pane.conn && pane.conn.shareToken);
   const FitAddonClass = (window.FitAddon && window.FitAddon.FitAddon) || window.FitAddon;
   let fitAddon = null;
-  if (FitAddonClass) {
+  if (FitAddonClass && !sharedView) {
     fitAddon = new FitAddonClass();
     term.loadAddon(fitAddon);
   }
@@ -2190,7 +2205,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
   let lastSentCols = 0;
   let lastSentRows = 0;
   function sendTerminalResize(cols, rows) {
-    if (ws.readyState !== WebSocket.OPEN) return;
+    if (ws.readyState !== WebSocket.OPEN || sharedView) return;
     if (cols === lastSentCols && rows === lastSentRows) return;
     lastSentCols = cols;
     lastSentRows = rows;
@@ -2206,6 +2221,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
+        if (handleSessionMeta(pane, msg, term)) return;
         if (msg.type === 'error') {
           pane.lastError = msg.message;
           term.write(`\r\n\x1b[31m[Remote Error]: ${msg.message}\x1b[0m\r\n`);
@@ -2344,6 +2360,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
   const resizeObserver = new ResizeObserver((entries) => {
     if (ws.readyState !== WebSocket.OPEN) return;
     if (pane.conn && pane.conn.protocol !== 'rdp' && pane.conn.protocol !== 'vnc') return;
+    if (pane.conn && pane.conn.shareToken) return; // only the owner sizes a shared desktop (#32)
 
     for (const entry of entries) {
       const cr = entry.contentRect;
@@ -2419,6 +2436,7 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
+        if (handleSessionMeta(pane, msg)) return;
         if (msg.type === 'init') {
           if (gotFrame && canvas.width && canvas.height) {
             // New size after a resize: keep the old picture, stretched and dimmed, until the
@@ -2868,6 +2886,9 @@ function teardownSession(pane) {
     pane.stopVisibilityWatch = null;
   }
   pane.paused = false;
+  pane.sessionId = null;
+  pane.share = null;
+  if (document.getElementById('pane-share-dropdown')?.dataset.tab === String(pane.tabId)) document.getElementById('pane-share-dropdown').remove();
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
     pane.resizeObserver = null;
@@ -3072,8 +3093,9 @@ function renderPaneHeader(paneIndex) {
   const conn = sess.conn;
   if (titleEl) {
     if (conn) {
-      const viewOnlyTag = conn.view_only
-        ? ` <span style="font-size: 9px; padding: 2px 5px; background: rgba(245,158,11,0.2); border: 1px solid rgba(245,158,11,0.4); color: var(--woofson-accent); border-radius: 3px; font-weight: 700; margin-left: 6px;">VIEW-ONLY</span>`
+      const tagText = conn.shareToken ? `SHARED BY ${conn.sharedBy || ''}${conn.view_only ? ' · VIEW ONLY' : ''}` : conn.view_only ? 'VIEW-ONLY' : '';
+      const viewOnlyTag = tagText
+        ? ` <span class="pane-title-tag">${escapeHtml(tagText)}</span>`
         : '';
       titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${viewOnlyTag}`;
     } else if (sess.parked && sess.lastConn) {
@@ -3087,6 +3109,7 @@ function renderPaneHeader(paneIndex) {
     protoEl.textContent = conn ? (PROTOCOL_LABELS[conn.protocol] || conn.protocol.toUpperCase()) : '';
     protoEl.style.display = conn ? 'inline-block' : 'none';
   }
+  updateShareButton(sess);
   const floatBtn = document.getElementById(`pane-${paneIndex}-float-btn`);
   if (floatBtn) floatBtn.style.display = (conn || sess.parked) && floatsAllowed() ? '' : 'none';
   renderPaneTabs(paneIndex);
@@ -3211,7 +3234,7 @@ function scheduleTabsSave() {
     if (!state.tabsReady || !state.currentUser) return;
     const snap = {};
     for (let i = 1; i <= 4; i++) {
-      const list = state.paneTabs[i].filter(t => t.conn || (t.parked && t.lastConn)).slice(0, MAX_SAVED_TABS);
+      const list = state.paneTabs[i].filter(t => (t.conn || (t.parked && t.lastConn)) && !(t.conn || t.lastConn).shareToken).slice(0, MAX_SAVED_TABS);
       if (!list.length) continue;
       snap[i] = { ids: list.map(t => (t.conn || t.lastConn).id), active: Math.max(0, list.indexOf(state.panes[i])) };
     }
@@ -3283,6 +3306,237 @@ function attachToPane(sess, toPane, toIndex) {
   document.getElementById(`pane-${toPane}-body`).appendChild(sess.el);
   dst.splice(Math.max(0, Math.min(toIndex == null ? dst.length : toIndex, dst.length)), 0, sess);
   switchTab(sess.tabId);
+}
+
+// ================= Sharing a live session (#32) =================
+// The server runs every session behind a relay. The owner creates links over the session's
+// own connection; viewers open the link (signed in) and join the same live session.
+const PENDING_SHARE_KEY = 'remote_pending_share';
+const SHARE_HASH_RE = /^#share=([A-Za-z0-9_-]{16,64})$/;
+const SHARE_ICON = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98"/><path d="m15.41 6.51-6.82 3.98"/></svg>';
+const SHARE_DURATIONS = [[15, '15 minutes'], [60, '1 hour'], [480, '8 hours'], [0, 'Until the session ends']];
+
+function captureShareLink() {
+  const m = SHARE_HASH_RE.exec(location.hash);
+  if (!m) return false;
+  sessionStorage.setItem(PENDING_SHARE_KEY, m[1]);
+  history.replaceState(null, '', location.pathname + location.search);
+  return true;
+}
+
+/** Open a share link once signed in and unlocked. */
+async function openPendingShare() {
+  const token = sessionStorage.getItem(PENDING_SHARE_KEY);
+  if (!token || !state.currentUser || sessionStorage.getItem('remote_session_locked') === 'true') return;
+  sessionStorage.removeItem(PENDING_SHARE_KEY);
+  try {
+    const res = await apiFetch(`api/shares/${encodeURIComponent(token)}`);
+    if (!res.ok) {
+      showToast(await readError(res, 'This share link cannot be opened'), 'warning');
+      return;
+    }
+    openSharedSession(token, await res.json());
+  } catch (e) {
+    showToast('This share link cannot be opened', 'warning');
+  }
+}
+
+/** A shared session opens as a tab, like a connection, with its own connection object. */
+function openSharedSession(token, info) {
+  const control = info.mode === 'control';
+  const conn = {
+    id: `share:${token}`,
+    shareToken: token,
+    name: info.connection,
+    sharedBy: info.owner,
+    protocol: info.protocol,
+    icon: info.icon,
+    host: info.owner,
+    port: '',
+    view_only: !control,
+    allow_clipboard: control ? 'host_to_remote' : 'disabled',
+    allow_transfer: 'disabled',
+    user_permissions: { can_connect: true, can_clipboard: control, can_transfer: false },
+  };
+  const target = connectTargetPane();
+  activatePane(target);
+  connectToTarget(conn.id, { conn });
+  showToast(control ? `You can see and control ${info.owner}'s session` : `You are watching ${info.owner}'s session (view only)`);
+}
+
+/** Session relay messages shared by terminals and remote desktops. True when handled. */
+function handleSessionMeta(pane, msg, term) {
+  switch (msg.type) {
+    case 'session':
+      pane.sessionId = msg.id;
+      pane.canShare = !!msg.can_share;
+      pane.canShareControl = !!msg.can_share_control;
+      pane.share = { links: [], viewers: [] };
+      updateShareButton(pane);
+      return true;
+    case 'share_state':
+      if (pane.copyNextLink && msg.links && msg.links.length > ((pane.share && pane.share.links.length) || 0)) {
+        pane.copyNextLink = false;
+        copyShareLink(msg.links[msg.links.length - 1].token);
+      }
+      pane.share = { links: msg.links || [], viewers: msg.viewers || [] };
+      updateShareButton(pane);
+      renderShareMenu(pane);
+      return true;
+    case 'share_error':
+      showToast(msg.message || 'Could not share this session', 'warning');
+      return true;
+    case 'shared':
+      pane.sharedInfo = msg;
+      return true;
+    case 'term_size':
+      if (term && pane.conn && pane.conn.shareToken) {
+        try { term.resize(msg.cols, msg.rows); } catch (e) {}
+      }
+      return true;
+    case 'term_reset':
+      if (term) term.reset();
+      return true;
+    default:
+      return false;
+  }
+}
+
+/** The share button: shown for your own live sessions; shows how many are watching. */
+function updateShareButton(sess) {
+  if (!sess || state.panes[sess.id] !== sess) return;
+  const btn = document.getElementById(`pane-${sess.id}-share-btn`);
+  if (!btn) return;
+  const show = !!(sess.sessionId && sess.socket && sess.canShare && sess.conn && !sess.conn.shareToken);
+  btn.style.display = show ? '' : 'none';
+  const viewers = (sess.share && sess.share.viewers.length) || 0;
+  const links = (sess.share && sess.share.links.length) || 0;
+  btn.classList.toggle('sharing', links > 0 || viewers > 0);
+  const count = btn.querySelector('.share-count');
+  if (count) count.textContent = viewers ? String(viewers) : '';
+  btn.title = viewers ? `Shared: ${viewers} watching. Click to manage` : links ? 'Shared: link open, nobody watching yet' : 'Share this session';
+}
+
+function shareLinkUrl(token) {
+  return `${location.origin}${location.pathname}#share=${token}`;
+}
+
+function shareExpiryText(link) {
+  if (!link.expires_at) return 'until the session ends';
+  const mins = Math.max(0, Math.round((link.expires_at * 1000 - Date.now()) / 60000));
+  return mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min left` : `${mins} min left`;
+}
+
+/** The share menu on a pane or window header. */
+function openShareMenu(e, paneIndex) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  paneIndex = paneKey(paneIndex);
+  const sess = state.panes[paneIndex];
+  const existing = document.getElementById('pane-share-dropdown');
+  if (existing) {
+    existing.remove();
+    if (existing.dataset.tab === String(sess && sess.tabId)) return;
+  }
+  if (!sess || !sess.sessionId) return;
+  const popup = document.createElement('div');
+  popup.id = 'pane-share-dropdown';
+  popup.className = 'pane-settings-dropdown share-menu';
+  popup.dataset.tab = String(sess.tabId);
+  document.body.appendChild(popup);
+  renderShareMenu(sess);
+  const btn = document.getElementById(`pane-${paneIndex}-share-btn`);
+  const r = btn ? btn.getBoundingClientRect() : { bottom: 80, left: 80 };
+  popup.style.position = 'fixed';
+  popup.style.top = `${r.bottom + 4}px`;
+  popup.style.left = `${Math.min(window.innerWidth - 330, Math.max(10, r.left - 240))}px`;
+  popup.style.width = '320px';
+  popup.style.zIndex = '2000';
+  const closeHandler = (evt) => {
+    if (!document.body.contains(popup)) {
+      document.removeEventListener('pointerdown', closeHandler, true);
+    } else if (!popup.contains(evt.target) && !(btn && btn.contains(evt.target))) {
+      popup.remove();
+      document.removeEventListener('pointerdown', closeHandler, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', closeHandler, true), 0);
+}
+
+function renderShareMenu(sess) {
+  const popup = document.getElementById('pane-share-dropdown');
+  if (!popup || popup.dataset.tab !== String(sess.tabId)) return;
+  const share = sess.share || { links: [], viewers: [] };
+  const mode = popup.dataset.mode || 'view';
+  const minutes = popup.dataset.minutes || '60';
+  popup.innerHTML = `
+    <div class="dock-menu-title">Share this session</div>
+    <div class="share-menu-body">
+      <div class="share-menu-row">
+        <label>Others can</label>
+        <select class="form-input" data-share-field="mode">
+          <option value="view" ${mode === 'view' ? 'selected' : ''}>Watch only</option>
+          ${sess.canShareControl ? `<option value="control" ${mode === 'control' ? 'selected' : ''}>Watch and control</option>` : ''}
+        </select>
+      </div>
+      <div class="share-menu-row">
+        <label>Link works for</label>
+        <select class="form-input" data-share-field="minutes">
+          ${SHARE_DURATIONS.map(([m, t]) => `<option value="${m}" ${String(m) === minutes ? 'selected' : ''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <button type="button" class="btn btn-primary btn-sm" data-share-action="create">Create link</button>
+      <p class="share-menu-note">People need their own Remote login to open the link. Sharing ends when you close this session.</p>
+      ${share.links.length ? `<div class="share-menu-section">Open links</div>` : ''}
+      ${share.links.map((l) => `
+        <div class="share-menu-item">
+          <div class="share-menu-item-text"><strong>${l.mode === 'control' ? 'Watch and control' : 'Watch only'}</strong><span>${escapeHtml(shareExpiryText(l))}</span></div>
+          <button type="button" class="btn btn-sm" data-share-action="copy" data-token="${escapeHtml(l.token)}">Copy</button>
+          <button type="button" class="btn btn-sm" data-share-action="revoke" data-link="${escapeHtml(l.id)}" title="Cancel this link and disconnect the people who joined with it">Cancel</button>
+        </div>`).join('')}
+      <div class="share-menu-section">Watching now</div>
+      ${share.viewers.length ? share.viewers.map((v) => `
+        <div class="share-menu-item">
+          <div class="share-menu-item-text"><strong>${escapeHtml(v.name)}</strong><span>${v.mode === 'control' ? 'can control' : 'watching'}</span></div>
+          <button type="button" class="btn btn-sm" data-share-action="kick" data-viewer="${v.id}">Remove</button>
+        </div>`).join('') : '<p class="share-menu-note">Nobody yet.</p>'}
+    </div>`;
+  popup.querySelectorAll('[data-share-field]').forEach((el) => {
+    el.addEventListener('change', () => { popup.dataset[el.dataset.shareField] = el.value; });
+  });
+  popup.querySelectorAll('[data-share-action]').forEach((el) => {
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      shareMenuAction(sess, el.dataset.shareAction, el.dataset);
+    });
+  });
+}
+
+function shareMenuAction(sess, action, data) {
+  const ws = sess.socket;
+  const send = (obj) => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
+  const popup = document.getElementById('pane-share-dropdown');
+  if (action === 'create') {
+    const mode = (popup && popup.dataset.mode) || 'view';
+    const minutes = parseInt((popup && popup.dataset.minutes) || '60', 10);
+    sess.copyNextLink = true;
+    send({ type: 'share_create', mode, minutes });
+  } else if (action === 'copy') {
+    copyShareLink(data.token);
+  } else if (action === 'revoke') {
+    send({ type: 'share_revoke', link: data.link });
+  } else if (action === 'kick') {
+    send({ type: 'share_kick', viewer: parseInt(data.viewer, 10) });
+  }
+}
+
+function copyShareLink(token) {
+  const url = shareLinkUrl(token);
+  const done = () => showToast('Share link copied');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(url).then(done).catch(() => uiPrompt('Copy this link:', { title: 'Share link', value: url, okText: 'Done' }));
+  } else {
+    uiPrompt('Copy this link:', { title: 'Share link', value: url, okText: 'Done' });
+  }
 }
 
 // ================= Floating session windows (#8) =================
@@ -3358,6 +3612,7 @@ function openFloatWindow(sess, geom = null) {
       <span class="pane-fps-pill" id="pane-${key}-stats" style="display:none;"></span>
       <button class="pane-btn pane-audio-btn" id="pane-${key}-audio-btn" title="Mute sound" onclick="togglePaneAudio('${key}')" style="display:none;"></button>
       <button class="pane-btn float-kbd-btn" id="pane-${key}-kbd-btn" onclick="openPaneKbdMenu(event, '${key}')" style="display:none;"><span id="pane-${key}-kbd-label"></span></button>
+      <button class="pane-btn pane-share-btn" id="pane-${key}-share-btn" title="Share this session" onclick="openShareMenu(event, '${key}')" style="display:none;">${SHARE_ICON}<span class="share-count"></span></button>
       <button class="pane-btn" title="Dock into a pane" onclick="openDockMenu(event, '${key}')">${FLOAT_ICONS.dock}</button>
       <button class="pane-btn" title="Minimise" onclick="minimizeFloat('${key}')">${FLOAT_ICONS.min}</button>
       <button class="pane-btn float-max-btn" title="Maximise" onclick="toggleFloatMax('${key}')">${FLOAT_ICONS.max}</button>
@@ -3608,7 +3863,7 @@ function floatSnapshot() {
   return floatKeys().map((k) => {
     const t = state.panes[k];
     const c = t && (t.conn || (t.parked && t.lastConn));
-    if (!c || !t.float) return null;
+    if (!c || !t.float || c.shareToken) return null;
     const f = t.float;
     return { id: c.id, x: Math.round(f.x), y: Math.round(f.y), w: Math.round(f.w), h: Math.round(f.h), min: !!f.minimized, max: !!f.maximized };
   }).filter(Boolean).slice(0, MAX_FLOATS);

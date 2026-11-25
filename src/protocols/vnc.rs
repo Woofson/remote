@@ -1,4 +1,5 @@
-use axum::extract::ws::{Message, WebSocket};
+use super::hub::HubSocket as WebSocket;
+use axum::extract::ws::Message;
 use flate2::{Decompress, FlushDecompress};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;

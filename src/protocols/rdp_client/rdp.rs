@@ -86,6 +86,9 @@ pub enum RdpInputEvent {
     /// Remote addition: stop (`true`) or resume (`false`) screen updates while the session
     /// is not visible (Suppress Output PDU, MS-RDPBCGR 2.2.11.3). Sound and input continue.
     SuppressOutput(bool),
+    /// Remote addition: ask the server to redraw the whole screen (Refresh Rect PDU), for a
+    /// viewer who joins a shared session (#32).
+    RefreshScreen,
 }
 
 // ── RdpClient ─────────────────────────────────────────────────────────────────
@@ -864,6 +867,20 @@ async fn active_session(
                         });
                         let mut frame = WriteBuf::new();
                         active_stage.encode_static(&mut frame, ShareDataPdu::SuppressOutput(SuppressOutputPdu { desktop_rect }))?;
+                        vec![ActiveStageOutput::ResponseFrame(frame.into_inner())]
+                    }
+                    RdpInputEvent::RefreshScreen => {
+                        use ironrdp_pdu::geometry::InclusiveRectangle;
+                        use ironrdp_pdu::rdp::headers::ShareDataPdu;
+                        use ironrdp_pdu::rdp::refresh_rectangle::RefreshRectanglePdu;
+                        let rect = InclusiveRectangle {
+                            left: 0,
+                            top: 0,
+                            right: image.width().saturating_sub(1),
+                            bottom: image.height().saturating_sub(1),
+                        };
+                        let mut frame = WriteBuf::new();
+                        active_stage.encode_static(&mut frame, ShareDataPdu::RefreshRectangle(RefreshRectanglePdu { areas_to_refresh: vec![rect] }))?;
                         vec![ActiveStageOutput::ResponseFrame(frame.into_inner())]
                     }
                     RdpInputEvent::SendDvcMessages { channel_id, messages } => {

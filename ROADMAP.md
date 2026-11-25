@@ -1,6 +1,6 @@
 # Roadmap
 
-Remote aims to be a modern replacement for Apache Guacamole: lightweight, fast and secure. Many terminals and remote desktops can be open at once, arranged in panes, in tabs, or as floating windows.
+Remote aims to be the go-to replacement for Apache Guacamole for 2027 to 2037 and beyond: lightweight, fast and secure, one small program instead of a Java stack. Many terminals and remote desktops can be open at once, arranged in panes, in tabs, or as floating windows.
 
 Longer term, Remote grows into a small-scale VDI for around 10 users: each user gets one or more Proxmox VMs, first as whole desktops, later as individual apps from different platforms in one place.
 
@@ -35,7 +35,19 @@ Day-to-day planning lives in [GitHub Issues](https://github.com/Woofson/remote/i
 
 ---
 
-## Next: VDI
+## Next: Matching Guacamole
+
+What Guacamole offers and Remote does not have yet, in the planned order:
+
+1. **Live session sharing**: share a running session through a link, view-only or with control ([#32](https://github.com/Woofson/remote/issues/32)).
+2. **Touch use on phones and tablets**: touchpad mode, on-screen keyboard and a bar with Esc, Ctrl, Alt, Win and arrows ([#33](https://github.com/Woofson/remote/issues/33)).
+3. **Wake-on-LAN** before connecting ([#35](https://github.com/Woofson/remote/issues/35)).
+4. **Session recording** with in-browser playback ([#31](https://github.com/Woofson/remote/issues/31)).
+5. **LDAP / Active Directory sign-in** ([#34](https://github.com/Woofson/remote/issues/34)).
+6. **RDP extras**: printing to PDF in the browser ([#36](https://github.com/Woofson/remote/issues/36)), microphone ([#37](https://github.com/Woofson/remote/issues/37)), Remote Desktop Gateway ([#38](https://github.com/Woofson/remote/issues/38)).
+7. **Connection groups with load balancing** ([#39](https://github.com/Woofson/remote/issues/39)), together with the VDI work below.
+
+## Then: VDI
 
 1. **Proxmox VM integration**: assign one or more VMs per user, show power state, start on connect, optional shutdown when idle ([#9](https://github.com/Woofson/remote/issues/9)).
 2. **Launcher page**: desktops and apps as tiles, following existing permissions ([#10](https://github.com/Woofson/remote/issues/10)).
@@ -49,5 +61,4 @@ Builds on tabs (#7) and floating windows (#8).
 - **Session limits**: maximum concurrent sessions per user or connection, time-of-day access windows.
 - **Richer audit log**: session duration, client IP, disconnect reason, clipboard and file transfer records.
 - **Accounts**: passkeys and hardware keys.
-- **Session recording**: terminal recordings and RDP/VNC capture with an in-browser player.
 - **High availability**: multiple gateway nodes sharing one database.

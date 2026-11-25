@@ -3771,3 +3771,56 @@ body.float-dragging .float-body { pointer-events: none; }
   animation: pane-sync-spin 0.9s linear infinite;
 }
 @keyframes pane-sync-spin { to { transform: rotate(360deg); } }
+
+/* ==========================================================================
+   SHARING A LIVE SESSION (#32)
+   ========================================================================== */
+.pane-share-btn { position: relative; }
+.pane-share-btn.sharing { color: var(--woofson-accent) !important; border-color: var(--woofson-accent) !important; }
+.pane-share-btn .share-count:empty { display: none; }
+.pane-share-btn .share-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--woofson-accent);
+  color: #111;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+}
+.share-menu-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.share-menu-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.share-menu-row label { font-size: 11px; font-weight: 600; color: var(--woofson-text-muted); }
+.share-menu-row select { width: 170px; height: 28px; padding: 2px 6px; font-size: 11px; }
+.share-menu-note { margin: 0; font-size: 10px; color: var(--woofson-text-dim); line-height: 1.4; }
+.share-menu-section {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--woofson-border);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--woofson-text-dim);
+}
+.share-menu-item { display: flex; align-items: center; gap: 6px; }
+.share-menu-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.share-menu-item-text strong { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-menu-item-text span { font-size: 10px; color: var(--woofson-text-dim); }
+.pane-title-tag {
+  font-size: 9px;
+  padding: 2px 5px;
+  margin-left: 6px;
+  background: rgba(245, 158, 11, 0.2);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  color: var(--woofson-accent);
+  border-radius: 3px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.pane-conn-name:has(.pane-title-tag) { max-width: 340px; }
