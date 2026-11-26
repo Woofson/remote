@@ -4075,3 +4075,136 @@ body.float-dragging .float-body { pointer-events: none; }
 }
 .rec-busy-bar { width: 100%; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
 .rec-busy-bar div { width: 0; height: 100%; background: var(--woofson-accent, #f59e0b); transition: width 0.2s; }
+
+/* ---------------- Phones and small screens (header and session bar) ----------------
+   Like Brum: up to 768 px the header tools fold into one menu and the profile button shows only
+   the picture; up to 600 px (phones) the brand shows only the logo, the layout switcher goes,
+   and the session bar keeps its main buttons with the rest in a "more" menu. */
+.mobile-only { display: none !important; }
+
+.header-tools-wrapper { position: relative; }
+
+.header-tools-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 200px;
+  display: none;
+  background: var(--woofson-bg-header, #202024);
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+  z-index: 1200;
+  overflow: hidden;
+}
+.header-tools-menu.active { display: block; }
+
+.profile-dropdown-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-tools-menu .dropdown-item,
+.pane-more-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+}
+.header-tools-menu .dropdown-item svg,
+.pane-more-menu .dropdown-item svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--woofson-accent, #f59e0b);
+}
+.pane-more-menu { padding: 4px 0; }
+.pane-more-menu .pane-more-note { margin-left: auto; font-size: 11px; color: var(--woofson-text-dim); }
+
+@media (max-width: 768px) {
+  .desktop-only { display: none !important; }
+  .mobile-only { display: inline-flex !important; }
+
+  .app-header {
+    padding-left: max(10px, env(safe-area-inset-left, 0px));
+    padding-right: max(10px, env(safe-area-inset-right, 0px));
+    gap: 6px;
+  }
+  .header-actions-right { gap: 6px; flex-shrink: 0; }
+
+  /* The new-connection button at about half size */
+  #btn-header-new-conn {
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 5px;
+  }
+  #btn-header-new-conn svg { width: 11px; height: 11px; }
+
+  /* Profile: just the round picture */
+  .profile-btn {
+    padding: 2px !important;
+    background: transparent !important;
+    border: none !important;
+    border-radius: 50% !important;
+  }
+  .profile-avatar-thumb {
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  }
+}
+
+@media (max-width: 600px) {
+  .phone-hidden { display: none !important; }
+
+  /* Header menus open as a panel that fits the screen */
+  .profile-dropdown-menu,
+  .header-tools-menu {
+    position: fixed !important;
+    top: 48px !important;
+    right: 8px !important;
+    left: auto !important;
+    width: calc(100vw - 16px) !important;
+    max-width: 320px !important;
+    max-height: calc(100dvh - 60px) !important;
+    overflow-y: auto !important;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.8) !important;
+    z-index: 2500 !important;
+    border-radius: 10px !important;
+  }
+
+  /* Session bar: the title shrinks, tabs scroll, extra buttons are in the "more" menu */
+  .pane-header .phone-more { display: none !important; }
+  .pane-header-left { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .pane-header-right { flex-shrink: 0; }
+  .pane-conn-name { flex: 0 1 auto; min-width: 0; max-width: none; }
+  .pane-protocol-badge { display: none !important; }
+  .pane-badge-text { max-width: 60px; }
+  /* With several tabs everything stays on one row; the tabs scroll sideways */
+  .remote-pane.has-tabs .pane-header {
+    height: 34px;
+    flex-wrap: nowrap;
+    padding: 0 8px;
+  }
+  .remote-pane.has-tabs .pane-header-left { order: 0; flex: 1 1 auto; }
+  .remote-pane.has-tabs .pane-header-right { order: 0; margin-left: 6px; }
+  .pane-tab { max-width: 130px; }
+
+  /* Pane menus (settings, keyboard, share, more) open below the bars, across the screen */
+  .pane-settings-dropdown {
+    position: fixed !important;
+    top: 84px !important;
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: calc(100dvh - 96px) !important;
+    overflow-y: auto !important;
+    border-radius: 10px !important;
+    z-index: 2500 !important;
+  }
+}

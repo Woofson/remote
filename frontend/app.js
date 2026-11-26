@@ -880,9 +880,79 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeLayoutMenu();
 });
 
+// ---- Phones: header tools menu (connections, clipboard, files, full window, fullscreen) ----
+function toggleHeaderToolsMenu(e) {
+  if (e) e.stopPropagation();
+  closeLayoutMenu();
+  const profile = document.getElementById('profile-dropdown-menu');
+  if (profile) { profile.classList.remove('active'); profile.style.display = 'none'; }
+  const menu = document.getElementById('header-tools-menu');
+  if (!menu) return;
+  const fs = document.getElementById('header-tools-fullscreen');
+  if (fs) fs.style.display = document.fullscreenEnabled ? '' : 'none';
+  menu.classList.toggle('active');
+}
+
+function closeHeaderToolsMenu() {
+  document.getElementById('header-tools-menu')?.classList.remove('active');
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.header-tools-wrapper')) closeHeaderToolsMenu();
+});
+
+const KEYBOARD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>';
+
+/** Phones: the session bar's extra buttons (files, clipboard, scaling, share, keyboard, full
+ *  window, fullscreen) as a list. Each entry presses the hidden button, so it behaves the same. */
+function openPaneMoreMenu(e, paneIndex) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  activatePane(paneIndex);
+  const existing = document.getElementById('pane-more-dropdown');
+  if (existing) {
+    existing.remove();
+    if (existing.dataset.pane === String(paneIndex)) return;
+  }
+  const buttons = [...document.querySelectorAll(`#pane-${paneIndex} .pane-header-right .phone-more`)]
+    .filter((b) => b.style.display !== 'none');
+  if (!buttons.length) return;
+  const popup = document.createElement('div');
+  popup.id = 'pane-more-dropdown';
+  popup.className = 'pane-settings-dropdown pane-more-menu';
+  popup.dataset.pane = String(paneIndex);
+  buttons.forEach((btn) => {
+    const item = document.createElement('div');
+    item.className = 'dropdown-item';
+    const svg = btn.querySelector('svg');
+    const note = btn.id.endsWith('-kbd-btn') ? btn.textContent.trim() : '';
+    item.innerHTML = `${svg ? svg.outerHTML : KEYBOARD_ICON}<span>${escapeHtml(btn.dataset.moreLabel || btn.title)}</span>${note ? `<span class="pane-more-note">${escapeHtml(note)}</span>` : ''}`;
+    item.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      popup.remove();
+      btn.click();
+    });
+    popup.appendChild(item);
+  });
+  document.body.appendChild(popup);
+  const anchor = e && e.currentTarget && e.currentTarget.getBoundingClientRect ? e.currentTarget.getBoundingClientRect() : { bottom: 80, right: 300 };
+  popup.style.top = `${anchor.bottom + 4}px`;
+  popup.style.left = `${Math.max(8, anchor.right - 240)}px`;
+  popup.style.width = '240px';
+  const close = (ev) => {
+    if (!document.body.contains(popup)) {
+      document.removeEventListener('pointerdown', close, true);
+    } else if (!popup.contains(ev.target) && !ev.target.closest(`#pane-${paneIndex} .pane-more-btn`)) {
+      popup.remove();
+      document.removeEventListener('pointerdown', close, true);
+    }
+  };
+  setTimeout(() => document.addEventListener('pointerdown', close, true), 0);
+}
+
 function toggleProfileMenu(e) {
   if (e) e.stopPropagation();
   closeLayoutMenu();
+  closeHeaderToolsMenu();
   const menu = document.getElementById('profile-dropdown-menu');
   if (menu) {
     const isVisible = menu.classList.contains('active') || menu.style.display === 'block';
