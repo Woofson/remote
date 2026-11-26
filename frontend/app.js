@@ -212,6 +212,7 @@ async function apiFetch(url, options = {}) {
 
 // ================= Initialization & Lifecycle =================
 document.addEventListener('DOMContentLoaded', async () => {
+  setupTouchScreen();
   applyCachedTheme();
   loadThemes();
   setupPanels();
@@ -2936,6 +2937,7 @@ function buildKeybar(pane, el, kind, press) {
   const bar = document.createElement('div');
   bar.className = 'touch-keybar';
   bar.innerHTML = `
+    <div class="kb-line">
     <div class="kb-row">
       ${btn('kbd', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>', 'Show or hide the keyboard', 'kb-icon')}
       ${keyBtn('Escape')}${keyBtn('Tab')}
@@ -2947,9 +2949,13 @@ function buildKeybar(pane, el, kind, press) {
       ${kind === 'graphics' ? btn('cad', 'Ctrl+Alt+Del', 'Send Ctrl+Alt+Del') : ''}
       ${kind === 'graphics' ? btn('mode', '', 'Switch between touchpad and touchscreen mode', 'kb-mode') : ''}
     </div>
+    ${btn('tools', '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>', 'Session tools: sound, files, clipboard, full window, tabs, disconnect', 'kb-icon kb-tools')}
+    </div>
     <div class="kb-row kb-more" hidden>${KEYBAR_MORE.map(keyBtn).join('')}</div>`;
   el.appendChild(bar);
   el.classList.add('has-keybar');
+  // The session ends where the key bar starts (one row, or two with Fn open).
+  new ResizeObserver(() => el.style.setProperty('--keybar-h', `${bar.offsetHeight}px`)).observe(bar);
   // Pressing a key must not take focus away from the keyboard input.
   bar.addEventListener('pointerdown', (e) => e.preventDefault());
   bar.addEventListener('mousedown', (e) => e.preventDefault());
@@ -2970,6 +2976,8 @@ function buildKeybar(pane, el, kind, press) {
     const k = b.dataset.k;
     if (k === 'ctrl' || k === 'alt' || k === 'meta') {
       pane.touchMods[k] = !pane.touchMods[k];
+    } else if (k === 'tools') {
+      openSessionToolsMenu(pane, b);
     } else if (k === 'fn') {
       const more = bar.querySelector('.kb-more');
       more.hidden = !more.hidden;
@@ -2980,6 +2988,96 @@ function buildKeybar(pane, el, kind, press) {
     api.updateMods();
   });
   return api;
+}
+
+/**
+ * Touch screens: mark the page, and keep the app inside the part of the screen the on-screen
+ * keyboard leaves free. Browsers that honour `interactive-widget=resizes-content` already
+ * shrink the page; for the others (and Safari) the visual viewport tells the real size.
+ */
+function setupTouchScreen() {
+  if (!isTouchDevice()) return;
+  const root = document.documentElement;
+  root.classList.add('touch-ui');
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const update = () => {
+    root.style.setProperty('--app-height', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--app-top', `${Math.max(0, Math.round(vv.offsetTop))}px`);
+  };
+  vv.addEventListener('resize', update);
+  vv.addEventListener('scroll', update);
+  update();
+}
+
+/**
+ * The key bar's tools button: what the session toolbar offers (sound, microphone, keyboard
+ * layout, files, clipboard, scaling, share, full window, fullscreen), the tabs, and Disconnect.
+ * Each entry presses the toolbar's own button, so it behaves exactly the same.
+ */
+function openSessionToolsMenu(pane, anchor) {
+  const old = document.getElementById('session-tools-menu');
+  if (old) {
+    old.remove();
+    if (old.dataset.tab === String(pane.tabId)) return;
+  }
+  const paneIndex = pane.id;
+  const paneEl = document.getElementById(`pane-${paneIndex}`);
+  if (!paneEl) return;
+  const menu = document.createElement('div');
+  menu.id = 'session-tools-menu';
+  menu.className = 'session-tools-menu';
+  menu.dataset.tab = String(pane.tabId);
+  const close = () => {
+    menu.remove();
+    document.removeEventListener('pointerdown', outside, true);
+  };
+  const outside = (e) => { if (!menu.contains(e.target) && !anchor.contains(e.target)) close(); };
+  const add = (icon, label, run, { note = '', cls = '' } = {}) => {
+    const item = document.createElement('div');
+    item.className = `dropdown-item ${cls}`;
+    item.innerHTML = `${icon || ''}<span>${escapeHtml(label)}</span>${note ? `<span class="stm-note">${escapeHtml(note)}</span>` : ''}`;
+    item.addEventListener('click', (e) => { e.stopPropagation(); close(); run(); });
+    menu.appendChild(item);
+  };
+  const app = document.getElementById('app');
+  const inFullWindow = app && app.classList.contains('full-window-mode');
+  const buttons = [...paneEl.querySelectorAll('.pane-header-right .pane-btn')].filter((b) => b.style.display !== 'none'
+    && !b.classList.contains('pane-more-btn') && !b.classList.contains('pane-bar-hide-btn') && !b.classList.contains('pane-close-btn')
+    && !(b.id && b.id.endsWith('-float-btn')));
+  for (const b of buttons) {
+    let label = b.dataset.moreLabel || b.title || '';
+    if (b.dataset.moreLabel === 'Full window' && inFullWindow) label = 'Exit full window';
+    if (b.dataset.moreLabel === 'Fullscreen') {
+      if (!document.fullscreenEnabled) continue;
+      if (document.fullscreenElement) label = 'Exit fullscreen';
+    }
+    const note = b.id && b.id.endsWith('-kbd-btn') ? b.textContent.trim() : '';
+    const svg = b.querySelector('svg');
+    add(svg ? svg.outerHTML : KEYBOARD_ICON, label, () => b.click(), { note });
+  }
+  const tabs = (state.paneTabs && state.paneTabs[paneIndex]) || [];
+  if (tabs.length > 1) {
+    menu.insertAdjacentHTML('beforeend', '<div class="stm-sep"></div><div class="stm-title">Tabs</div>');
+    for (const t of tabs) {
+      const c = t.conn || t.lastConn;
+      const name = c ? c.name : 'New tab';
+      add('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/></svg>', name,
+        () => selectTab(t.tabId), { note: t === pane ? 'shown' : t.conn ? '' : 'not connected' });
+    }
+  }
+  const closeBtn = paneEl.querySelector('.pane-header-right .pane-close-btn');
+  if (closeBtn) {
+    menu.insertAdjacentHTML('beforeend', '<div class="stm-sep"></div>');
+    add('<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>', 'Disconnect', () => closeBtn.click(), { cls: 'danger' });
+  }
+  document.body.appendChild(menu);
+  // Above the key bar, at its right end.
+  const r = anchor.getBoundingClientRect();
+  const vh = window.visualViewport ? window.visualViewport.height + window.visualViewport.offsetTop : window.innerHeight;
+  menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+  menu.style.bottom = `${Math.max(8, vh - r.top + 6)}px`;
+  setTimeout(() => document.addEventListener('pointerdown', outside, true), 0);
 }
 
 /** Touch gestures, zoom, keyboard and key bar for a remote desktop. */

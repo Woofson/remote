@@ -80,6 +80,15 @@ body.auth-gate #app > *:not(.login-screen-overlay):not(#pw-required):not(#tf-set
   overflow: hidden;
 }
 
+/* Touch screens: the app follows the part of the screen the on-screen keyboard leaves free
+   (set from the visual viewport), so the key bar sits right above the keyboard. */
+html.touch-ui .app-root {
+  position: fixed;
+  left: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-height, 100dvh);
+}
+
 /* Top Application Header (Matches CommanderDog) */
 .app-header {
   background-color: var(--woofson-bg-header, #202024);
@@ -3943,7 +3952,64 @@ body.float-dragging .float-body { pointer-events: none; }
 /* ==========================================================================
    PHONES AND TABLETS (#33): key bar, keyboard input, touchpad pointer
    ========================================================================== */
-.pane-tab-body.has-keybar { padding-bottom: 42px; box-sizing: border-box; }
+.pane-tab-body.has-keybar { padding-bottom: var(--keybar-h, 42px); box-sizing: border-box; }
+
+/* Touch screens in full window / fullscreen: no floating toolbar over the session; its
+   buttons are in the key bar's tools menu instead. */
+html.touch-ui .full-window-mode .remote-pane:has(> .pane-body > .pane-tab-body.has-keybar:not(.hidden)) > .pane-header,
+html.touch-ui .fullscreen-mode .remote-pane:has(> .pane-body > .pane-tab-body.has-keybar:not(.hidden)) > .pane-header,
+html.touch-ui .remote-pane.maximized-pane:has(> .pane-body > .pane-tab-body.has-keybar:not(.hidden)) > .pane-header {
+  display: none !important;
+}
+/* The keys scroll sideways; the tools button stays at the right edge. */
+.kb-line { display: flex; gap: 4px; align-items: center; }
+.kb-line > .kb-row { flex: 1 1 auto; min-width: 0; }
+.kb-key.kb-tools { flex-shrink: 0; border-color: var(--woofson-accent); color: var(--woofson-accent); }
+/* Keys share the width; on phones they are a little narrower so the whole row fits. */
+.kb-line > .kb-row > .kb-key { flex: 1 0 auto; }
+@media (max-width: 599.98px) {
+  .touch-keybar .kb-line, .touch-keybar .kb-line > .kb-row { gap: 3px; }
+  .touch-keybar .kb-key { min-width: 28px; padding: 0 5px; }
+  .touch-keybar .kb-key.kb-icon svg { width: 16px; height: 16px; }
+}
+@media (max-width: 380px) {
+  .touch-keybar .kb-key { min-width: 26px; padding: 0 4px; font-size: 11px; }
+}
+
+.session-tools-menu {
+  position: fixed;
+  z-index: 2600;
+  min-width: 240px;
+  max-width: calc(100vw - 16px);
+  max-height: 65%;
+  overflow-y: auto;
+  padding: 4px 0;
+  background: var(--woofson-bg-header, #202024);
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+  animation: fadeIn 0.12s ease;
+}
+.session-tools-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  font-size: 13px;
+}
+.session-tools-menu .dropdown-item svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--woofson-accent, #f59e0b); }
+.session-tools-menu .dropdown-item.danger,
+.session-tools-menu .dropdown-item.danger svg { color: var(--woofson-danger, #ef4444); }
+.session-tools-menu .stm-note { margin-left: auto; font-size: 11px; color: var(--woofson-text-dim); }
+.session-tools-menu .stm-title {
+  padding: 8px 14px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--woofson-text-dim);
+}
+.session-tools-menu .stm-sep { height: 1px; margin: 4px 0; background: var(--woofson-border); }
 .touch-keybar {
   position: absolute;
   left: 0;
