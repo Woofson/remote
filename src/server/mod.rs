@@ -3007,7 +3007,8 @@ pub async fn static_file_handler(uri: axum::http::Uri) -> Response {
 
     if let Some(file) = FrontendAssets::get(&path) {
         let mime = mime_guess::from_path(&path).first_or_octet_stream();
-        let cache_control = if path.ends_with(".html") || path.ends_with(".js") || path.ends_with(".css") {
+        // The app description (manifest) is checked fresh too, so a new app icon shows up at once.
+        let cache_control = if path.ends_with(".html") || path.ends_with(".js") || path.ends_with(".css") || path.ends_with(".webmanifest") {
             "no-cache, must-revalidate"
         } else {
             "public, max-age=86400"

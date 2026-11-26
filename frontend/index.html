@@ -7,6 +7,13 @@
   <link rel="stylesheet" href="app.css?v=__REMOTE_VERSION__" />
   <link rel="icon" type="image/png" sizes="32x32" href="assets/icons/remote-32.png" />
   <link rel="apple-touch-icon" href="assets/icons/remote-180.png" />
+  <!-- Installable as an app ("Install app" / "Add to Home screen"): its own window, no address bar -->
+  <link rel="manifest" href="manifest.webmanifest?v=__REMOTE_VERSION__" />
+  <meta name="theme-color" content="#101014" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Remote" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <!-- Bundled Nerd Fonts Preload -->
   <link rel="preload" href="assets/fonts/JetBrainsMonoNerdFont-Regular.ttf" as="font" type="font/ttf" crossorigin>
   <link rel="preload" href="assets/fonts/SymbolsNerdFontMono-Regular.ttf" as="font" type="font/ttf" crossorigin>

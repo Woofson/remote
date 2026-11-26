@@ -2346,7 +2346,7 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
   const term = new Terminal({
     cursorBlink: true,
     cursorStyle: 'block',
-    fontSize: 13,
+    fontSize: termFontSize(),
     fontFamily: TERMINAL_FONT_FAMILY,
     lineHeight: 1.2,
     letterSpacing: 0,
@@ -2375,7 +2375,18 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
 
   term.open(container);
   // Alt+T belongs to Remote (toolbar) in full window / full screen; keep it out of the shell.
-  term.attachCustomKeyEventHandler((ev) => !isFsToolbarKey(ev));
+  term.attachCustomKeyEventHandler((ev) => {
+    if (isFsToolbarKey(ev)) return false;
+    // Ctrl+Shift+plus / minus / 0: text size (kept out of the shell).
+    const step = termFontShortcut(ev);
+    if (step === null) return true;
+    if (ev.type === 'keydown') {
+      ev.preventDefault();
+      setTermFontSize(step === 0 ? TERM_FONT_DEFAULT : termFontSize() + step);
+      showTermSizeHint(pane);
+    }
+    return false;
+  });
   pane.terminal = term;
   pane.fitAddon = fitAddon;
 
@@ -2495,6 +2506,16 @@ function setupTerminalProtocol(pane, ws, bodyEl) {
 
   resizeObserver.observe(bodyEl);
   pane.resizeObserver = resizeObserver;
+
+  // A new text size: refit now, tell the server once the size settles (pinching changes it often).
+  let fontResizeTimer = null;
+  pane.refitTerminal = () => {
+    if (!fitAddon) return;
+    try { fitAddon.fit(); } catch (e) { return; }
+    clearTimeout(fontResizeTimer);
+    fontResizeTimer = setTimeout(() => sendTerminalResize(term.cols, term.rows), 150);
+  };
+  if (isTouchDevice()) setupTerminalPinch(pane, container);
 
   // If the terminal font finished loading after the terminal opened, the
   // character size was measured with a fallback font. Re-measure and refit.
@@ -3056,6 +3077,26 @@ function openSessionToolsMenu(pane, anchor) {
     const svg = b.querySelector('svg');
     add(svg ? svg.outerHTML : KEYBOARD_ICON, label, () => b.click(), { note });
   }
+  if (pane.terminal) {
+    // Text size: the menu stays open while stepping.
+    const row = document.createElement('div');
+    row.className = 'stm-textsize';
+    row.innerHTML = `<span class="stm-textsize-label">Text size</span>
+      <button type="button" class="stm-size-btn" data-size="-1" title="Smaller text">A−</button>
+      <span class="stm-size-value">${termFontSize()}</span>
+      <button type="button" class="stm-size-btn" data-size="1" title="Bigger text">A+</button>
+      <button type="button" class="stm-size-btn stm-size-reset" data-size="0" title="Back to ${TERM_FONT_DEFAULT}">Reset</button>`;
+    row.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-size]');
+      if (!b) return;
+      e.stopPropagation();
+      const step = Number(b.dataset.size);
+      setTermFontSize(step === 0 ? TERM_FONT_DEFAULT : termFontSize() + step);
+      showTermSizeHint(pane);
+    });
+    menu.insertAdjacentHTML('beforeend', '<div class="stm-sep"></div>');
+    menu.appendChild(row);
+  }
   const tabs = (state.paneTabs && state.paneTabs[paneIndex]) || [];
   if (tabs.length > 1) {
     menu.insertAdjacentHTML('beforeend', '<div class="stm-sep"></div><div class="stm-title">Tabs</div>');
@@ -3428,7 +3469,7 @@ function applyTerminalTouchMods(pane, data) {
 }
 
 // Session preferences (Settings > Sessions), saved per user on the server.
-const SESSION_PREF_DEFAULTS = { confirmClose: true, closeButton: 'subtle', touchMode: 'touchpad' };
+const SESSION_PREF_DEFAULTS = { confirmClose: true, closeButton: 'subtle', touchMode: 'touchpad', termFontTouch: 13, termFontDesk: 13 };
 let sessionPrefs = { ...SESSION_PREF_DEFAULTS };
 
 function applySessionPrefs(p) {
@@ -3440,6 +3481,98 @@ function applySessionPrefs(p) {
   if (confirmBox) confirmBox.checked = !!sessionPrefs.confirmClose;
   const closeSel = document.getElementById('pref-close-button');
   if (closeSel) closeSel.value = sessionPrefs.closeButton;
+  // Terminals opened before the preferences arrived take the remembered text size.
+  setTermFontSize(termFontSize(), { save: false });
+}
+
+// ---- Terminal text size: pinch, the tools menu, Ctrl+Shift+plus/minus/0 ----
+// Remembered on the account, separately for touch screens and for PCs.
+const TERM_FONT_MIN = 8;
+const TERM_FONT_MAX = 28;
+const TERM_FONT_DEFAULT = 13;
+let termFontSaveTimer = null;
+
+function termFontKey() {
+  return isTouchDevice() ? 'termFontTouch' : 'termFontDesk';
+}
+
+function termFontSize() {
+  const v = Math.round(Number(sessionPrefs[termFontKey()]));
+  return v >= TERM_FONT_MIN && v <= TERM_FONT_MAX ? v : TERM_FONT_DEFAULT;
+}
+
+/** Set the text size of every open terminal (they refit, the servers get the new size). */
+function setTermFontSize(size, { save = true } = {}) {
+  const n = Math.max(TERM_FONT_MIN, Math.min(TERM_FONT_MAX, Math.round(size)));
+  sessionPrefs[termFontKey()] = n;
+  for (const list of Object.values(state.paneTabs || {})) {
+    for (const sess of list || []) {
+      if (sess.terminal && sess.terminal.options.fontSize !== n) {
+        sess.terminal.options.fontSize = n;
+        if (sess.refitTerminal) sess.refitTerminal();
+      }
+    }
+  }
+  document.querySelectorAll('.stm-size-value').forEach((el) => { el.textContent = String(n); });
+  if (save) {
+    clearTimeout(termFontSaveTimer);
+    termFontSaveTimer = setTimeout(saveSessionPrefs, 800);
+  }
+  return n;
+}
+
+/** Ctrl+Shift with plus, minus or 0: +1, -1 or 0 (reset); null for other keys. */
+function termFontShortcut(ev) {
+  if (!ev.ctrlKey || !ev.shiftKey || ev.altKey || ev.metaKey) return null;
+  if (ev.key === '+' || ev.key === '=' || ev.code === 'NumpadAdd') return 1;
+  if (ev.key === '-' || ev.key === '_' || ev.code === 'NumpadSubtract') return -1;
+  if (ev.key === '0' || ev.key === ')' || ev.code === 'Digit0' || ev.code === 'Numpad0') return 0;
+  return null;
+}
+
+/** A short "Text 15" in the middle of the terminal while the size changes. */
+function showTermSizeHint(pane) {
+  if (!pane.el) return;
+  let hint = pane.el.querySelector('.term-size-hint');
+  if (!hint) {
+    hint = document.createElement('div');
+    hint.className = 'term-size-hint';
+    pane.el.appendChild(hint);
+  }
+  hint.textContent = `Text ${termFontSize()}`;
+  hint.classList.add('show');
+  clearTimeout(hint.hideTimer);
+  hint.hideTimer = setTimeout(() => hint.classList.remove('show'), 900);
+}
+
+/** Two fingers apart or together on a terminal: bigger or smaller text, live. */
+function setupTerminalPinch(pane, el) {
+  let pinch = null;
+  let frame = 0;
+  const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) pinch = { d: dist(e.touches) || 1, size: termFontSize() };
+  }, { capture: true, passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!pinch || e.touches.length !== 2) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const want = Math.round(pinch.size * (dist(e.touches) / pinch.d));
+    if (frame || want === termFontSize()) return;
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      setTermFontSize(want, { save: false });
+      showTermSizeHint(pane);
+    });
+  }, { capture: true, passive: false });
+  const end = (e) => {
+    if (pinch && e.touches.length < 2) {
+      pinch = null;
+      setTermFontSize(termFontSize()); // remembered once the fingers lift
+    }
+  };
+  el.addEventListener('touchend', end, { capture: true, passive: true });
+  el.addEventListener('touchcancel', end, { capture: true, passive: true });
 }
 
 function saveSessionPrefs() {
