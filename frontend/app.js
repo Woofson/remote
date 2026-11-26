@@ -7158,8 +7158,8 @@ async function openTwoFactorSetup(forced = false) {
   document.getElementById('tf-qr').innerHTML = '<span class="text-muted text-sm">Loading…</span>';
   document.getElementById('tf-secret').textContent = '';
   document.getElementById('tf-setup-intro').textContent = forced
-    ? 'Your administrator requires two-factor authentication for your account. Scan this code with an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password.'
-    : 'Scan this code with an authenticator app such as Aegis, 2FAS, Google Authenticator or 1Password.';
+    ? 'Your administrator requires two-factor authentication for your account. Scan this code with your authenticator app.'
+    : 'Scan this code with your authenticator app.';
   document.getElementById('tf-setup-title').textContent = 'Set up two-factor authentication';
   document.getElementById('tf-setup-x').style.display = forced ? 'none' : '';
   const cancelBtn = document.getElementById('tf-setup-cancel');
@@ -7361,7 +7361,7 @@ async function loadSecurityPage() {
   if (!st.enabled) {
     body.innerHTML = `${intro}<div class="tf-card">
       <div class="tf-card-title">Two-factor authentication <span class="tf-pill off">Off</span></div>
-      <p class="text-muted text-sm">You need an authenticator app on your phone, for example Aegis, 2FAS, Google Authenticator or 1Password.</p>
+      <p class="text-muted text-sm">You need an authenticator app on your phone.</p>
       <button type="button" class="btn btn-accent btn-sm" onclick="openTwoFactorSetup(false)">Set up two-factor authentication</button>
     </div>`;
     return;
