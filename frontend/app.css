@@ -4086,6 +4086,25 @@ body.float-dragging .float-body { pointer-events: none; }
 
 .header-tools-wrapper { position: relative; }
 
+/* Admin > Directory */
+.dir-wide { width: min(420px, 100%); }
+.dir-mono { font-family: var(--font-mono); font-size: 11px; }
+.dir-attr { width: 150px; }
+#dir-kind { width: auto; min-width: 190px; }
+.dir-test-result {
+  margin: 6px 0 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--woofson-border);
+  background: var(--woofson-bg-header);
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dir-step.good { color: var(--woofson-success, #10b981); }
+.dir-step.bad { color: var(--woofson-danger, #ef4444); }
+
 .header-tools-menu {
   position: absolute;
   top: calc(100% + 4px);

@@ -34,6 +34,7 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 mod branding;
+mod directory;
 mod email;
 mod proxy;
 mod recordings;
@@ -119,6 +120,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/users/:id/password-link", post(email::api_send_password_link))
         .route("/api/admin/email", get(email::api_get_email_settings).put(email::api_set_email_settings))
         .route("/api/admin/email/test", post(email::api_test_email))
+        .route("/api/admin/directory", get(directory::api_get_directory).put(directory::api_set_directory))
+        .route("/api/admin/directory/test", post(directory::api_test_directory))
         .route("/api/branding", get(branding::api_get_branding))
         .route("/api/branding/file/:name", get(branding::api_branding_file))
         .route("/api/admin/branding", axum::routing::put(branding::api_set_branding))
@@ -368,9 +371,17 @@ pub async fn api_login(
     }
 
     // Check the password first so the reply never reveals whether an account exists or is disabled.
+    // A local account always signs in locally; other names may be directory accounts (#34).
     let password = payload.password.unwrap_or_default();
+    let directory = directory::DirectorySettings::load(&state.db);
+    let from_directory = directory.ready()
+        && match &user_opt {
+            None => true,
+            Some(u) => u.auth_provider == "ldap",
+        };
     let user = match user_opt {
         Some(u) if u.auth_provider == "local" && verify_password(&password, &u.password_hash) => u,
+        _ if from_directory => directory::sign_in(&state, &directory, &payload.username, &password, &ip).await?,
         other => {
             state.limiter.record_failure(&payload.username);
             state.limiter.record_failure(&ip.limiter_key());
@@ -425,16 +436,16 @@ pub async fn api_login(
         "LOGIN_SUCCESS",
         None,
         None,
-        Some(if remembered {
-            "User logged in via local auth with 2FA (code skipped: remembered device)"
-        } else {
-            "User logged in via local auth"
-        }),
+        Some(&format!(
+            "{}{}",
+            if user.auth_provider == "ldap" { "User logged in with a directory account" } else { "User logged in via local auth" },
+            if remembered { " with 2FA (code skipped: remembered device)" } else { "" }
+        )),
         ip.as_opt(),
     );
 
-    // Someone with 2FA on has nothing left to set up.
-    let setup_required = !two_factor && state.policy.read().requires_2fa(&user.role);
+    // Someone with 2FA on has nothing left to set up. (Directory accounts: 2FA comes in step 2 of #34.)
+    let setup_required = !two_factor && user.auth_provider == "local" && state.policy.read().requires_2fa(&user.role);
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({
         "token": token,

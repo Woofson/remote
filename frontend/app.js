@@ -1348,7 +1348,7 @@ function openUserProfileModal() {
     const editRoleBadge = document.getElementById('profile-edit-role-badge');
     if (editRoleBadge) editRoleBadge.textContent = (state.currentUser.role || 'operator').toUpperCase();
     const editAuthType = document.getElementById('profile-edit-auth-type');
-    if (editAuthType) editAuthType.textContent = state.currentUser.auth_provider === 'oidc' ? 'Authentik / OIDC SSO Account' : 'Local Database Account';
+    if (editAuthType) editAuthType.textContent = ({ oidc: 'Single sign-on account (OIDC)', ldap: 'Directory account (LDAP / Active Directory)', header: 'Signed in through the reverse proxy' })[state.currentUser.auth_provider] || 'Local Database Account';
 
     const uInput = document.getElementById('profile-username');
     if (uInput) uInput.value = state.currentUser.username || '';
@@ -5162,7 +5162,7 @@ function renderUsersTable(users) {
         </td>
         <td class="text-muted text-sm">${u.email ? escapeHtml(u.email) : '—'}</td>
         <td><span class="user-role-badge">${roleName}</span></td>
-        <td><span class="pane-protocol-badge">${u.auth_provider.toUpperCase()}</span></td>
+        <td><span class="pane-protocol-badge"${u.auth_provider === 'ldap' ? ' title="Directory account: signs in with the directory password; the role follows the directory groups at every sign-in"' : ''}>${u.auth_provider.toUpperCase()}</span></td>
         <td class="text-muted text-sm">${u.groups && u.groups.length ? u.groups.map(escapeHtml).join(', ') : '—'}</td>
         <td>${u.auth_provider !== 'local' ? '<span class="text-muted text-sm">provider</span>' : u.two_factor ? '<span class="tf-pill on">ON</span>' : '<span class="tf-pill off">off</span>'}</td>
         <td>${statusBadge}</td>
@@ -5321,6 +5321,7 @@ const panelLoaders = {
     activity: () => loadActivityLog(),
     security: () => loadAdminSecurity(),
     email: () => loadAdminEmail(),
+    directory: () => loadAdminDirectory(),
     branding: () => loadAdminBranding(),
     server: () => loadServerPage(),
   },
@@ -7792,6 +7793,180 @@ async function submitEmailReset() {
 }
 
 // ---- Admin > Email ----
+// ---- Admin > Directory (LDAP / Active Directory sign-in, #34) ----
+const DIRECTORY_PRESETS = {
+  ad: {
+    user_filter: '(&(objectCategory=person)(objectClass=user)(|(sAMAccountName={username})(userPrincipalName={username})))',
+    username_attr: 'sAMAccountName', name_attr: 'displayName', email_attr: 'mail',
+  },
+  ldap: {
+    user_filter: '(&(objectClass=inetOrgPerson)(uid={username}))',
+    username_attr: 'uid', name_attr: 'cn', email_attr: 'mail',
+  },
+};
+
+async function loadAdminDirectory() {
+  const body = document.getElementById('admin-directory-body');
+  if (!body) return;
+  const res = await apiFetch('api/admin/directory');
+  if (!res.ok) return;
+  const s = await res.json();
+  const v = (x) => escapeHtml(x == null ? '' : String(x));
+  const opt = (val, cur, label) => `<option value="${val}" ${val === cur ? 'selected' : ''}>${label}</option>`;
+  body.innerHTML = `
+    <p class="pw-hint" style="margin:0 0 6px;">People sign in with their directory account (Active Directory or another LDAP server) in the normal login form. Their Remote account is made at the first sign-in, and the role follows their directory groups at every sign-in. Local accounts keep working, also when the directory cannot be reached.</p>
+    <div class="sec-row">
+      <div class="sec-label">Directory sign-in</div>
+      <label class="pw-check"><input type="checkbox" id="dir-enabled" ${s.enabled ? 'checked' : ''}/> <span>Allow signing in with directory accounts</span></label>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Type<div class="pw-hint">Active Directory also follows groups inside groups and refuses accounts disabled in the directory. The buttons fill in the usual search settings.</div></div>
+      <div class="sec-field">
+        <select id="dir-kind" class="form-input sec-select">${opt('ad', s.kind, 'Active Directory')}${opt('ldap', s.kind, 'OpenLDAP / other LDAP')}</select>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="applyDirectoryPreset()">Use usual settings</button>
+      </div>
+    </div>
+    <div class="settings-section-title">Server</div>
+    <div class="sec-row">
+      <div class="sec-label">Server and port<div class="pw-hint">For example dc1.example.local. Leave the port empty for the usual one (636 for LDAPS, 389 otherwise).</div></div>
+      <div class="sec-field"><input type="text" id="dir-host" class="form-input mail-wide" value="${v(s.host)}" placeholder="dc1.example.local" spellcheck="false"/><input type="number" id="dir-port" class="form-input" value="${s.port || ''}" placeholder="636" min="1" max="65535"/></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Connection<div class="pw-hint">LDAPS or StartTLS keep passwords encrypted on the way. Without encryption, passwords cross the network readable.</div></div>
+      <select id="dir-security" class="form-input sec-select">${opt('ldaps', s.security, 'LDAPS (encrypted)')}${opt('starttls', s.security, 'StartTLS (encrypted)')}${opt('none', s.security, 'None (not encrypted)')}</select>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Certificate<div class="pw-hint">Turn off only for a server with a self-made certificate on your own network.</div></div>
+      <label class="pw-check"><input type="checkbox" id="dir-verify" ${s.verify_cert ? 'checked' : ''}/> <span>Check the server's certificate</span></label>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Service account<div class="pw-hint">The account Remote uses to look people up, for example remote-svc@example.local or a full DN. Leave empty for anonymous look-ups. The password is stored encrypted.</div></div>
+      <div class="sec-field"><input type="text" id="dir-bind-dn" class="form-input mail-wide" value="${v(s.bind_dn)}" placeholder="remote-svc@example.local" autocomplete="off" spellcheck="false"/><input type="password" id="dir-bind-pass" class="form-input mail-wide" placeholder="${s.has_password ? 'Saved (leave empty to keep)' : 'Password'}" autocomplete="new-password"/></div>
+    </div>
+    <div class="settings-section-title">People</div>
+    <div class="sec-row">
+      <div class="sec-label">Where to look<div class="pw-hint">For example DC=example,DC=local, or a narrower OU.</div></div>
+      <input type="text" id="dir-user-base" class="form-input dir-wide" value="${v(s.user_base)}" placeholder="DC=example,DC=local" spellcheck="false"/>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">User filter<div class="pw-hint">{username} is the name typed at sign-in.</div></div>
+      <input type="text" id="dir-user-filter" class="form-input dir-wide dir-mono" value="${v(s.user_filter)}" spellcheck="false"/>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Attributes<div class="pw-hint">Which attributes hold the username, the full name and the email address.</div></div>
+      <div class="sec-field"><input type="text" id="dir-attr-user" class="form-input dir-attr" value="${v(s.username_attr)}" placeholder="username" spellcheck="false" title="Username"/><input type="text" id="dir-attr-name" class="form-input dir-attr" value="${v(s.name_attr)}" placeholder="full name" spellcheck="false" title="Full name"/><input type="text" id="dir-attr-mail" class="form-input dir-attr" value="${v(s.email_attr)}" placeholder="email" spellcheck="false" title="Email"/></div>
+    </div>
+    <div class="settings-section-title">Groups and roles</div>
+    <div class="sec-row">
+      <div class="sec-label">Where to look for groups<div class="pw-hint">Leave empty to look in the same place as people.</div></div>
+      <input type="text" id="dir-group-base" class="form-input dir-wide" value="${v(s.group_base)}" placeholder="Same as people" spellcheck="false"/>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Admin and Operator<div class="pw-hint">Members of these directory groups get that role (group name or full DN).</div></div>
+      <div class="sec-field"><input type="text" id="dir-admin-group" class="form-input mail-wide" value="${v(s.admin_group)}" placeholder="Admin group" spellcheck="false"/><input type="text" id="dir-operator-group" class="form-input mail-wide" value="${v(s.operator_group)}" placeholder="Operator group" spellcheck="false"/></div>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Everyone else</div>
+      <select id="dir-default-role" class="form-input sec-select">${opt('viewer', s.default_role, 'Viewer')}${opt('operator', s.default_role, 'Operator')}${opt('admin', s.default_role, 'Admin')}</select>
+    </div>
+    <div class="sec-row">
+      <div class="sec-label">Only this group may sign in<div class="pw-hint">Leave empty to let everyone the user filter finds sign in.</div></div>
+      <input type="text" id="dir-required-group" class="form-input mail-wide" value="${v(s.required_group)}" placeholder="Optional" spellcheck="false"/>
+    </div>
+    <div class="sec-actions">
+      <span class="pw-error" id="dir-error"></span>
+      <button type="button" class="btn btn-accent btn-sm" onclick="saveDirectorySettings()">Save</button>
+    </div>
+    <div class="settings-section-title">Test</div>
+    <div class="sec-row">
+      <div class="sec-label">Test the settings<div class="pw-hint">Uses the form as it is now, saved or not. Add a username (and password) to also check finding that person, their groups and the role they would get.</div></div>
+      <div class="sec-field"><input type="text" id="dir-test-user" class="form-input mail-wide" placeholder="Username (optional)" autocomplete="off" spellcheck="false"/><input type="password" id="dir-test-pass" class="form-input mail-wide" placeholder="Password (optional)" autocomplete="new-password"/><button type="button" class="btn btn-secondary btn-sm" id="dir-test-btn" onclick="testDirectorySettings()">Test</button></div>
+    </div>
+    <div id="dir-test-result" class="dir-test-result" style="display:none;"></div>`;
+}
+
+function applyDirectoryPreset() {
+  const p = DIRECTORY_PRESETS[document.getElementById('dir-kind').value];
+  document.getElementById('dir-user-filter').value = p.user_filter;
+  document.getElementById('dir-attr-user').value = p.username_attr;
+  document.getElementById('dir-attr-name').value = p.name_attr;
+  document.getElementById('dir-attr-mail').value = p.email_attr;
+}
+
+function directoryForm() {
+  const pass = document.getElementById('dir-bind-pass').value;
+  const bindDn = document.getElementById('dir-bind-dn').value.trim();
+  return {
+    enabled: document.getElementById('dir-enabled').checked,
+    kind: document.getElementById('dir-kind').value,
+    host: document.getElementById('dir-host').value.trim(),
+    port: parseInt(document.getElementById('dir-port').value, 10) || 0,
+    security: document.getElementById('dir-security').value,
+    verify_cert: document.getElementById('dir-verify').checked,
+    bind_dn: bindDn,
+    // Empty keeps the saved password; no service account means no password.
+    bind_password: !bindDn ? '' : (pass ? pass : null),
+    user_base: document.getElementById('dir-user-base').value.trim(),
+    user_filter: document.getElementById('dir-user-filter').value.trim(),
+    username_attr: document.getElementById('dir-attr-user').value.trim(),
+    name_attr: document.getElementById('dir-attr-name').value.trim(),
+    email_attr: document.getElementById('dir-attr-mail').value.trim(),
+    group_base: document.getElementById('dir-group-base').value.trim(),
+    admin_group: document.getElementById('dir-admin-group').value.trim(),
+    operator_group: document.getElementById('dir-operator-group').value.trim(),
+    required_group: document.getElementById('dir-required-group').value.trim(),
+    default_role: document.getElementById('dir-default-role').value,
+  };
+}
+
+async function saveDirectorySettings() {
+  const errEl = document.getElementById('dir-error');
+  const body = directoryForm();
+  if (body.enabled && body.security === 'none'
+    && !(await uiConfirm('Without LDAPS or StartTLS, passwords cross the network readable. Save anyway?', { title: 'Not encrypted', okText: 'Save', danger: true }))) {
+    return;
+  }
+  errEl.textContent = '';
+  const res = await apiFetch('api/admin/directory', { method: 'PUT', body: JSON.stringify(body) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    errEl.textContent = d.error || 'Could not save';
+    return;
+  }
+  showToast('Directory settings saved', 'success');
+  loadAdminDirectory();
+}
+
+async function testDirectorySettings() {
+  const btn = document.getElementById('dir-test-btn');
+  const out = document.getElementById('dir-test-result');
+  btn.disabled = true;
+  btn.textContent = 'Testing…';
+  out.style.display = '';
+  out.innerHTML = '<span class="text-muted">Contacting the directory…</span>';
+  try {
+    const res = await apiFetch('api/admin/directory/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        settings: directoryForm(),
+        username: document.getElementById('dir-test-user').value.trim() || null,
+        password: document.getElementById('dir-test-pass').value || null,
+      }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      out.innerHTML = `<div class="dir-step bad">${escapeHtml(d.error || 'The test could not run')}</div>`;
+      return;
+    }
+    out.innerHTML = (d.steps || []).map((s) => `<div class="dir-step ${s.ok ? 'good' : 'bad'}">${s.ok ? '✓' : '✗'} ${escapeHtml(s.text)}</div>`).join('');
+  } catch (e) {
+    out.innerHTML = '<div class="dir-step bad">Server connection error</div>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test';
+  }
+}
+
 async function loadAdminEmail() {
   const body = document.getElementById('admin-email-body');
   if (!body) return;

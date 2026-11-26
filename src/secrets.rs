@@ -88,6 +88,14 @@ pub fn resolve_master_secret(configured: &str, data_dir: &Path, db: &Database) -
     if rec_unreadable > 0 {
         warn!("Secrets: {} recording(s) can no longer be unlocked", rec_unreadable);
     }
+    // Passwords kept inside settings: the mail server and the directory service account (#34).
+    for (key, field, what) in [("email", "password_enc", "mail server"), ("directory_settings", "bind_password_enc", "directory service account")] {
+        match reencrypt_setting_field(db, key, field, &convert) {
+            Ok(Reencrypt::Replace(_)) => info!("Secrets: re-encrypted the {} password with the new secret", what),
+            Ok(Reencrypt::Unreadable) => warn!("Secrets: the saved {} password could not be unlocked and must be entered again", what),
+            _ => {}
+        }
+    }
 
     if converted > 0 {
         info!("Secrets: re-encrypted {} saved connection credential(s) with the new secret", converted);
@@ -99,6 +107,25 @@ pub fn resolve_master_secret(configured: &str, data_dir: &Path, db: &Database) -
         );
     }
     Ok(secret)
+}
+
+/// Re-encrypt one encrypted field inside a JSON setting; reports what happened.
+fn reencrypt_setting_field(db: &Database, key: &str, field: &str, convert: &dyn Fn(&str) -> Reencrypt) -> Result<Reencrypt, String> {
+    let Some(text) = db.get_setting(key).map_err(|e| e.to_string())? else {
+        return Ok(Reencrypt::Keep);
+    };
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Ok(Reencrypt::Keep);
+    };
+    let Some(enc) = value.get(field).and_then(|v| v.as_str()).map(str::to_string) else {
+        return Ok(Reencrypt::Keep);
+    };
+    let outcome = convert(&enc);
+    if let Reencrypt::Replace(new) = &outcome {
+        value[field] = serde_json::Value::String(new.clone());
+        db.set_setting(key, &value.to_string()).map_err(|e| e.to_string())?;
+    }
+    Ok(outcome)
 }
 
 fn load_or_create_secret_file(path: &Path) -> Result<String, String> {
