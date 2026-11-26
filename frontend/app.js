@@ -1490,13 +1490,14 @@ function closeConnectionsModal() {
 }
 
 const PROTOCOL_ICONS = {
+  pool: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="13" height="9" rx="1.5"/><rect x="9" y="12" width="13" height="9" rx="1.5"/><path d="M6 15v3h3"/><path d="M18 9V6h-3"/></svg>',
   rdp: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
   vnc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M7 21h10"/><circle cx="12" cy="10" r="2"/></svg>',
   ssh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
   telnet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><polyline points="7 10 10 13 7 16"/></svg>',
   local_pty: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>',
 };
-const PROTOCOL_LABELS = { rdp: 'RDP', vnc: 'VNC', ssh: 'SSH', telnet: 'Telnet', local_pty: 'Local shell' };
+const PROTOCOL_LABELS = { rdp: 'RDP', vnc: 'VNC', ssh: 'SSH', telnet: 'Telnet', local_pty: 'Local shell', pool: 'Pool' };
 
 /** URL for a stored icon reference, or null for the protocol default. */
 function iconUrl(ref) {
@@ -1654,7 +1655,10 @@ function renderConnectionsTable() {
   listEl.innerHTML = rows
     .map((c) => {
       const perms = c.user_permissions || {};
-      const target = c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`;
+      const pool = c.protocol === 'pool' ? poolSettings(c) : null;
+      const target = pool
+        ? `${pool.members.length} ${PROTOCOL_LABELS[pool.protocol] || pool.protocol} machine${pool.members.length === 1 ? '' : 's'}`
+        : c.protocol === 'local_pty' ? 'Remote server' : `${escapeHtml(c.host)}:${c.port}`;
       const policies = [
         c.view_only ? '<span class="dir-policy" title="View-only">View only</span>' : '',
         c.allow_clipboard === 'disabled' || perms.can_clipboard === false ? '<span class="dir-policy off" title="Clipboard blocked">No clipboard</span>' : '',
@@ -1688,6 +1692,13 @@ function switchConnTab(tab) {
 
 function resetConnEditor() {
   switchConnTab('general');
+  // Pools (#39) are made by admins only.
+  const poolOpt = document.getElementById('conn-proto-pool');
+  const admin = !!(state.currentUser && state.currentUser.role === 'admin');
+  if (poolOpt) { poolOpt.hidden = !admin; poolOpt.disabled = !admin; }
+  document.getElementById('conn-pool-protocol').value = 'rdp';
+  document.getElementById('conn-pool-sticky').checked = true;
+  document.getElementById('conn-pool-members').innerHTML = '';
   document.querySelectorAll('.conn-tab').forEach((b) => b.classList.remove('has-error'));
   document.querySelectorAll('#connection-edit-form .invalid').forEach((el) => el.classList.remove('invalid'));
   document.getElementById('conn-edit-error').textContent = '';
@@ -1764,6 +1775,13 @@ function openEditConnectionModal(id) {
   document.getElementById('conn-id').value = c.id;
   document.getElementById('conn-name').value = c.name;
   document.getElementById('conn-protocol').value = c.protocol;
+  const pool = poolSettings(c);
+  if (c.protocol === 'pool' && pool) {
+    document.getElementById('conn-pool-protocol').value = pool.protocol || 'rdp';
+    document.getElementById('conn-pool-sticky').checked = pool.sticky !== undefined ? !!pool.sticky : pool.protocol === 'rdp';
+    // Set after the id is filled in (the pool must not list itself).
+    setTimeout(() => renderPoolMembers(pool.members || []), 0);
+  }
   document.getElementById('conn-host').value = c.host;
   document.getElementById('conn-port').value = c.port;
   document.getElementById('conn-username').value = c.username || '';
@@ -1900,8 +1918,55 @@ async function fillLocalShellSelect(current) {
   }
 }
 
+// ---- Pools (#39) ----
+/** A pool's settings: { protocol, members, sticky }, or null for other connections. */
+function poolSettings(conn) {
+  try {
+    const p = JSON.parse(conn.settings_json || '{}').pool;
+    return p && Array.isArray(p.members) ? p : null;
+  } catch (e) { return null; }
+}
+
+/** A new pool's protocol changed: new machine list; RDP pools keep users on the same machine. */
+function onPoolProtocolChanged() {
+  renderPoolMembers([]);
+  if (!document.getElementById('conn-id').value) {
+    document.getElementById('conn-pool-sticky').checked = document.getElementById('conn-pool-protocol').value === 'rdp';
+  }
+}
+
+/** The machine list in the editor: connections of the chosen protocol, ticked when in the pool. */
+function renderPoolMembers(selected) {
+  const box = document.getElementById('conn-pool-members');
+  if (!box) return;
+  const proto = document.getElementById('conn-pool-protocol').value;
+  const keep = selected || [...box.querySelectorAll('input:checked')].map((i) => i.value);
+  const self = document.getElementById('conn-id').value;
+  const list = (state.connections || []).filter((c) => c.protocol === proto && c.id !== self).sort((a, b) => a.name.localeCompare(b.name));
+  box.innerHTML = list.length
+    ? list.map((c) => `<label class="pool-member"><input type="checkbox" value="${escapeHtml(c.id)}" ${keep.includes(c.id) ? 'checked' : ''}/>
+        <span class="pool-member-name">${escapeHtml(c.name)}</span><code>${escapeHtml(c.host)}:${c.port}</code></label>`).join('')
+    : `<p class="text-muted text-sm" style="margin:6px 0;">No ${PROTOCOL_LABELS[proto] || proto} connections yet. Add the machines as connections first.</p>`;
+}
+
 function onProtocolChanged(opts = {}) {
   const proto = document.getElementById('conn-protocol').value;
+  const isPool = proto === 'pool';
+  document.getElementById('group-pool').style.display = isPool ? '' : 'none';
+  ['login', 'display'].forEach((t) => {
+    const tab = document.querySelector(`.conn-tab[data-conn-tab="${t}"]`);
+    if (tab) tab.style.display = isPool ? 'none' : '';
+  });
+  if (isPool) {
+    const iconVal = document.getElementById('conn-icon');
+    if (iconVal && !iconVal.value) setConnIcon('');
+    ['group-host', 'group-port', 'group-auth-user', 'group-ssh-key', 'group-local-shell', 'group-ssh-cert', 'group-test', 'group-wol'].forEach((g) => {
+      const el = document.getElementById(g);
+      if (el) el.style.display = 'none';
+    });
+    renderPoolMembers();
+    return;
+  }
   const isLocal = proto === 'local_pty';
   const isSsh = proto === 'ssh';
   const isTelnet = proto === 'telnet';
@@ -1955,7 +2020,9 @@ function validateConnForm() {
 
   const proto = document.getElementById('conn-protocol').value;
   if (!document.getElementById('conn-name').value.trim()) mark('conn-name', 'general', 'Give the connection a name');
-  if (proto !== 'local_pty') {
+  if (proto === 'pool') {
+    if (!document.querySelector('#conn-pool-members input:checked')) mark('conn-pool-protocol', 'general', 'Tick at least one machine for the pool');
+  } else if (proto !== 'local_pty') {
     const host = document.getElementById('conn-host').value.trim();
     if (!host) mark('conn-host', 'general', 'Enter a host name or address');
     else if (/[\s/]/.test(host)) mark('conn-host', 'general', 'The host must not contain spaces or slashes');
@@ -2051,11 +2118,19 @@ async function handleSaveConnection(e) {
     wol_wait: parseInt(document.getElementById('conn-wol-wait').value, 10) || null,
   };
 
+  const isPoolForm = document.getElementById('conn-protocol').value === 'pool';
+  if (isPoolForm) {
+    connSettings.pool = {
+      protocol: document.getElementById('conn-pool-protocol').value,
+      members: [...document.querySelectorAll('#conn-pool-members input:checked')].map((i) => i.value),
+      sticky: document.getElementById('conn-pool-sticky').checked,
+    };
+  }
   const payload = {
     name: document.getElementById('conn-name').value.trim(),
     protocol: document.getElementById('conn-protocol').value,
-    host: document.getElementById('conn-host').value.trim() || 'localhost',
-    port: parseInt(document.getElementById('conn-port').value, 10) || 22,
+    host: isPoolForm ? '' : document.getElementById('conn-host').value.trim() || 'localhost',
+    port: isPoolForm ? 0 : parseInt(document.getElementById('conn-port').value, 10) || 22,
     username: document.getElementById('conn-username').value.trim() || null,
     password: document.getElementById('conn-password').value || null,
     private_key: document.getElementById('conn-private-key').value || null,
@@ -2194,8 +2269,14 @@ window.addEventListener('hashchange', () => {
 function connectToTarget(connectionId, opts = {}) {
   // A shared session (#32) brings its own connection object; a reconnect reuses the tab's.
   const prevConn = opts.session && (opts.session.conn || opts.session.lastConn);
-  const conn = opts.conn || (prevConn && prevConn.id === connectionId ? prevConn : null) || state.connections.find(c => c.id === connectionId);
+  let conn = opts.conn || (prevConn && prevConn.id === connectionId ? prevConn : null) || state.connections.find(c => c.id === connectionId);
   if (!conn) return;
+  // A pool (#39) opens as its machines' protocol; the server picks the machine.
+  if (conn.protocol === 'pool') {
+    const pool = poolSettings(conn);
+    if (!pool) return;
+    conn = { ...conn, protocol: pool.protocol, isPool: true };
+  }
 
   // New sessions go into the grid; with a floating window selected, into the last used pane.
   const target = connectTargetPane();
@@ -3972,6 +4053,7 @@ function teardownSession(pane) {
   pane.sessionId = null;
   pane.share = null;
   pane.recording = false;
+  pane.poolMember = null;
   if (document.getElementById('pane-share-dropdown')?.dataset.tab === String(pane.tabId)) document.getElementById('pane-share-dropdown').remove();
   if (pane.resizeObserver) {
     pane.resizeObserver.disconnect();
@@ -4186,7 +4268,8 @@ function renderPaneHeader(paneIndex) {
       const recTag = sess.recording
         ? ' <span class="pane-title-tag pane-rec-tag" title="This session is being recorded">REC</span>'
         : '';
-      titleEl.innerHTML = `${connIconHtml(conn.icon, conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${recTag}${viewOnlyTag}`;
+      const poolTag = conn.isPool && sess.poolMember ? ` <span class="pane-pool-member" title="The pool sent you to this machine">→ ${escapeHtml(sess.poolMember)}</span>` : '';
+      titleEl.innerHTML = `${connIconHtml(conn.icon, conn.isPool ? 'pool' : conn.protocol, 'conn-icon-sm')} ${escapeHtml(conn.name)}${poolTag}${recTag}${viewOnlyTag}`;
     } else if (sess.parked && sess.lastConn) {
       const c = sess.lastConn;
       titleEl.innerHTML = `${connIconHtml(c.icon, c.protocol, 'conn-icon-sm')} ${escapeHtml(c.name)} <span class="pane-title-note">not connected</span>`;
@@ -4224,7 +4307,7 @@ function renderPaneTabs(paneIndex) {
   const active = state.panes[paneIndex];
   strip.innerHTML = list.map((t) => {
     const c = t.conn || t.lastConn;
-    const name = t.conn ? t.conn.name : t.parked && c ? c.name : 'New tab';
+    const name = t.conn ? `${t.conn.name}${t.conn.isPool && t.poolMember ? ` → ${t.poolMember}` : ''}` : t.parked && c ? c.name : 'New tab';
     const icon = c ? connIconHtml(c.icon, c.protocol, 'conn-icon-sm') : '';
     const status = t.conn ? t.status : t.parked ? 'parked' : 'idle';
     const tip = t.conn ? `${t.conn.name} (${PROTOCOL_LABELS[t.conn.protocol] || t.conn.protocol}, ${status})`
@@ -4496,6 +4579,11 @@ function openSharedSession(token, info) {
 /** Session relay messages shared by terminals and remote desktops. True when handled. */
 function handleSessionMeta(pane, msg, term) {
   switch (msg.type) {
+    case 'pool_member':
+      // Which machine of the pool this session landed on (#39).
+      pane.poolMember = msg.member;
+      if (state.panes[pane.id] === pane) renderPaneHeader(pane.id);
+      return true;
     case 'session':
       pane.sessionId = msg.id;
       pane.canShare = !!msg.can_share;

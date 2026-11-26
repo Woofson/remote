@@ -8,6 +8,7 @@ use tracing::info;
 use uuid::Uuid;
 
 mod login_states;
+mod pools;
 mod recordings;
 mod trusted_devices;
 pub use recordings::{RecordingRecord, RecordingShare};
@@ -359,6 +360,7 @@ impl Database {
         conn.execute_batch(recordings::SCHEMA)?;
         conn.execute_batch(login_states::SCHEMA)?;
         conn.execute_batch(trusted_devices::SCHEMA)?;
+        conn.execute_batch(pools::SCHEMA)?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_preferences (

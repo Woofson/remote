@@ -82,6 +82,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         sessions: sessions.clone(),
         limiter: Arc::new(remoted::auth::policy::LoginLimiter::default()),
         shares: Arc::new(remoted::protocols::hub::ShareRegistry::default()),
+        active: Arc::new(remoted::server::pools::ActiveSessions::default()),
     };
 
     // Forget idle/lock state of logins that cannot be alive any more.

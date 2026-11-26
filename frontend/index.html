@@ -914,6 +914,7 @@
               <option value="">All protocols</option>
               <option value="rdp">RDP</option><option value="vnc">VNC</option><option value="ssh">SSH</option>
               <option value="telnet">Telnet</option><option value="local_pty">Local shell</option>
+              <option value="pool">Pools</option>
             </select>
             <select id="dir-filter-tag" class="form-input" aria-label="Tag"><option value="">All tags</option></select>
             <select id="dir-filter-scope" class="form-input" aria-label="Scope">
@@ -981,7 +982,20 @@
                   <option value="vnc">VNC / RFB (Desktop)</option>
                   <option value="rdp">RDP (Windows Desktop)</option>
                   <option value="local_pty">Local PTY (Shell)</option>
+                  <option value="pool" id="conn-proto-pool">Pool (several machines)</option>
                 </select>
+              </div>
+              <!-- Pool (#39): several equivalent machines behind one entry -->
+              <div class="form-group pool-group" id="group-pool" style="display:none; grid-column: 1 / -1;">
+                <div class="pool-head">
+                  <label style="font-size: 11px; font-weight: 600;">Machines in the pool *</label>
+                  <select id="conn-pool-protocol" class="form-input pool-proto" onchange="onPoolProtocolChanged()" aria-label="Protocol of the machines">
+                    <option value="rdp">RDP</option><option value="vnc">VNC</option><option value="ssh">SSH</option><option value="telnet">Telnet</option>
+                  </select>
+                </div>
+                <div class="pool-members" id="conn-pool-members"></div>
+                <label class="pw-check"><input type="checkbox" id="conn-pool-sticky" /> <span>Keep each user on the same machine (they get their own desktop back)</span></label>
+                <p class="pw-hint">Connecting opens the machine with the fewest open Remote sessions and skips machines that do not answer. When none answers, the first one with Wake-on-LAN set up is woken. Logins, clipboard, files, recording and printing follow each machine's own settings. Normal users see only the pool, not its machines.</p>
               </div>
               <div class="form-group" id="group-host">
                 <label style="font-size: 11px; font-weight: 600;">Host Address *</label>

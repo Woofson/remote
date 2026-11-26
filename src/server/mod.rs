@@ -36,6 +36,7 @@ use uuid::Uuid;
 mod branding;
 mod directory;
 mod email;
+pub mod pools;
 mod proxy;
 mod recordings;
 mod security;
@@ -64,6 +65,8 @@ pub struct AppState {
     pub limiter: Arc<LoginLimiter>,
     /// Open share links of live sessions (#32).
     pub shares: Arc<crate::protocols::hub::ShareRegistry>,
+    /// Open sessions per connection: how busy pool members are (#39).
+    pub active: Arc<pools::ActiveSessions>,
 }
 
 /// Database key of the admin session policy.
@@ -1334,12 +1337,22 @@ pub async fn api_list_connections(
             )
         })?;
 
-    let connections = state.db.list_connections_for_user(&user).map_err(|e| {
+    let mut connections = state.db.list_connections_for_user(&user).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": e.to_string() })),
         )
     })?;
+    // Pools (#39): normal users see the pool, not the machines inside it; admins see both.
+    if user.role != "admin" {
+        let hidden: std::collections::HashSet<String> = connections
+            .iter()
+            .filter(|c| c.protocol == "pool")
+            .filter_map(|c| pools::pool_settings(&c.settings_json))
+            .flat_map(|p| p.members)
+            .collect();
+        connections.retain(|c| !hidden.contains(&c.id));
+    }
 
     Ok(Json(connections))
 }
@@ -1402,6 +1415,14 @@ pub async fn api_create_connection(
             StatusCode::FORBIDDEN,
             Json(json!({ "error": "Operator or Admin role required to create connections" })),
         ));
+    }
+    // Pools (#39) are made by admins only: a pool hands its members out to everyone it is shared with.
+    if payload.protocol == "pool" {
+        if claims.role != "admin" {
+            return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Only admins can make pools" }))));
+        }
+        pools::validate_pool(&state, payload.settings_json.as_deref().unwrap_or("{}"))
+            .map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
     }
 
     let id = payload.id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -1520,6 +1541,16 @@ pub async fn api_update_connection(
                 Json(json!({ "error": "Connection not found" })),
             )
         })?;
+
+    if payload.protocol == "pool" || record.protocol == "pool" {
+        if claims.role != "admin" {
+            return Err((StatusCode::FORBIDDEN, Json(json!({ "error": "Only admins can change pools" }))));
+        }
+        if payload.protocol == "pool" {
+            let settings = payload.settings_json.clone().unwrap_or_else(|| record.settings_json.clone());
+            pools::validate_pool(&state, &settings).map_err(|e| (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))))?;
+        }
+    }
 
     let is_admin = claims.role == "admin";
     let is_owner = record.created_by.as_deref() == Some(&claims.sub);
@@ -2672,7 +2703,36 @@ pub async fn ws_tunnel_handler(
     };
 
     let authz = authorize_connection(&state, &claims, &connection_id, "Connect")?;
-    let (user, conn_rec, conn_perms) = (authz.user, authz.conn, authz.perms);
+    let (user, mut conn_rec, conn_perms) = (authz.user, authz.conn, authz.perms);
+
+    // A pool (#39) sends the user to one of its machines; access to the pool is enough.
+    let mut pool_name: Option<String> = None;
+    let mut pool_wake: Option<crate::protocols::wol::WakeSettings> = None;
+    if conn_rec.protocol == "pool" {
+        match pools::choose_member(&state, &conn_rec, &user.id).await {
+            Ok(choice) => {
+                let member = match choice {
+                    pools::PoolChoice::Member(m) => m,
+                    pools::PoolChoice::Wake(m, w) => {
+                        pool_wake = Some(w);
+                        m
+                    }
+                };
+                pools::remember(&state, &conn_rec, &user.id, &member.id);
+                pool_name = Some(conn_rec.name.clone());
+                conn_rec = member;
+            }
+            Err(msg) => {
+                state.db.log_audit(Some(&user.id), &user.username, "CONNECT_FAILED", Some(&conn_rec.id), Some(&conn_rec.name), Some(&msg), ip.as_opt());
+                return Ok(ws.on_upgrade(move |mut socket| async move {
+                    use axum::extract::ws::Message;
+                    let _ = socket.send(Message::Text(json!({ "type": "error", "message": msg }).to_string())).await;
+                    let _ = socket.send(Message::Text(json!({ "type": "ended", "reason": "no machine in the pool can be reached" }).to_string())).await;
+                    let _ = socket.send(Message::Close(None)).await;
+                }));
+            }
+        }
+    }
 
     state.db.log_audit(
         Some(&user.id),
@@ -2680,7 +2740,10 @@ pub async fn ws_tunnel_handler(
         "CONNECT",
         Some(&conn_rec.id),
         Some(&conn_rec.name),
-        Some(&format!("Protocol: {}", conn_rec.protocol)),
+        Some(&match &pool_name {
+            Some(p) => format!("Protocol: {} (pool {} sent the user to {})", conn_rec.protocol, p, conn_rec.name),
+            None => format!("Protocol: {}", conn_rec.protocol),
+        }),
         ip.as_opt(),
     );
 
@@ -2794,7 +2857,10 @@ pub async fn ws_tunnel_handler(
         })
     };
 
+    let active = state.active.clone();
     Ok(ws.on_upgrade(move |mut socket| async move {
+        // Counted as open until this session ends (how busy pool members are, #39).
+        let _active = active.start(&conn_rec.id);
         let mut hub_cfg = hub_cfg;
         match recorder {
             Some(Ok(rec)) => hub_cfg.recorder = Some(rec),
@@ -2809,9 +2875,15 @@ pub async fn ws_tunnel_handler(
             None => {}
         }
         let mut socket = crate::protocols::hub::start(socket, hub_cfg, shares);
+        if let Some(pool) = &pool_name {
+            let _ = socket
+                .send(axum::extract::ws::Message::Text(json!({ "type": "pool_member", "pool": pool, "member": conn_rec.name }).to_string()))
+                .await;
+        }
         // Wake-on-LAN (#35): wake the machine first when it does not answer.
         if conn_rec.protocol != "local_pty" {
-            if let Some(w) = crate::protocols::wol::WakeSettings::from_settings(&conn_rec.settings_json).filter(|w| w.on_connect) {
+            // A pool whose machines are all off wakes one that has Wake-on-LAN set up.
+            if let Some(w) = crate::protocols::wol::WakeSettings::from_settings(&conn_rec.settings_json).filter(|w| w.on_connect).or(pool_wake) {
                 if !wake_before_connect(&mut socket, &w, &conn_rec.host, conn_rec.port as u16, &conn_rec.name, wake_audit).await {
                     return;
                 }
