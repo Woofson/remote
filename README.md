@@ -62,7 +62,7 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 
 **Security**
 - **Two-factor authentication** with an authenticator app (Aegis, 2FAS, Google Authenticator, 1Password and others), with one-time recovery codes.
-- Admins can require two-factor authentication per role, set how long a login lasts, and lock or sign out sessions after a period without activity.
+- Admins can require two-factor authentication per role, let users remember a device so it skips the code for a set number of days, set how long a login lasts, and lock or sign out sessions after a period without activity.
 - Repeated wrong passwords or codes are slowed down. Sign-ins, failures and security changes are recorded in the activity log, with the visitor's address.
 - **Email** (optional): people reset a forgotten password themselves with a single-use link, admins can email new users a link to choose their own password, and users are told when their password or two-factor settings change. Works with any SMTP server; set up under Admin > Email.
 - **Admin Control Panel**: users and groups, all connections, the activity log, security settings and a server status checklist.

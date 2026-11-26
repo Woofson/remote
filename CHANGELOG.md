@@ -4,6 +4,19 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.22.0] - 2026-11-26
+
+### Added
+- **Remember this device for two-factor sign-in.** Admins choose under Admin > Security how many days (1 to 90; off by default). With it on, the code step offers "Remember this device", and that browser then skips the code at sign-in and on the lock screen; the password is always needed. A remembered device ends when the days run out, the password changes, two-factor is turned off or reset, or the setting is turned off. Settings > Security lists your remembered devices with Forget and Forget all; admins can forget a user's devices from the Users page. Skipped codes are recorded in the activity log.
+
+### Fixed
+- Refreshing the page no longer briefly shows the signed-in app before the login or lock screen.
+- A login that has ended (lifetime reached, password changed or reset, account disabled, signed out elsewhere) now always returns to the login screen with the reason. An open page checks every minute and when you come back to it.
+- The lock screen appears straight away in a new tab when the login is locked.
+- Signing out and locking now survive a server restart.
+
+---
+
 ## [0.21.1] - 2026-11-25
 
 Covers everything since 0.14.0 (versions 0.15.0 to 0.21.0 were pushed to git without a release).
