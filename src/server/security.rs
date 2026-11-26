@@ -47,7 +47,7 @@ pub(super) fn local_users_without_2fa(state: &AppState) -> Vec<String> {
         .list_users()
         .unwrap_or_default()
         .into_iter()
-        .filter(|u| u.is_active && u.auth_provider == "local" && !with.contains(&u.id))
+        .filter(|u| u.is_active && uses_remote_2fa(&u.auth_provider) && !with.contains(&u.id))
         .map(|u| u.username)
         .collect()
 }
@@ -83,12 +83,26 @@ fn check_second_factor(state: &AppState, user: &User, input: &str) -> Result<Str
     }
 }
 
+/// Accounts that use Remote's own password check and 2FA: local and directory accounts (#34).
+pub(super) fn uses_remote_2fa(provider: &str) -> bool {
+    provider == "local" || provider == "ldap"
+}
+
 /// Password (and, when asked, second factor) check with the attempt brake and audit log.
-fn verify_identity(state: &AppState, user: &User, password: &str, code: Option<&str>, action: &str, ip: &ClientIp) -> ApiResult<()> {
+/// Directory accounts are checked against the directory.
+async fn verify_identity(state: &AppState, user: &User, password: &str, code: Option<&str>, action: &str, ip: &ClientIp) -> ApiResult<()> {
     if let Some(wait) = state.limiter.blocked_for(&user.username) {
         return Err(too_many_attempts(wait));
     }
-    if user.auth_provider != "local" || !verify_password(password, &user.password_hash) {
+    let password_ok = match user.auth_provider.as_str() {
+        "local" => verify_password(password, &user.password_hash),
+        "ldap" => match super::directory::check_password(state, user, password).await {
+            Ok(ok) => ok,
+            Err(msg) => return Err(err(StatusCode::SERVICE_UNAVAILABLE, &msg)),
+        },
+        _ => false,
+    };
+    if !password_ok {
         state.limiter.record_failure(&user.username);
         state.db.log_audit(Some(&user.id), &user.username, &format!("{}_FAILED", action), None, None, Some("Wrong password"), ip.as_opt());
         return Err(err(StatusCode::UNAUTHORIZED, "Wrong password"));
@@ -298,7 +312,7 @@ pub struct UnlockPayload {
 pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<UnlockPayload>) -> ApiResult<Json<Value>> {
     let claims = extract_claims_pending(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
-    if user.auth_provider != "local" {
+    if !uses_remote_2fa(&user.auth_provider) {
         return Err(err(StatusCode::BAD_REQUEST, "This account signs in through its provider; use Switch User to sign in again"));
     }
     let needs_code = state.policy.read().lock_requires_2fa
@@ -310,7 +324,7 @@ pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, ip: C
             Json(json!({ "error": "Enter the code from your authenticator app", "code": "two_factor_required" })),
         ));
     }
-    verify_identity(&state, &user, &p.password, if needs_code { p.code.as_deref() } else { None }, "UNLOCK", &ip)?;
+    verify_identity(&state, &user, &p.password, if needs_code { p.code.as_deref() } else { None }, "UNLOCK", &ip).await?;
     state.sessions.unlock(&claims.sid);
     Ok(Json(json!({ "unlocked": true })))
 }
@@ -330,7 +344,7 @@ pub async fn api_2fa_status(State(state): State<AppState>, headers: HeaderMap) -
     let tf = state.db.get_two_factor(&user.id).map_err(db_err)?;
     let policy = state.policy.read().clone();
     Ok(Json(json!({
-        "available": user.auth_provider == "local",
+        "available": uses_remote_2fa(&user.auth_provider),
         "enabled": tf.enabled(),
         "recovery_codes_left": tf.recovery_hashes.len(),
         "required": policy.requires_2fa(&user.role),
@@ -340,7 +354,7 @@ pub async fn api_2fa_status(State(state): State<AppState>, headers: HeaderMap) -
 pub async fn api_2fa_setup(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
     let claims = extract_claims_setup(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
-    if user.auth_provider != "local" {
+    if !uses_remote_2fa(&user.auth_provider) {
         return Err(err(StatusCode::BAD_REQUEST, "Your sign-in provider handles two-factor authentication"));
     }
     if state.db.get_two_factor(&user.id).map_err(db_err)?.enabled() {
@@ -399,7 +413,7 @@ pub async fn api_2fa_disable(State(state): State<AppState>, headers: HeaderMap, 
     if state.policy.read().requires_2fa(&user.role) {
         return Err(err(StatusCode::FORBIDDEN, "Two-factor authentication is required for your role and cannot be turned off"));
     }
-    verify_identity(&state, &user, &p.password, Some(&p.code), "TWO_FACTOR_DISABLE", &ip)?;
+    verify_identity(&state, &user, &p.password, Some(&p.code), "TWO_FACTOR_DISABLE", &ip).await?;
     state.db.disable_totp(&user.id).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "TWO_FACTOR_DISABLED", None, None, None, None);
     super::email::notify_user(&state, &user, "Two-factor authentication was turned off", "Two-factor authentication was turned off");
@@ -409,7 +423,7 @@ pub async fn api_2fa_disable(State(state): State<AppState>, headers: HeaderMap, 
 pub async fn api_2fa_recovery_codes(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<ConfirmPayload>) -> ApiResult<Json<Value>> {
     let claims = extract_claims(&state, &headers)?;
     let user = load_user(&state, &claims.sub)?;
-    verify_identity(&state, &user, &p.password, Some(&p.code), "RECOVERY_CODES", &ip)?;
+    verify_identity(&state, &user, &p.password, Some(&p.code), "RECOVERY_CODES", &ip).await?;
     let (codes, hashes) = totp::generate_recovery_codes();
     state.db.set_recovery_codes(&user.id, &hashes).map_err(db_err)?;
     state.db.log_audit(Some(&user.id), &user.username, "RECOVERY_CODES_RENEWED", None, None, None, None);

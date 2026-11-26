@@ -35,7 +35,7 @@ min_password_length = 12
 
 [auth.header_login]
 # Sign users in from headers set by a reverse proxy that already checked them
-# (Authelia, Authentik forward auth). Only requests from server.trusted_proxies count,
+# (forward auth). Only requests from server.trusted_proxies count,
 # so the proxy must remove these headers from what visitors send. Off by default.
 enabled = false
 username_header = "Remote-User"
@@ -46,10 +46,10 @@ admin_group = "Remote-Admins"
 operator_group = "Remote-Operators"
 
 [oidc]
-# OpenID Connect / OAuth2 integration (Authentik, Keycloak, Authelia, Google, etc.)
+# OpenID Connect / OAuth2 sign-in with any OpenID Connect provider
 enabled = false
-provider_name = "Authentik"
-issuer_url = "https://authentik.example.com/application/o/remote/"
+provider_name = "Single sign-on"
+issuer_url = "https://sso.example.com/application/o/remote/"
 client_id = ""
 client_secret = ""
 redirect_uri = "http://localhost:8088/api/auth/oidc/callback"

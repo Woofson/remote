@@ -151,7 +151,7 @@ impl Default for OidcConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            provider_name: "Authentik".to_string(),
+            provider_name: "Single sign-on".to_string(),
             issuer_url: "https://authentik.example.com/application/o/remote/".to_string(),
             client_id: String::new(),
             client_secret: String::new(),

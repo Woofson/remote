@@ -210,7 +210,7 @@ pub fn decrypt_secret(hex_payload: &str, master_key: &str) -> Result<String, Str
     String::from_utf8(plaintext).map_err(|e| format!("UTF-8 decode error: {}", e))
 }
 
-// ================= OIDC / Authentik Service =================
+// ================= OIDC Service =================
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct OidcDiscoveryDocument {

@@ -3976,6 +3976,7 @@ body.float-dragging .float-body { pointer-events: none; }
 
 /* Session recording (#31) */
 .group-rec-btn.on { color: #f87171 !important; border-color: rgba(239, 68, 68, 0.5) !important; }
+.group-dir-btn.on { color: var(--woofson-accent, #f59e0b) !important; border-color: color-mix(in srgb, var(--woofson-accent, #f59e0b) 50%, transparent) !important; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rec-filters { grid-template-columns: 2fr 1fr 2fr; }
 .rec-content-search { display: flex; gap: 6px; min-width: 0; }
 .rec-content-search .form-input { flex: 1; }

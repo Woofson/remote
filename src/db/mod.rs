@@ -87,6 +87,9 @@ pub struct Group {
     /// Sessions of members are recorded (#31).
     #[serde(default)]
     pub record_sessions: bool,
+    /// Directory group (#34) whose members are kept in this group at each directory sign-in.
+    #[serde(default)]
+    pub directory_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +354,8 @@ impl Database {
         // Session recording (#31): set only through the admin calls, never by a plain connection save.
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE groups ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
+        // Directory sign-in (#34): a Remote group may follow a directory group.
+        let _ = conn.execute("ALTER TABLE groups ADD COLUMN directory_group TEXT;", []);
         conn.execute_batch(recordings::SCHEMA)?;
         conn.execute_batch(login_states::SCHEMA)?;
         conn.execute_batch(trusted_devices::SCHEMA)?;
@@ -829,7 +834,7 @@ impl Database {
 
     pub fn list_groups(&self) -> SqlResult<Vec<Group>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT id, name, description, created_at, record_sessions FROM groups ORDER BY name ASC")?;
+        let mut stmt = conn.prepare("SELECT id, name, description, created_at, record_sessions, directory_group FROM groups ORDER BY name ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok(Group {
                 id: row.get(0)?,
@@ -837,6 +842,7 @@ impl Database {
                 description: row.get(2)?,
                 created_at: row.get(3)?,
                 record_sessions: row.get::<_, i64>(4)? != 0,
+                directory_group: row.get::<_, Option<String>>(5)?.filter(|s| !s.trim().is_empty()),
             })
         })?;
         let mut list = Vec::new();
@@ -860,6 +866,7 @@ impl Database {
             description: description.map(|s| s.to_string()),
             created_at: now,
             record_sessions: false,
+            directory_group: None,
         })
     }
 
@@ -888,6 +895,35 @@ impl Database {
             map.entry(g).or_default().push(u);
         }
         Ok(map)
+    }
+
+    /// Link a group to a directory group (None removes the link); false when there is no such group.
+    pub fn set_group_directory(&self, id: &str, directory_group: Option<&str>) -> SqlResult<bool> {
+        let n = self
+            .conn
+            .lock()
+            .execute("UPDATE groups SET directory_group = ?1 WHERE id = ?2", params![directory_group, id])?;
+        Ok(n > 0)
+    }
+
+    /// Put a user in, or take them out of, these groups. Returns the groups that changed,
+    /// as (group name, now a member).
+    pub fn sync_user_groups(&self, user_id: &str, wanted: &[(String, String, bool)]) -> SqlResult<Vec<(String, bool)>> {
+        let mut conn = self.conn.lock();
+        let tx = conn.transaction()?;
+        let mut changed = Vec::new();
+        for (group_id, name, member) in wanted {
+            let n = if *member {
+                tx.execute("INSERT OR IGNORE INTO user_groups (user_id, group_id) VALUES (?1, ?2)", params![user_id, group_id])?
+            } else {
+                tx.execute("DELETE FROM user_groups WHERE user_id = ?1 AND group_id = ?2", params![user_id, group_id])?
+            };
+            if n > 0 {
+                changed.push((name.clone(), *member));
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     /// Replace a group's members in one transaction.

@@ -360,6 +360,25 @@ pub async fn authenticate(s: &DirectorySettings, secret: &str, username: &str, p
     })
 }
 
+/// Check the password of a Remote directory account (lock screen, confirming 2FA changes).
+/// Ok(false) for a wrong password; Err with a message when the directory cannot answer.
+pub async fn check_password(state: &AppState, user: &User, password: &str) -> Result<bool, String> {
+    let s = DirectorySettings::load(&state.db);
+    if !s.ready() {
+        return Err("Directory sign-in is switched off. Use Switch User, or ask an admin.".into());
+    }
+    let secret = state.config.read().server.jwt_secret.clone();
+    match authenticate(&s, &secret, &user.username, password).await {
+        // The directory must still know this person under the same name.
+        Ok(person) => Ok(person.username.eq_ignore_ascii_case(&user.username)),
+        Err(DirError::Unreachable(e)) | Err(DirError::Setup(e)) => {
+            tracing::warn!("Directory password check for {}: {}", user.username, e);
+            Err("The directory server could not be reached. Try again later, or ask an admin.".into())
+        }
+        Err(_) => Ok(false),
+    }
+}
+
 // ---------------- Signing in to Remote ----------------
 
 fn refused() -> (StatusCode, Json<Value>) {
@@ -464,9 +483,36 @@ pub async fn sign_in(state: &AppState, s: &DirectorySettings, typed: &str, passw
             new_user
         }
     };
+    sync_linked_groups(state, &user, &person.groups, ip);
     state.limiter.record_success(typed);
     state.limiter.record_success(&ip.limiter_key());
     Ok(user)
+}
+
+/// Remote groups that follow a directory group: put the person in or take them out.
+fn sync_linked_groups(state: &AppState, user: &User, groups: &DirectoryGroups, ip: &ClientIp) {
+    let linked: Vec<(String, String, bool)> = state
+        .db
+        .list_groups()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|g| g.directory_group.as_deref().map(|d| (g.id.clone(), g.name.clone(), groups.contains(d))))
+        .collect();
+    if linked.is_empty() {
+        return;
+    }
+    match state.db.sync_user_groups(&user.id, &linked) {
+        Ok(changed) if !changed.is_empty() => {
+            let text = changed
+                .iter()
+                .map(|(name, member)| format!("{} '{}'", if *member { "added to" } else { "removed from" }, name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            state.db.log_audit(Some(&user.id), &user.username, "GROUP_MEMBERSHIP", None, None, Some(&format!("Directory groups: {}", text)), ip.as_opt());
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("Directory sign-in: could not update groups of {}: {}", user.username, e),
+    }
 }
 
 // ---------------- Admin ----------------

@@ -528,7 +528,7 @@ async function fetchAuthProviders() {
       const data = await res.json();
       if (data.oidc && data.oidc.enabled) {
         document.getElementById('oidc-login-section').style.display = 'block';
-        document.getElementById('oidc-provider-btn-label').textContent = `Sign in with ${data.oidc.provider_name || 'Authentik'}`;
+        document.getElementById('oidc-provider-btn-label').textContent = `Sign in with ${data.oidc.provider_name || 'single sign-on'}`;
       } else {
         document.getElementById('oidc-login-section').style.display = 'none';
       }
@@ -5164,7 +5164,7 @@ function renderUsersTable(users) {
         <td><span class="user-role-badge">${roleName}</span></td>
         <td><span class="pane-protocol-badge"${u.auth_provider === 'ldap' ? ' title="Directory account: signs in with the directory password; the role follows the directory groups at every sign-in"' : ''}>${u.auth_provider.toUpperCase()}</span></td>
         <td class="text-muted text-sm">${u.groups && u.groups.length ? u.groups.map(escapeHtml).join(', ') : '—'}</td>
-        <td>${u.auth_provider !== 'local' ? '<span class="text-muted text-sm">provider</span>' : u.two_factor ? '<span class="tf-pill on">ON</span>' : '<span class="tf-pill off">off</span>'}</td>
+        <td>${!['local', 'ldap'].includes(u.auth_provider) ? '<span class="text-muted text-sm">provider</span>' : u.two_factor ? '<span class="tf-pill on">ON</span>' : '<span class="tf-pill off">off</span>'}</td>
         <td>${statusBadge}</td>
         <td class="text-muted">${new Date(u.created_at).toLocaleDateString()}</td>
         <td>
@@ -5974,6 +5974,7 @@ function renderGroups() {
             <span class="group-row-meta">· ${members.length} member${members.length === 1 ? '' : 's'}${members.length ? ': ' + members.map(escapeHtml).join(', ') : ''}</span>
           </div>
           <button class="btn btn-secondary btn-sm group-rec-btn${g.record_sessions ? ' on' : ''}" data-group-action="recording" data-group-id="${escapeHtml(g.id)}" title="${g.record_sessions ? 'Sessions of all members are recorded. Click to stop.' : 'Record the sessions of all members'}">${g.record_sessions ? 'Recording on' : 'Recording off'}</button>
+          <button class="btn btn-secondary btn-sm group-dir-btn${g.directory_group ? ' on' : ''}" data-group-action="directory" data-group-id="${escapeHtml(g.id)}" title="${g.directory_group ? `Directory accounts in the directory group ${escapeHtml(g.directory_group)} are put in this group at sign-in, and taken out when they leave it. Click to change.` : 'Let this group follow a directory group (directory sign-in)'}">${g.directory_group ? `Directory: ${escapeHtml(g.directory_group)}` : 'Directory'}</button>
           <button class="btn btn-secondary btn-sm" data-group-action="members" data-group-id="${escapeHtml(g.id)}">Members</button>
           <button class="btn btn-secondary btn-sm" data-group-action="rename" data-group-id="${escapeHtml(g.id)}">Rename</button>
           <button class="btn btn-secondary btn-sm text-danger" data-group-action="delete" data-group-id="${escapeHtml(g.id)}">Delete</button>
@@ -5991,7 +5992,26 @@ document.addEventListener('click', (e) => {
   if (btn.dataset.groupAction === 'rename') renameGroup(group);
   if (btn.dataset.groupAction === 'delete') deleteGroup(group);
   if (btn.dataset.groupAction === 'recording') setGroupRecording(group, !group.record_sessions);
+  if (btn.dataset.groupAction === 'directory') setGroupDirectory(group);
 });
+
+/** Let a group follow a directory group (#34): directory accounts are put in or taken out at sign-in. */
+async function setGroupDirectory(group) {
+  const value = await uiPrompt('Directory accounts that are members of this directory group (name or full DN) are put in this group when they sign in, and taken out when they leave it. Local accounts and other members are not touched. Leave empty to stop following.', {
+    title: `"${group.name}" follows a directory group`,
+    value: group.directory_group || '',
+    placeholder: 'e.g. Finance-Staff',
+    okText: 'Save',
+  });
+  if (value === null || value === undefined) return;
+  const res = await apiFetch(`api/groups/${encodeURIComponent(group.id)}/directory`, { method: 'PUT', body: JSON.stringify({ directory_group: value.trim() || null }) });
+  if (!res.ok) {
+    showToast(await readError(res, 'Could not save'), 'danger');
+    return;
+  }
+  showToast(value.trim() ? `"${group.name}" now follows ${value.trim()}` : `"${group.name}" no longer follows a directory group`, 'success');
+  loadGroups();
+}
 
 /** Record the sessions of every member of a group (#31). */
 async function setGroupRecording(group, on) {
@@ -7549,12 +7569,12 @@ async function loadAdminSecurity() {
     p = await pr.json();
     if (ur.ok) users = await ur.json();
   } catch (e) { return; }
-  const missing = users.filter((u) => u.is_active && u.auth_provider === 'local' && !u.two_factor);
+  const missing = users.filter((u) => u.is_active && ['local', 'ldap'].includes(u.auth_provider) && !u.two_factor);
   const roleBox = (role, label) => `<label class="pw-check"><input type="checkbox" class="sec-role" value="${role}" ${p.require_2fa_roles.includes(role) ? 'checked' : ''}/> <span>${label}</span></label>`;
   body.innerHTML = `
     <div class="settings-section-title">Two-factor authentication</div>
     <div class="sec-row">
-      <div class="sec-label">Required for<div class="pw-hint">Local accounts with these roles must set it up at their next sign-in. Single sign-on users use their provider's 2FA.</div></div>
+      <div class="sec-label">Required for<div class="pw-hint">Local and directory accounts with these roles must set it up at their next sign-in. Single sign-on users use their provider's 2FA.</div></div>
       <div class="sec-roles">${roleBox('admin', 'Admin')}${roleBox('operator', 'Operator')}${roleBox('viewer', 'Viewer')}</div>
     </div>
     <div class="sec-row">

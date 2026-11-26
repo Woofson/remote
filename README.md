@@ -54,7 +54,8 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 - Browse, upload, download and organise both in the browser. RDP sessions with drive redirection see them as `\\tsclient\Files` and `\\tsclient\Shared` (read-only for non-admins).
 
 **Users and access**
-- Local accounts with Argon2id password hashing, or single sign-on with OpenID Connect (Authentik, Keycloak and others) with automatic accounts and group-to-role mapping.
+- Local accounts with Argon2id password hashing, or single sign-on with any OpenID Connect provider, with automatic accounts and group-to-role mapping.
+- **Directory sign-in** with LDAP or Active Directory accounts from the normal login form: accounts are made at the first sign-in, roles and Remote groups follow the directory groups (also groups inside groups), and Remote's two-factor authentication works for them too. Set up and tested under Admin > Directory.
 - Roles: Admin, Operator and Viewer. Per connection you control who may connect or edit, the clipboard direction, file transfer and view-only mode.
 - Connections are private or global; admins choose a connection's owner and share it with users and groups. Saved connection passwords and keys are encrypted (AES-256-GCM).
 - Connections directory with search, filters and sorting; an editor with a **Test connection** button; icons from [selfh.st/icons](https://selfh.st/icons/) (fetched and cached by the server) or your own upload.
@@ -111,11 +112,11 @@ Settings live in `config.toml` in the working directory. Start from `config.exam
 | `[clipboard]` | `default_mode` (`bidirectional`, `server_to_client`, `client_to_server`, `disabled`), `max_text_size_bytes` |
 | `[logging]` | `level` |
 
-Two-factor requirements, login lifetime and idle timeout are set under **Admin > Security**, and the mail server under **Admin > Email**. Both are stored in the database.
+Two-factor requirements, login lifetime and idle timeout are set under **Admin > Security**, the mail server under **Admin > Email**, and directory sign-in under **Admin > Directory**. They are stored in the database.
 
 ### Behind a reverse proxy
 
-Remote works behind Nginx, Caddy, Traefik, HAProxy and Cloudflare Tunnel, at its own address or under a sub-path such as `https://example.com/remote/`. Open sessions stay connected through proxy idle limits, the activity log shows visitors' real addresses, and Remote can sign people in from Authelia or Authentik forward-auth headers. Settings and tested example configurations: [docs/reverse-proxy.md](docs/reverse-proxy.md).
+Remote works behind Nginx, Caddy, Traefik, HAProxy and Cloudflare Tunnel, at its own address or under a sub-path such as `https://example.com/remote/`. Open sessions stay connected through proxy idle limits, the activity log shows visitors' real addresses, and Remote can sign people in from the headers of a sign-in proxy (forward auth). Settings and tested example configurations: [docs/reverse-proxy.md](docs/reverse-proxy.md).
 
 Health checks for monitoring and load balancers: `/api/health` and `/api/ready`.
 

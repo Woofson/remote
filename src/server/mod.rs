@@ -144,6 +144,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/groups/:id", put(api_update_group).delete(api_delete_group))
         .route("/api/groups/:id/members", put(api_set_group_members))
         .route("/api/groups/:id/recording", put(api_set_group_recording))
+        .route("/api/groups/:id/directory", put(api_set_group_directory))
         .route(
             "/api/connections/:id/permissions",
             get(api_get_connection_permissions).put(api_set_connection_permissions),
@@ -294,7 +295,7 @@ fn authenticate(state: &AppState, token: &str, opts: AuthOpts) -> Result<Claims,
         ));
     }
     if !opts.allow_pending
-        && user.auth_provider == "local"
+        && security::uses_remote_2fa(&user.auth_provider)
         && policy.requires_2fa(&user.role)
         && !state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false)
     {
@@ -444,8 +445,8 @@ pub async fn api_login(
         ip.as_opt(),
     );
 
-    // Someone with 2FA on has nothing left to set up. (Directory accounts: 2FA comes in step 2 of #34.)
-    let setup_required = !two_factor && user.auth_provider == "local" && state.policy.read().requires_2fa(&user.role);
+    // Someone with 2FA on has nothing left to set up.
+    let setup_required = !two_factor && security::uses_remote_2fa(&user.auth_provider) && state.policy.read().requires_2fa(&user.role);
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({
         "token": token,
@@ -499,7 +500,7 @@ pub async fn api_me(
     let can_change_password = user.auth_provider == "local";
     let policy = state.policy.read().clone();
     let two_factor = state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false);
-    let setup_required = can_change_password && policy.requires_2fa(&user.role) && !two_factor;
+    let setup_required = security::uses_remote_2fa(&user.auth_provider) && policy.requires_2fa(&user.role) && !two_factor;
     let mut body = json!(UserSafe::from(user));
     body["must_change_password"] = json!(must_change);
     body["can_change_password"] = json!(can_change_password);
@@ -1211,6 +1212,46 @@ pub struct GroupRecordingPayload {
 }
 
 /// Admins: record the sessions of every member of a group (#31).
+#[derive(Deserialize)]
+pub struct GroupDirectoryPayload {
+    /// Directory group name or DN; empty removes the link.
+    pub directory_group: Option<String>,
+}
+
+/// Admin: let a Remote group follow a directory group (#34). Directory users are put in or
+/// taken out at each sign-in; other members are not touched.
+pub async fn api_set_group_directory(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+    headers: HeaderMap,
+    Json(payload): Json<GroupDirectoryPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let link = payload.directory_group.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let name = state.db.list_groups().ok().and_then(|g| g.into_iter().find(|g| g.id == id)).map(|g| g.name);
+    let found = state
+        .db
+        .set_group_directory(&id, link)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
+    if !found {
+        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "Group not found" }))));
+    }
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "GROUP_UPDATED",
+        None,
+        None,
+        Some(&match link {
+            Some(l) => format!("Group '{}' follows directory group '{}'", name.unwrap_or_default(), l),
+            None => format!("Group '{}' no longer follows a directory group", name.unwrap_or_default()),
+        }),
+        None,
+    );
+    Ok(Json(json!({ "directory_group": link })))
+}
+
 pub async fn api_set_group_recording(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
