@@ -4,6 +4,30 @@ All notable changes to Remote are documented here. The project follows [Semantic
 
 ---
 
+## [0.23.0] - 2026-11-26
+
+### Upgrading from 0.22.0
+- Nothing to do. Directory sign-in, printing and the microphone are off until an admin or connection owner turns them on. New database tables are created automatically.
+
+### Added
+- **Sign in with LDAP / Active Directory accounts** (#34, Admin > Directory). People use their directory account in the normal login form; the Remote account is made at the first sign-in and the role (Admin / Operator / everyone else) follows the directory groups at every sign-in, including groups inside groups in Active Directory. Optional: only one group may sign in. LDAPS or StartTLS, certificate check, service account password stored encrypted, presets for Active Directory and OpenLDAP, and a Test button that checks the form step by step. Local accounts always keep working, also when the directory is down. A Remote group can follow a directory group, so connections assigned to it follow the directory. Directory accounts use Remote's two-factor authentication and lock screen too.
+- **Print from Windows to a PDF in the browser** (#36). A per-connection option adds a printer "Remote" to RDP sessions (Windows 10 / Server 2016 or newer). Print jobs are saved in your Files (Prints folder) and a notice in the pane opens or saves the PDF. Follows the connection's file transfer setting; every job is in the activity log.
+- **Microphone into RDP sessions** (#37). A per-connection option sends the browser's microphone to Windows, for calls and dictation. The browser asks for permission when the session starts; the microphone is only live while a program in Windows records, shown by a red microphone button in the pane header, which also mutes it. Needs Remote opened over HTTPS.
+- **Phones and tablets**: the key bar (Esc, Tab, Ctrl, Alt, arrows, F-keys) now sits right above the on-screen keyboard, with a tools button for everything the session toolbar offers, tabs and Disconnect; no floating toolbar over the session in full window. A calmer, frosted look.
+- **Terminal text size on the fly**: pinch the terminal, use A− / A+ in the tools menu, or Ctrl+Shift+plus / minus / 0. Remembered on your account, separately for touch screens and PCs.
+- **Install Remote as an app** ("Install app" / "Add to Home screen"): its own window without the address bar.
+
+### Changed
+- Header and session bar follow the Phone / Tablet / PC sizes: on phones and tablets the tools are in one menu, the profile button shows only the picture, and on phones the session bar keeps its main buttons with the rest in a "more" menu.
+- Connections: on phones each connection is a card; its buttons show when you tap it. Search and filters open from a magnifier button next to the + above the list. Deleting a connection is done in the editor.
+- Texts no longer name third-party products (authenticator apps, sign-in providers); the sign-in button says "Sign in with single sign-on" unless a provider name is set.
+
+### Fixed
+- Two-finger gestures in sessions no longer zoom the whole page.
+- On phones the connection editor's Save and Cancel buttons were cut off.
+
+---
+
 ## [0.22.0] - 2026-11-26
 
 ### Added
