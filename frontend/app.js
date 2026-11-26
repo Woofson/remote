@@ -279,8 +279,12 @@ async function checkAuth() {
     if (res.ok) {
       state.currentUser = await res.json();
       continueAfterLogin();
-    } else if (!(await tryHeaderLogin())) {
-      showLoginModal();
+    } else {
+      // The saved login is no longer valid: forget it, and say why on the login screen.
+      const data = await res.json().catch(() => ({}));
+      if (data.code === 'session_expired' && data.error) sessionStorage.setItem('remote_logout_reason', data.error);
+      forgetSavedToken();
+      if (!(await tryHeaderLogin())) showLoginModal();
     }
   } catch (err) {
     console.error('Auth check error:', err);
@@ -393,9 +397,12 @@ function onAuthenticated() {
   }
   updateHeaderProfile();
   Promise.all([loadConnections(), prefsLoaded]).then(restoreRememberedTabs).then(openPendingConnection).then(openPendingShare);
-  if (sessionStorage.getItem('remote_session_locked') === 'true') {
-    lockSession();
+  startLoginWatch();
+  const serverLocked = !!state.currentUser.locked;
+  if (serverLocked || sessionStorage.getItem('remote_session_locked') === 'true') {
+    lockSession(serverLocked);
   } else {
+    setAppHidden(false);
     showToast(`Welcome back, ${state.currentUser.display_name || state.currentUser.username}!`);
   }
 }
@@ -448,7 +455,23 @@ function randomizeLoginBackground(targetEl = null) {
   elements.forEach(el => { el.style.backgroundImage = bgStyle; });
 }
 
+/** Hide or show the app behind the sign-in screens (see body.auth-gate in app.css). */
+function setAppHidden(hidden) {
+  document.body.classList.toggle('auth-gate', hidden);
+}
+
+/** Drop the saved login token (it was refused by the server). */
+function forgetSavedToken() {
+  state.jwtToken = '';
+  localStorage.removeItem('remote_token');
+  localStorage.removeItem('remotedog_token');
+  for (const path of new Set([cookiePath(), '/'])) {
+    document.cookie = `remote_token=; path=${path}; max-age=0; SameSite=Lax`;
+  }
+}
+
 function showLoginModal() {
+  setAppHidden(true);
   const modal = document.getElementById('login-modal');
   modal.classList.add('active');
   modal.style.display = 'flex';
@@ -642,9 +665,7 @@ function sessionExpired(message) {
   if (!state.jwtToken) return;
   stopIdleWatch();
   state.lastUsername = state.currentUser && state.currentUser.username;
-  state.jwtToken = '';
-  localStorage.removeItem('remote_token');
-  localStorage.removeItem('remotedog_token');
+  forgetSavedToken();
   sessionStorage.removeItem('remote_session_locked');
   const lock = document.getElementById('session-lock-screen');
   if (lock) { lock.classList.remove('active'); lock.style.display = 'none'; }
@@ -693,6 +714,7 @@ function lockSession(serverLocked = false) {
   if (!serverLocked && state.jwtToken) {
     apiFetch('api/auth/lock', { method: 'POST' }).catch(() => {});
   }
+  setAppHidden(true);
   const lockEl = document.getElementById('session-lock-screen');
   const alreadyShown = lockEl && lockEl.style.display === 'flex';
   const codeGroup = document.getElementById('lock-2fa-group');
@@ -761,6 +783,7 @@ async function submitUnlockSession() {
         lockScreen.classList.remove('active');
         lockScreen.style.display = 'none';
       }
+      setAppHidden(false);
       if (pwdInput) pwdInput.value = '';
       showToast('Session unlocked', 'success');
       if (sessionStorage.getItem(PENDING_CONNECT_KEY)) {
@@ -7025,6 +7048,41 @@ function startIdleWatch() {
   idleWatch.lastInput = Date.now();
   clearInterval(idleWatch.timer);
   idleWatch.timer = setInterval(checkIdle, 10 * 1000);
+}
+
+// ---- Login watch: notice an ended or locked login even when the page is left alone ----
+const loginWatch = { timer: null, last: 0, bound: false };
+const LOGIN_CHECK_MS = 60 * 1000;
+
+/** Ask the server whether this login is still valid. Does not count as activity. */
+async function checkLoginStillValid(force = false) {
+  if (!state.jwtToken || !state.currentUser) return;
+  const now = Date.now();
+  if (!force && now - loginWatch.last < 5000) return;
+  loginWatch.last = now;
+  try {
+    // An ended login answers with session_expired, which apiFetch turns into the login screen.
+    const res = await apiFetch('api/auth/me');
+    if (!res.ok) return;
+    const me = await res.json();
+    if (me.locked && !isLockShown()) lockSession(true);
+  } catch (e) {
+    // Server unreachable: keep the page; the next check tries again.
+  }
+}
+
+function startLoginWatch() {
+  if (!loginWatch.bound) {
+    loginWatch.bound = true;
+    const soon = () => { if (document.visibilityState === 'visible') checkLoginStillValid(); };
+    document.addEventListener('visibilitychange', soon);
+    window.addEventListener('focus', soon);
+    window.addEventListener('online', soon);
+    window.addEventListener('pageshow', (e) => { if (e.persisted) checkLoginStillValid(true); });
+  }
+  loginWatch.last = Date.now();
+  clearInterval(loginWatch.timer);
+  loginWatch.timer = setInterval(() => checkLoginStillValid(true), LOGIN_CHECK_MS);
 }
 
 function stopIdleWatch() {

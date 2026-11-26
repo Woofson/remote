@@ -89,6 +89,8 @@ pub enum SessionStatus {
     Locked,
     /// Ended by the idle timeout (idle action "logout").
     Expired,
+    /// Ended by logging out (for example in another tab).
+    LoggedOut,
 }
 
 struct SessionState {
@@ -96,11 +98,13 @@ struct SessionState {
     locked: bool,
     /// Ended by the idle timeout; stays ended until pruned.
     expired: bool,
+    /// Ended by logging out; stays ended until pruned.
+    logged_out: bool,
 }
 
 impl SessionState {
     fn fresh(locked: bool) -> Self {
-        Self { last_activity: Instant::now(), locked, expired: false }
+        Self { last_activity: Instant::now(), locked, expired: false, logged_out: false }
     }
 }
 
@@ -118,6 +122,9 @@ impl SessionTracker {
         }
         let mut map = self.sessions.lock();
         let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
+        if s.logged_out {
+            return SessionStatus::LoggedOut;
+        }
         if s.expired {
             return SessionStatus::Expired;
         }
@@ -136,7 +143,7 @@ impl SessionTracker {
     /// The user did something (typing, clicking). Ignored while locked.
     pub fn touch(&self, sid: &str) {
         if let Some(s) = self.sessions.lock().get_mut(sid) {
-            if !s.locked && !s.expired {
+            if !s.locked && !s.expired && !s.logged_out {
                 s.last_activity = Instant::now();
             }
         }
@@ -152,7 +159,7 @@ impl SessionTracker {
     pub fn unlock(&self, sid: &str) {
         let mut map = self.sessions.lock();
         let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
-        if !s.expired {
+        if !s.expired && !s.logged_out {
             s.locked = false;
             s.last_activity = Instant::now();
         }
@@ -165,7 +172,7 @@ impl SessionTracker {
         }
         let mut map = self.sessions.lock();
         let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
-        s.expired = true;
+        s.logged_out = true;
     }
 
     /// Drop entries idle for longer than any login can live (keeps memory small).
@@ -262,8 +269,9 @@ mod tests {
         t.unlock("a");
         assert_eq!(t.check("a", &p), SessionStatus::Active);
         t.end("a");
-        assert_eq!(t.check("a", &p), SessionStatus::Expired);
-        assert_eq!(t.check("a", &p), SessionStatus::Expired, "stays ended");
+        assert_eq!(t.check("a", &p), SessionStatus::LoggedOut);
+        t.unlock("a");
+        assert_eq!(t.check("a", &p), SessionStatus::LoggedOut, "stays ended");
     }
 
     #[test]

@@ -242,15 +242,16 @@ fn coded_err(code: StatusCode, err_code: &str, msg: &str) -> (StatusCode, Json<V
 /// Unless allowed, a required password change or 2FA setup blocks everything else.
 fn authenticate(state: &AppState, token: &str, opts: AuthOpts) -> Result<Claims, (StatusCode, Json<Value>)> {
     let secret = state.config.read().server.jwt_secret.clone();
-    let claims = verify_jwt(token, &secret).map_err(|e| auth_err(StatusCode::UNAUTHORIZED, &e))?;
+    let claims = verify_jwt(token, &secret)
+        .map_err(|_| coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Your login has expired, please sign in again"))?;
 
     let user = state
         .db
         .get_user_by_id(&claims.sub)
         .map_err(|e| auth_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?
-        .ok_or_else(|| auth_err(StatusCode::UNAUTHORIZED, "Session is no longer valid, please log in again"))?;
+        .ok_or_else(|| coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Session is no longer valid, please log in again"))?;
     if !user.is_active {
-        return Err(auth_err(StatusCode::FORBIDDEN, "Account is disabled"));
+        return Err(coded_err(StatusCode::FORBIDDEN, "session_expired", "Account is disabled"));
     }
 
     let (generation, must_change) = state
@@ -258,7 +259,7 @@ fn authenticate(state: &AppState, token: &str, opts: AuthOpts) -> Result<Claims,
         .get_user_security(&user.id)
         .map_err(|e| auth_err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
     if claims.gen != generation {
-        return Err(auth_err(StatusCode::UNAUTHORIZED, "Session has ended, please log in again"));
+        return Err(coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Session has ended, please log in again"));
     }
 
     let policy = state.policy.read().clone();
@@ -269,6 +270,9 @@ fn authenticate(state: &AppState, token: &str, opts: AuthOpts) -> Result<Claims,
     match state.sessions.check(&claims.sid, &policy) {
         SessionStatus::Expired => {
             return Err(coded_err(StatusCode::UNAUTHORIZED, "session_expired", "Signed out after inactivity, please sign in again"));
+        }
+        SessionStatus::LoggedOut => {
+            return Err(coded_err(StatusCode::UNAUTHORIZED, "session_expired", "You were signed out, please sign in again"));
         }
         SessionStatus::Locked if !opts.allow_locked => {
             return Err(coded_err(StatusCode::LOCKED, "session_locked", "The session is locked"));
@@ -475,6 +479,8 @@ pub async fn api_me(
     body["can_change_password"] = json!(can_change_password);
     body["two_factor_enabled"] = json!(two_factor);
     body["two_factor_setup_required"] = json!(setup_required);
+    // Lets a fresh page show the lock screen straight away, before anything else.
+    body["locked"] = json!(matches!(state.sessions.check(&claims.sid, &policy), SessionStatus::Locked));
     body["session_policy"] = json!({
         "max_login_hours": policy.max_login_hours,
         "idle_minutes": policy.idle_minutes,

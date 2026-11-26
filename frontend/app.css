@@ -61,6 +61,16 @@ body, html {
   font-size: 13px;
 }
 
+/* Until a valid, unlocked login is confirmed, only the sign-in screens and the dialogs that
+   belong to signing in are shown (no flash of the app on refresh, at login or at the lock screen). */
+body.auth-gate {
+  background-color: #101014;
+}
+body.auth-gate > *:not(#app),
+body.auth-gate #app > *:not(.login-screen-overlay):not(#pw-required):not(#tf-setup):not(#email-reset):not(#ui-dialog):not(#toast-container) {
+  visibility: hidden !important;
+}
+
 /* App Root Structure */
 .app-root {
   display: flex;
