@@ -2729,6 +2729,50 @@ kbd {
   gap: 8px;
 }
 
+/* Search and New connection, centred above the list; the search opens as a card. */
+.dir-top {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+.btn.dir-search-btn {
+  position: relative;
+  color: var(--woofson-text-main);
+}
+.btn.dir-search-btn svg { color: var(--woofson-accent); }
+.btn.dir-search-btn.active,
+.btn.dir-search-btn.filtered { border-color: color-mix(in srgb, var(--woofson-accent) 55%, var(--woofson-border)); }
+.btn.dir-search-btn.active { background: color-mix(in srgb, var(--woofson-accent) 10%, transparent); }
+.dir-filter-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--woofson-accent);
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.dir-filter-count[hidden] { display: none; }
+.dir-search-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--woofson-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-header);
+  animation: fadeIn 0.12s ease;
+}
+.dir-search-card[hidden] { display: none; }
+.dir-search-foot { display: flex; justify-content: flex-end; }
+
 .dir-toolbar .form-input {
   height: 30px;
   min-width: 0;
@@ -2853,6 +2897,16 @@ kbd {
   color: var(--woofson-text-main);
 }
 
+/* Connections: the + matches the close button next to it, with an accent-coloured + */
+.btn.dir-add-btn {
+  color: var(--woofson-accent);
+  border-color: color-mix(in srgb, var(--woofson-accent) 40%, var(--woofson-border));
+}
+.btn.dir-add-btn:hover { background: color-mix(in srgb, var(--woofson-accent) 12%, transparent); border-color: var(--woofson-accent); }
+
+.conn-edit-delete { margin-right: auto; color: var(--woofson-danger, #ef4444); border-color: color-mix(in srgb, var(--woofson-danger, #ef4444) 40%, transparent); }
+.conn-edit-delete:hover { background: rgba(239, 68, 68, 0.12); border-color: var(--woofson-danger, #ef4444); }
+
 .dir-icon-btn.danger:hover {
   background: rgba(239, 68, 68, 0.2);
   color: #ef4444;
@@ -2910,7 +2964,24 @@ kbd {
   width: 640px;
   max-width: calc(100vw - 32px);
   max-height: 90vh;
+  max-height: 90dvh;
+  display: flex;
+  flex-direction: column;
 }
+
+/* The fields scroll; the header and the Save / Cancel / Delete bar always stay visible. */
+#connection-edit-form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.conn-edit-box .modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.conn-edit-box .modal-footer { flex-shrink: 0; }
 
 .conn-edit-box .modal-header {
   cursor: grab;
@@ -3076,6 +3147,57 @@ kbd {
 .dir-access::before {
   content: "·";
   margin-right: 6px;
+}
+
+/* Phones: each connection as a small card. Name, address and owner each get their own line
+   and may wrap instead of being cut off. The buttons show only on the card you tap, so nothing
+   is connected or changed by accident; deleting is in the editor. */
+@media (max-width: 599.98px) {
+  .dir-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: start;
+    padding: 10px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .dir-row.open {
+    border-color: var(--woofson-accent);
+    background: color-mix(in srgb, var(--woofson-accent) 7%, var(--woofson-bg-void));
+  }
+  .dir-main { grid-column: 2; }
+  .dir-name {
+    flex-wrap: wrap;
+    white-space: normal;
+    font-size: 14px;
+    line-height: 1.3;
+    row-gap: 3px;
+  }
+  .dir-sub {
+    flex-wrap: wrap;
+    white-space: normal;
+    row-gap: 2px;
+    margin-top: 3px;
+    font-size: 12px;
+  }
+  .dir-sub code { word-break: break-all; }
+  /* The owner / access line always on a line of its own. */
+  .dir-sub .dir-access { flex-basis: 100%; }
+  .dir-sub .dir-access::before { content: none; }
+  .dir-policies { display: flex; flex-wrap: wrap; grid-column: 2; }
+  .dir-policies:empty { display: none; }
+  .dir-actions { display: none; grid-column: 2; gap: 2px; margin-left: -4px; }
+  .dir-row.open .dir-actions { display: flex; }
+  .dir-actions [data-dir-action="delete"] { display: none; }
+  .dir-actions [data-dir-action="connect"] {
+    height: 30px;
+    padding: 0 14px;
+    margin-right: 6px;
+    font-size: 12px;
+  }
+  .dir-icon-btn { width: 34px; height: 30px; }
 }
 
 /* Editor: fields always fit their column; no sideways scrolling */
@@ -4389,7 +4511,7 @@ html.touch-ui .remote-pane.maximized-pane:has(> .pane-body > .pane-tab-body.has-
   .pane-header-left { flex: 1 1 auto; min-width: 0; overflow: hidden; }
   .pane-header-right { flex-shrink: 0; }
   .pane-conn-name { flex: 0 1 auto; min-width: 0; max-width: none; }
-  .pane-protocol-badge { display: none !important; }
+  .pane-header .pane-protocol-badge { display: none !important; }
   .pane-badge-text { max-width: 60px; }
   /* With several tabs everything stays on one row; the tabs scroll sideways */
   .remote-pane.has-tabs .pane-header {

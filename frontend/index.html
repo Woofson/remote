@@ -71,7 +71,7 @@
         </div>
 
         <!-- Connections Directory Button -->
-        <button class="btn btn-icon desktop-only" id="btn-header-connections" onclick="openConnectionsModal()" title="Connections Directory">
+        <button class="btn btn-icon desktop-only" id="btn-header-connections" onclick="openConnectionsModal()" title="Connections">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
         </button>
 
@@ -892,14 +892,22 @@
         <div class="modal-header" id="connections-header">
           <div style="display: flex; align-items: center; gap: 8px;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--woofson-accent, #f59e0b);"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
-            <span style="font-weight: 700; font-size: 14px;">Connections Directory</span>
+            <span style="font-weight: 700; font-size: 14px; white-space: nowrap;">Connections</span>
           </div>
           <div style="display: flex; align-items: center; gap: 8px;">
-            <button class="btn btn-accent btn-sm" onclick="openAddConnectionModal()">+ New Connection</button>
             <button class="btn btn-icon" onclick="closeConnectionsModal()" title="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button>
           </div>
         </div>
         <div class="modal-body dir-body">
+          <!-- Search (opens the search and filters) and New connection, above the list -->
+          <div class="dir-top">
+            <button type="button" class="btn btn-icon dir-search-btn" id="dir-search-toggle" onclick="toggleDirSearch()" aria-expanded="false" aria-controls="dir-search-card" title="Search and filters" aria-label="Search and filters">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <span class="dir-filter-count" id="dir-filter-count" hidden></span>
+            </button>
+            <button class="btn btn-icon dir-add-btn" onclick="openAddConnectionModal()" title="New connection" aria-label="New connection"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+          </div>
+          <div class="dir-search-card" id="dir-search-card" hidden>
           <div class="dir-toolbar">
             <input type="search" id="connections-search-input" class="form-input" placeholder="Search name, host or tag" oninput="onSearchConnections(this.value)" autocomplete="off" />
             <select id="dir-filter-protocol" class="form-input" aria-label="Protocol">
@@ -919,6 +927,8 @@
               <option value="host">Sort: host</option>
               <option value="updated">Sort: recently changed</option>
             </select>
+          </div>
+          <div class="dir-search-foot"><button type="button" class="btn btn-sm" id="dir-search-clear" onclick="clearDirSearch()">Clear search and filters</button></div>
           </div>
           <div id="connections-list" class="dir-list"></div>
         </div>
@@ -1228,6 +1238,7 @@
             </div>
           </div>
           <div class="modal-footer">
+            <button type="button" class="btn conn-edit-delete" id="conn-edit-delete" style="display:none;" onclick="deleteConnectionFromEditor()" title="Delete this connection">Delete</button>
             <span id="conn-edit-error" class="conn-edit-error"></span>
             <button type="button" class="btn" onclick="closeConnectionEditModal()">Cancel</button>
             <button type="submit" class="btn btn-accent"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg> Save Connection</button>

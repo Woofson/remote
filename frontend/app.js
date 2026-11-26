@@ -1526,6 +1526,45 @@ function onSearchConnections(query) {
   renderConnectionsTable();
 }
 
+/** The Search button opens (or closes) the card with the search box and the filters. */
+function toggleDirSearch(open) {
+  const card = document.getElementById('dir-search-card');
+  const btn = document.getElementById('dir-search-toggle');
+  if (!card || !btn) return;
+  const show = typeof open === 'boolean' ? open : card.hidden;
+  card.hidden = !show;
+  btn.classList.toggle('active', show);
+  btn.setAttribute('aria-expanded', String(show));
+  if (show) setTimeout(() => document.getElementById('connections-search-input')?.focus(), 30);
+}
+
+function clearDirSearch() {
+  const input = document.getElementById('connections-search-input');
+  if (input) input.value = '';
+  state.connectionSearch = '';
+  document.getElementById('dir-filter-protocol').value = '';
+  document.getElementById('dir-filter-tag').value = '';
+  document.getElementById('dir-filter-scope').value = 'all';
+  document.getElementById('dir-sort').value = 'name';
+  renderConnectionsTable();
+}
+
+/** How many filters (and the search text) narrow the list: shown on the Search button. */
+function updateDirFilterCount() {
+  const n = [
+    state.connectionSearch,
+    document.getElementById('dir-filter-protocol')?.value,
+    document.getElementById('dir-filter-tag')?.value,
+    (document.getElementById('dir-filter-scope')?.value || 'all') !== 'all',
+  ].filter(Boolean).length;
+  const badge = document.getElementById('dir-filter-count');
+  if (badge) {
+    badge.hidden = n === 0;
+    badge.textContent = String(n);
+  }
+  document.getElementById('dir-search-toggle')?.classList.toggle('filtered', n > 0);
+}
+
 function connTags(c) {
   return (c.tags || '').split(',').map((t) => t.trim()).filter(Boolean);
 }
@@ -1545,7 +1584,16 @@ function setupDirectory() {
         return;
       }
       const btn = e.target.closest('[data-dir-action]');
-      if (!btn) return;
+      if (!btn) {
+        // Phones: a tap on a card shows its buttons (and hides those of the card shown before).
+        const row = e.target.closest('.dir-row');
+        if (row && isPhoneWidth()) {
+          const open = !row.classList.contains('open');
+          list.querySelectorAll('.dir-row.open').forEach((r) => r.classList.remove('open'));
+          row.classList.toggle('open', open);
+        }
+        return;
+      }
       const id = btn.dataset.id;
       if (btn.dataset.dirAction === 'connect') connectToTarget(id);
       if (btn.dataset.dirAction === 'link') copyTextToClipboard(connectionLink(id));
@@ -1553,7 +1601,12 @@ function setupDirectory() {
       if (btn.dataset.dirAction === 'edit') openEditConnectionModal(id);
       if (btn.dataset.dirAction === 'delete') deleteConnection(id);
     });
+    // Phones: a tap anywhere outside the cards hides the shown card's buttons.
+    document.getElementById('connections-box')?.addEventListener('click', (e) => {
+      if (!e.target.closest('.dir-row')) list.querySelectorAll('.dir-row.open').forEach((r) => r.classList.remove('open'));
+    });
     list.addEventListener('dblclick', (e) => {
+      if (isTouchDevice()) return; // a double tap must not connect by accident
       const row = e.target.closest('.dir-row');
       if (row && !e.target.closest('button')) connectToTarget(row.dataset.id);
     });
@@ -1578,6 +1631,7 @@ function renderConnectionsTable() {
   const scope = document.getElementById('dir-filter-scope').value;
   const sort = document.getElementById('dir-sort').value;
   const q = state.connectionSearch || '';
+  updateDirFilterCount();
 
   const rows = conns
     .filter((c) => !proto || c.protocol === proto)
@@ -1592,7 +1646,7 @@ function renderConnectionsTable() {
     });
 
   if (!rows.length) {
-    listEl.innerHTML = `<div class="dir-empty">${conns.length ? 'No connections match the filters.' : 'No connections yet. Use “+ New Connection” to add one.'}</div>`;
+    listEl.innerHTML = `<div class="dir-empty">${conns.length ? 'No connections match the filters.' : 'No connections yet. Use the + button to add one.'}</div>`;
     return;
   }
 
@@ -1650,6 +1704,7 @@ function setConnIcon(ref) {
 
 function openAddConnectionModal() {
   resetConnEditor();
+  document.getElementById('conn-edit-delete').style.display = 'none';
   document.getElementById('connection-edit-title').textContent = 'New Connection Target';
   fillWakeFields({});
   document.getElementById('conn-id').value = '';
@@ -1702,6 +1757,7 @@ function openEditConnectionModal(id) {
   const c = state.connections.find(item => item.id === id);
   if (!c) return;
   resetConnEditor();
+  document.getElementById('conn-edit-delete').style.display = c.user_permissions && c.user_permissions.can_edit === false ? 'none' : '';
   setTimeout(() => setConnIcon(c.icon || ''), 0);
 
   document.getElementById('connection-edit-title').textContent = `Edit Target — ${c.name}`;
@@ -2050,8 +2106,15 @@ async function handleSaveConnection(e) {
   }
 }
 
+/** The editor's Delete button (also how phones delete: the cards have no delete button). */
+async function deleteConnectionFromEditor() {
+  const id = document.getElementById('conn-id').value;
+  if (id && (await deleteConnection(id))) closeConnectionEditModal();
+}
+
 async function deleteConnection(id) {
-  if (!(await uiConfirm('Are you sure you want to delete this connection?', { title: 'Delete connection', okText: 'Delete', danger: true }))) return;
+  const c = (state.connections || []).find((x) => x.id === id);
+  if (!(await uiConfirm(`Delete ${c ? `"${c.name}"` : 'this connection'}? This cannot be undone.`, { title: 'Delete connection', okText: 'Delete', danger: true }))) return false;
   try {
     const res = await fetch(`api/connections/${id}`, {
       method: 'DELETE',
@@ -2060,10 +2123,13 @@ async function deleteConnection(id) {
     if (res.ok) {
       showToast('Connection deleted');
       await loadConnections();
+      return true;
     }
+    showToast(await readError(res, 'Could not delete the connection'), 'danger');
   } catch (err) {
     showToast(`Failed to delete connection: ${err}`, 'danger');
   }
+  return false;
 }
 
 // ================= Direct connection links (#29) =================
