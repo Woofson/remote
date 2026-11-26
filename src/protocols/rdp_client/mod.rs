@@ -23,6 +23,8 @@
 pub mod config;
 pub mod rdp;
 
+/// Remote addition (#37).
+mod audio_capture;
 #[cfg(all(windows, all()))]
 mod clipboard;
 

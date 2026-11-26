@@ -28,7 +28,7 @@ It is a single Rust program with the web interface built in and an embedded SQLi
 ## Features
 
 **Connections**
-- **RDP** (IronRDP): NLA/CredSSP and TLS, `DOMAIN\user` logins, clipboard, sound playback in the browser, printing to a PDF that opens in the browser (saved in your Files, Prints folder), resolution that follows the pane size, and quality presets (wallpaper, window contents while dragging, animations, themes, font smoothing).
+- **RDP** (IronRDP): NLA/CredSSP and TLS, `DOMAIN\user` logins, clipboard, sound playback in the browser, printing to a PDF that opens in the browser (saved in your Files, Prints folder), your microphone for calls and dictation (live only while a program in Windows records, with a mute button), resolution that follows the pane size, and quality presets (wallpaper, window contents while dragging, animations, themes, font smoothing).
 - **VNC** (RFB 3.8): Raw, CopyRect, Hextile, Zlib and ZRLE encodings, VNC password and VeNCrypt TLS/X.509, clipboard.
 - **SSH**: password, key or OpenSSH certificate login, plus SFTP file browsing.
 - **Telnet**.

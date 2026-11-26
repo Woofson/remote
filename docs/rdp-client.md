@@ -43,6 +43,13 @@ the engine is carried inside the `remoted` crate instead.
     at connect instead of `0` (#6).
   - `RdpInputEvent::SuppressOutput(bool)` pauses and resumes screen updates with
     the Suppress Output PDU while a session's tab or pane is hidden (#7).
+  - `ConfigBuilder::with_audio_capture(true)` sets INFO_AUDIOCAPTURE in the Client
+    Info PDU, which Windows needs before it opens the microphone channel (#37). The
+    connector has no option for this flag, so `audio_capture.rs` wraps the TLS
+    stream and sets that one bit on the outgoing Client Info PDU (once, no length
+    change; covered by a test that decodes the PDU). The microphone channel itself
+    (AUDIO_INPUT, MS-RDPEAI) is Remote code in `src/protocols/rdp_mic.rs`, attached
+    with `with_dvc`.
 
 Known upstream issue: during the Deactivation-Reactivation Sequence (Windows runs
 one after every resize) `active_session` rebuilds the fast-path processor with

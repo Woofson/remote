@@ -558,6 +558,8 @@ where
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
 
+    // Remote addition (#37): marks the Client Info PDU "can capture audio" when the microphone is on.
+    let tls_stream = super::audio_capture::AudioCaptureFlag::new(tls_stream, config.channels.audio_capture);
     let erased_stream: Box<dyn AsyncReadWrite + Unpin + Send + Sync> = Box::new(tls_stream);
     let mut upgraded_framed = ironrdp_tokio::TokioFramed::new_with_leftover(erased_stream, leftover_bytes);
 

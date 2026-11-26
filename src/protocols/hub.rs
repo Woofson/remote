@@ -370,7 +370,7 @@ impl Hub {
                     }
                 }
                 // Clipboard contents, password prompts and print jobs (#36) belong to the owner.
-                Some("clipboard_sync") | Some("auth_required") | Some("print_job") => owner_only = true,
+                Some("clipboard_sync") | Some("auth_required") | Some("print_job") | Some("mic") => owner_only = true,
                 Some(_) => {}
                 None => self.remember_terminal_output(&m),
             },
@@ -579,6 +579,8 @@ impl Hub {
                 }
             }
             Message::Binary(_) if !control => return,
+            // The microphone (#37) is the owner's: a guest's sound never reaches the session.
+            Message::Binary(b) if b.first() == Some(&0x11) => return,
             Message::Binary(_) => {}
             _ => return,
         }

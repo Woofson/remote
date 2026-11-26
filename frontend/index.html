@@ -195,6 +195,7 @@
           <div class="pane-header-right">
             <span class="pane-fps-pill phone-hidden" id="pane-1-stats" style="display:none;">0 ms</span>
             <button class="pane-btn pane-audio-btn" id="pane-1-audio-btn" title="Mute sound" onclick="togglePaneAudio(1)" style="display:none;"></button>
+            <button class="pane-btn pane-mic-btn" id="pane-1-mic-btn" title="Microphone" onclick="event.stopPropagation(); togglePaneMic(1)" style="display:none;"></button>
             <button class="pane-btn phone-more" data-more-label="Keyboard layout" id="pane-1-kbd-btn" title="Keyboard Layout (Click to switch)" onclick="openPaneKbdMenu(event, 1)" style="font-size: 10px; font-weight: 700; padding: 2px 6px; font-family: var(--font-mono); letter-spacing: 0.5px;">
               <span id="pane-1-kbd-label">🇳🇴 NO</span>
             </button>
@@ -260,6 +261,7 @@
           <div class="pane-header-right">
             <span class="pane-fps-pill phone-hidden" id="pane-2-stats" style="display:none;">0 ms</span>
             <button class="pane-btn pane-audio-btn" id="pane-2-audio-btn" title="Mute sound" onclick="togglePaneAudio(2)" style="display:none;"></button>
+            <button class="pane-btn pane-mic-btn" id="pane-2-mic-btn" title="Microphone" onclick="event.stopPropagation(); togglePaneMic(2)" style="display:none;"></button>
             <button class="pane-btn phone-more" data-more-label="Keyboard layout" id="pane-2-kbd-btn" title="Keyboard Layout (Click to switch)" onclick="openPaneKbdMenu(event, 2)" style="font-size: 10px; font-weight: 700; padding: 2px 6px; font-family: var(--font-mono); letter-spacing: 0.5px;">
               <span id="pane-2-kbd-label">🇳🇴 NO</span>
             </button>
@@ -302,6 +304,7 @@
           <div class="pane-header-right">
             <span class="pane-fps-pill phone-hidden" id="pane-3-stats" style="display:none;">0 ms</span>
             <button class="pane-btn pane-audio-btn" id="pane-3-audio-btn" title="Mute sound" onclick="togglePaneAudio(3)" style="display:none;"></button>
+            <button class="pane-btn pane-mic-btn" id="pane-3-mic-btn" title="Microphone" onclick="event.stopPropagation(); togglePaneMic(3)" style="display:none;"></button>
             <button class="pane-btn phone-more" data-more-label="Keyboard layout" id="pane-3-kbd-btn" title="Keyboard Layout (Click to switch)" onclick="openPaneKbdMenu(event, 3)" style="font-size: 10px; font-weight: 700; padding: 2px 6px; font-family: var(--font-mono); letter-spacing: 0.5px;">
               <span id="pane-3-kbd-label">🇳🇴 NO</span>
             </button>
@@ -344,6 +347,7 @@
           <div class="pane-header-right">
             <span class="pane-fps-pill phone-hidden" id="pane-4-stats" style="display:none;">0 ms</span>
             <button class="pane-btn pane-audio-btn" id="pane-4-audio-btn" title="Mute sound" onclick="togglePaneAudio(4)" style="display:none;"></button>
+            <button class="pane-btn pane-mic-btn" id="pane-4-mic-btn" title="Microphone" onclick="event.stopPropagation(); togglePaneMic(4)" style="display:none;"></button>
             <button class="pane-btn phone-more" data-more-label="Keyboard layout" id="pane-4-kbd-btn" title="Keyboard Layout (Click to switch)" onclick="openPaneKbdMenu(event, 4)" style="font-size: 10px; font-weight: 700; padding: 2px 6px; font-family: var(--font-mono); letter-spacing: 0.5px;">
               <span id="pane-4-kbd-label">🇳🇴 NO</span>
             </button>
@@ -1111,6 +1115,10 @@
                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="A printer called Remote in the session. What is printed arrives here as a PDF, saved in your Files (Prints folder). Needs Windows 10 / Server 2016 or newer, and file transfer set to Full or Download only.">
                   <input type="checkbox" id="conn-rdp-printing" />
                   <span>Printer (print to a PDF in the browser)</span>
+                </label>
+                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" title="Programs in the session can use your microphone, for calls and dictation. The browser asks for permission when the session starts; the microphone is only on while a program in Windows records, and the mic button in the pane mutes it.">
+                  <input type="checkbox" id="conn-rdp-microphone" />
+                  <span>Microphone (from this browser)</span>
                 </label>
                 <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
                   <input type="checkbox" id="conn-rdp-audio" />

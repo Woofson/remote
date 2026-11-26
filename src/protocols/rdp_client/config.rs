@@ -208,6 +208,10 @@ pub struct ChannelConfig {
     /// For callers that register their own RDPSND channel via
     /// [`ConfigBuilder::with_static_channel`] (for example to forward audio elsewhere).
     pub external_audio: bool,
+
+    /// Remote addition (#37): tell the server this client can capture audio, so Windows
+    /// opens the microphone channel (AUDIO_INPUT, registered by the caller with `with_dvc`).
+    pub audio_capture: bool,
 }
 
 #[cfg_attr(
@@ -231,6 +235,7 @@ impl Default for ChannelConfig {
             #[cfg(any())]
             qoiz: true,
             external_audio: false,
+            audio_capture: false,
         }
     }
 }
@@ -933,6 +938,13 @@ impl ConfigBuilder {
     pub fn with_external_audio(mut self, enabled: bool) -> Self {
         self.channels.external_audio = enabled;
         self.enable_audio_playback = Some(enabled);
+        self
+    }
+
+    /// Remote addition (#37): advertise audio capture (microphone) in the Client Info PDU.
+    #[must_use]
+    pub fn with_audio_capture(mut self, enabled: bool) -> Self {
+        self.channels.audio_capture = enabled;
         self
     }
 

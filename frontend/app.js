@@ -1764,6 +1764,8 @@ function openEditConnectionModal(id) {
   if (driveRedir) driveRedir.checked = !!settings.enable_drive_redirection;
   const printing = document.getElementById('conn-rdp-printing');
   if (printing) printing.checked = !!settings.enable_printing;
+  const mic = document.getElementById('conn-rdp-microphone');
+  if (mic) mic.checked = !!settings.enable_microphone;
   const audio = document.getElementById('conn-rdp-audio');
   if (audio) audio.checked = !!settings.enable_audio;
   fillWakeFields(settings);
@@ -1980,6 +1982,7 @@ async function handleSaveConnection(e) {
     enable_drive_redirection: document.getElementById('conn-rdp-drive-redirection') ? document.getElementById('conn-rdp-drive-redirection').checked : true,
     enable_audio: document.getElementById('conn-rdp-audio') ? document.getElementById('conn-rdp-audio').checked : false,
     enable_printing: !!document.getElementById('conn-rdp-printing')?.checked,
+    enable_microphone: !!document.getElementById('conn-rdp-microphone')?.checked,
     shell: document.getElementById('conn-protocol').value === 'local_pty'
       ? (document.getElementById('conn-local-shell')?.value || null)
       : null,
@@ -2195,6 +2198,8 @@ function connectToTarget(connectionId, opts = {}) {
     statsEl.textContent = `${latency} ms`;
     renderPaneTabs(pane.id);
     showToast(`Connected to ${conn.name} [${isFloatKey(pane.id) ? 'window' : `Pane ${pane.id}`}]`);
+    // Microphone (#37): ask for permission now; it is only used while Windows records.
+    if (conn.protocol === 'rdp' && !conn.shareToken && connSetting(conn, 'enable_microphone')) prepareMic(pane);
 
     if (conn.protocol === 'ssh' && conn.allow_transfer !== 'disabled' && !(conn.user_permissions && !conn.user_permissions.can_transfer)) {
       if (conn.has_password || conn.has_private_key) {
@@ -2658,6 +2663,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
           showToast(msg.message, 'danger');
         } else if (msg.type === 'print_job') {
           onPrintJob(pane, msg);
+        } else if (msg.type === 'mic') {
+          onMicState(pane, ws, msg);
         } else if (msg.type === 'ended') {
           // Ended on purpose on the remote side (Start menu > Disconnect, sign-out): no reconnect.
           pane.endReason = msg.reason || 'session ended';
@@ -3410,6 +3417,176 @@ function playPaneAudio(pane, buf) {
   a.nextTime += audioBuf.duration;
 }
 
+// ---- Microphone into RDP sessions (#37) ----
+const MIC_ICON_ON = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+const MIC_ICON_OFF = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="2" x2="22" y2="22"/><path d="M18.89 13.23A7 7 0 0 0 19 11v-1"/><path d="M5 10v1a7 7 0 0 0 12 5"/><path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/><path d="M9 9v2a3 3 0 0 0 5.12 2.12"/><line x1="12" y1="19" x2="12" y2="22"/></svg>';
+/** Sends the browser's sound, 128 samples at a time, to the page. */
+const MIC_WORKLET = `class RemoteMicTap extends AudioWorkletProcessor {
+  process(inputs) { const ch = inputs[0] && inputs[0][0]; if (ch) this.port.postMessage(ch.slice(0)); return true; }
+}
+registerProcessor('remote-mic-tap', RemoteMicTap);`;
+
+function connSetting(conn, key) {
+  try { return !!JSON.parse(conn.settings_json || '{}')[key]; } catch (e) { return false; }
+}
+
+/** At session start: check that a microphone may be used (the browser asks once). */
+async function prepareMic(pane) {
+  pane.mic = { muted: false, live: false, state: 'asking' };
+  updatePaneMicButton(pane);
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    pane.mic.state = 'unavailable';
+    updatePaneMicButton(pane);
+    showToast('The microphone needs Remote to be opened over HTTPS (or on this computer).', 'warning');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach((t) => t.stop());
+    if (!pane.mic) return;
+    pane.mic.state = 'ready';
+  } catch (e) {
+    if (!pane.mic) return;
+    pane.mic.state = 'denied';
+    showToast('The browser did not allow the microphone. Click the microphone button in the pane to try again.', 'warning');
+  }
+  updatePaneMicButton(pane);
+  if (pane.mic.pendingOpen) onMicState(pane, pane.socket, pane.mic.pendingOpen);
+}
+
+/** Windows started or stopped recording. */
+function onMicState(pane, ws, msg) {
+  if (!pane.mic) return;
+  if (!msg.open) {
+    pane.mic.pendingOpen = null;
+    stopMicCapture(pane);
+    return;
+  }
+  if (pane.mic.state !== 'ready') {
+    pane.mic.pendingOpen = msg; // started once permission is there
+    return;
+  }
+  startMicCapture(pane, ws, msg.rate, msg.channels);
+}
+
+async function startMicCapture(pane, ws, rate, channels) {
+  stopMicCapture(pane);
+  const m = pane.mic;
+  if (!m) return;
+  const gen = m.gen; // a newer start or a stop makes this capture stale
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    if (pane.mic !== m || pane.socket !== ws || m.gen !== gen) { stream.getTracks().forEach((t) => t.stop()); return; }
+    const ctx = new AudioContext();
+    const url = URL.createObjectURL(new Blob([MIC_WORKLET], { type: 'application/javascript' }));
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+    const src = ctx.createMediaStreamSource(stream);
+    const tap = new AudioWorkletNode(ctx, 'remote-mic-tap');
+    const silent = ctx.createGain();
+    silent.gain.value = 0;
+    src.connect(tap);
+    tap.connect(silent).connect(ctx.destination);
+    // Resample to the rate Windows asked for, 16-bit, in packets of about 20 ms.
+    const step = ctx.sampleRate / rate;
+    const packetFrames = Math.max(1, Math.round(rate / 50));
+    let pos = 0;
+    let prev = 0;
+    let out = new Int16Array(packetFrames * channels);
+    let n = 0;
+    tap.port.onmessage = (e) => {
+      // Sound still queued from a capture that was stopped (format change, close) is dropped.
+      if (m.gen !== gen) return;
+      const input = e.data;
+      const muted = m.muted;
+      while (pos < input.length) {
+        const i = Math.floor(pos);
+        const frac = pos - i;
+        const a = i === 0 ? prev : input[i - 1];
+        const b = input[i];
+        let v = muted ? 0 : a + (b - a) * frac;
+        v = Math.max(-1, Math.min(1, v));
+        const s = v < 0 ? v * 0x8000 : v * 0x7fff;
+        for (let c = 0; c < channels; c++) out[n++] = s;
+        if (n >= out.length) {
+          if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 256 * 1024) {
+            const pkt = new Uint8Array(1 + out.byteLength);
+            pkt[0] = 0x11;
+            pkt.set(new Uint8Array(out.buffer), 1);
+            ws.send(pkt);
+          }
+          out = new Int16Array(packetFrames * channels);
+          n = 0;
+        }
+        pos += step;
+      }
+      pos -= input.length;
+      prev = input[input.length - 1];
+    };
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
+    m.capture = { stream, ctx };
+    m.live = true;
+  } catch (e) {
+    m.live = false;
+    showToast(`The microphone could not start: ${e.message || e}`, 'warning');
+  }
+  updatePaneMicButton(pane);
+}
+
+function stopMicCapture(pane) {
+  const m = pane.mic;
+  if (!m) return;
+  m.gen = (m.gen || 0) + 1;
+  if (m.capture) {
+    m.capture.stream.getTracks().forEach((t) => t.stop());
+    try { m.capture.ctx.close(); } catch (e) {}
+    m.capture = null;
+  }
+  m.live = false;
+  updatePaneMicButton(pane);
+}
+
+function stopPaneMic(pane) {
+  if (!pane.mic) return;
+  stopMicCapture(pane);
+  pane.mic = null;
+  updatePaneMicButton(pane);
+}
+
+function togglePaneMic(paneIndex) {
+  const pane = state.panes[paneIndex];
+  const m = pane && pane.mic;
+  if (!m) return;
+  if (m.state === 'denied' || m.state === 'unavailable') {
+    prepareMic(pane);
+    return;
+  }
+  m.muted = !m.muted;
+  updatePaneMicButton(pane);
+}
+
+function updatePaneMicButton(pane) {
+  if (state.panes[pane.id] !== pane) return;
+  const btn = document.getElementById(`pane-${pane.id}-mic-btn`);
+  if (!btn) return;
+  const m = pane.mic;
+  if (!m) {
+    btn.style.display = 'none';
+    btn.className = 'pane-btn pane-mic-btn';
+    return;
+  }
+  btn.style.display = '';
+  const broken = m.state === 'denied' || m.state === 'unavailable';
+  btn.className = `pane-btn pane-mic-btn${broken ? ' blocked' : m.muted ? ' muted' : m.live ? ' live' : ''}`;
+  btn.innerHTML = broken || m.muted ? MIC_ICON_OFF : MIC_ICON_ON;
+  btn.title = m.state === 'unavailable' ? 'The microphone needs Remote to be opened over HTTPS'
+    : m.state === 'denied' ? 'The browser did not allow the microphone: click to try again'
+    : m.state === 'asking' ? 'Waiting for permission to use the microphone'
+    : m.muted ? (m.live ? 'Microphone muted (Windows hears silence): click to unmute' : 'Microphone muted: click to unmute')
+    : m.live ? 'Microphone is live: Windows is recording. Click to mute'
+    : 'Microphone ready: it turns on when a program in Windows records. Click to mute';
+}
+
 function stopPaneAudio(pane) {
   if (pane.audio) {
     try { pane.audio.ctx.close(); } catch (e) {}
@@ -3520,6 +3697,7 @@ function teardownSession(pane) {
     pane.socket = null;
   }
   stopPaneAudio(pane);
+  stopPaneMic(pane);
 }
 
 /** Disconnect a session and show the "Ready for Session" screen in its tab. */
@@ -3730,6 +3908,7 @@ function renderPaneHeader(paneIndex) {
   refreshPaneStats(sess);
   updatePaneKbdBadge(paneIndex);
   updatePaneAudioButton(sess);
+  updatePaneMicButton(sess);
 }
 
 /** The tab strip: hidden with one tab (the header then looks as before), shown with more. */

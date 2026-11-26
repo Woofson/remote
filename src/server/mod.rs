@@ -2875,6 +2875,7 @@ pub async fn ws_tunnel_handler(
 
                 let mut enable_drive_redirection = false;
                 let mut enable_printing = false;
+                let mut enable_microphone = false;
                 let mut keyboard_layout = None;
 
                 if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
@@ -2914,6 +2915,9 @@ pub async fn ws_tunnel_handler(
                     }
                     // A print job leaves the remote machine like a download: it follows the
                     // connection's file transfer setting and the user's permission (#36).
+                    if let Some(m) = settings.get("enable_microphone").and_then(|v| v.as_bool()) {
+                        enable_microphone = m;
+                    }
                     if let Some(p) = settings.get("enable_printing").and_then(|v| v.as_bool()) {
                         enable_printing = p
                             && conn_perms.can_transfer
@@ -2955,6 +2959,7 @@ pub async fn ws_tunnel_handler(
                     } else {
                         Vec::new()
                     },
+                    enable_microphone,
                     printer: if enable_printing {
                         state.transfer_mgr.scope(Area::Mine, &user.id).ok().map(|mine| crate::protocols::rdp_print::PrinterSpec {
                             files_root: mine.root,

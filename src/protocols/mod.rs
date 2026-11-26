@@ -8,6 +8,7 @@ pub mod wol;
 pub mod rdp;
 pub mod rdp_client;
 pub mod rdp_drive;
+pub mod rdp_mic;
 pub mod rdp_print;
 
 use serde::{Deserialize, Serialize};

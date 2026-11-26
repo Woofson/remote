@@ -42,6 +42,8 @@ pub struct RdpConnectionParams {
     pub drives: Vec<super::rdp_drive::DriveSpec>,
     /// Virtual printer (#36): print jobs saved as PDF in the user's Files.
     pub printer: Option<super::rdp_print::PrinterSpec>,
+    /// Microphone from the browser (#37).
+    pub enable_microphone: bool,
     pub keyboard_layout: Option<String>,
 }
 
@@ -615,6 +617,24 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         });
     }
 
+    // Microphone (#37): Windows opens the AUDIO_INPUT channel when a program records; the
+    // browser is told (owner only) and sends 16-bit PCM in the format Windows chose.
+    let mic_handle = if params.enable_microphone {
+        info!("RDP Gateway: microphone redirection enabled");
+        let notify_tx = ws_out_tx.clone();
+        let (mic_client, handle) = super::rdp_mic::new(Arc::new(move |ev| {
+            let msg = match ev {
+                super::rdp_mic::MicEvent::Opened(f) => json!({ "type": "mic", "open": true, "rate": f.rate, "channels": f.channels }),
+                super::rdp_mic::MicEvent::Closed => json!({ "type": "mic", "open": false }),
+            };
+            let _ = notify_tx.try_send(Message::Text(msg.to_string()));
+        }));
+        config_builder = config_builder.with_audio_capture(true).with_dvc(move |_ps| Some(mic_client.again()));
+        Some(handle)
+    } else {
+        None
+    };
+
     if !params.drives.is_empty() || params.printer.is_some() {
         config_builder = config_builder.with_rdpdr(true);
         for d in &params.drives {
@@ -772,7 +792,17 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                         continue;
                     }
                     let packet_type = data[0];
-                    if packet_type == 0x02 && data.len() >= 6 {
+                    if packet_type == 0x11 {
+                        // Microphone (#37): [0x11, 16-bit PCM in the format Windows chose ...]
+                        if let Some((channel_id, msgs)) = mic_handle.as_ref().and_then(|h| h.packets(&data[1..])) {
+                            match ironrdp_dvc::encode_dvc_messages(channel_id, msgs, ironrdp_svc::ChannelFlags::empty()) {
+                                Ok(messages) => {
+                                    let _ = input_sender_rx.send(RdpInputEvent::SendDvcMessages { channel_id, messages });
+                                }
+                                Err(e) => warn!("Microphone: could not pack sound: {}", e),
+                            }
+                        }
+                    } else if packet_type == 0x02 && data.len() >= 6 {
                         // Pointer event: [0x02, mask: u8, x: u16 (be), y: u16 (be)]
                         let mask = data[1];
                         let x = u16::from_be_bytes([data[2], data[3]]);
