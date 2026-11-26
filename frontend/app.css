@@ -3225,6 +3225,41 @@ kbd {
   color: var(--woofson-text-muted);
 }
 
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--woofson-text-main);
+  cursor: pointer;
+  user-select: none;
+}
+
+.login-remember input {
+  accent-color: var(--woofson-accent);
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.tf-devices {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.tf-devices td {
+  padding: 5px 8px 5px 0;
+  border-top: 1px solid var(--woofson-border);
+  vertical-align: middle;
+}
+
+.tf-devices td:last-child {
+  text-align: right;
+  padding-right: 0;
+}
+
 .login-link-btn {
   margin-top: 6px;
   padding: 0;

@@ -99,6 +99,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/me/2fa/enable", post(security::api_2fa_enable))
         .route("/api/me/2fa/disable", post(security::api_2fa_disable))
         .route("/api/me/2fa/recovery-codes", post(security::api_2fa_recovery_codes))
+        .route("/api/me/2fa/devices", get(security::api_list_devices).delete(security::api_forget_all_devices))
+        .route("/api/me/2fa/devices/:id", axum::routing::delete(security::api_forget_device))
+        .route("/api/users/:id/2fa-devices", axum::routing::delete(security::api_forget_user_devices))
         .route("/api/users/:id/reset-2fa", post(security::api_reset_user_2fa))
         .route(
             "/api/admin/security-policy",
@@ -339,6 +342,9 @@ fn login_hours(state: &AppState) -> i64 {
 pub struct LoginPayload {
     pub username: String,
     pub password: Option<String>,
+    /// This browser's key from "remember this device" at the 2FA step, if it has one.
+    #[serde(default)]
+    pub device_key: Option<String>,
 }
 
 pub async fn api_login(
@@ -396,11 +402,15 @@ pub async fn api_login(
         .get_user_security(&user.id)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e.to_string() }))))?;
 
-    // With 2FA on, the password only earns a short-lived ticket for the code step.
-    if state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false) {
+    // With 2FA on, the password only earns a short-lived ticket for the code step,
+    // unless this browser was remembered at an earlier code step.
+    let two_factor = state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false);
+    let remembered = two_factor && security::device_remembered(&state, &user.id, payload.device_key.as_deref());
+    if two_factor && !remembered {
         let challenge = crate::auth::create_2fa_challenge(&user.id, generation, &cfg.server.jwt_secret)
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": e }))))?;
-        return Ok(Json(json!({ "two_factor_required": true, "challenge": challenge })));
+        let remember_days = state.policy.read().remember_2fa_days;
+        return Ok(Json(json!({ "two_factor_required": true, "challenge": challenge, "remember_days": remember_days })));
     }
 
     state.limiter.record_success(&user.username);
@@ -415,11 +425,16 @@ pub async fn api_login(
         "LOGIN_SUCCESS",
         None,
         None,
-        Some("User logged in via local auth"),
+        Some(if remembered {
+            "User logged in via local auth with 2FA (code skipped: remembered device)"
+        } else {
+            "User logged in via local auth"
+        }),
         ip.as_opt(),
     );
 
-    let setup_required = state.policy.read().requires_2fa(&user.role);
+    // Someone with 2FA on has nothing left to set up.
+    let setup_required = !two_factor && state.policy.read().requires_2fa(&user.role);
     let safe_user: UserSafe = user.into();
     Ok(Json(json!({
         "token": token,
@@ -486,6 +501,7 @@ pub async fn api_me(
         "idle_minutes": policy.idle_minutes,
         "idle_action": policy.idle_action,
         "lock_requires_2fa": policy.lock_requires_2fa,
+        "remember_2fa_days": policy.remember_2fa_days,
     });
     Ok(Json(body))
 }

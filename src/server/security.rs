@@ -3,6 +3,7 @@
 use super::*;
 use crate::auth::totp;
 use crate::auth::verify_2fa_challenge;
+use sha2::{Digest, Sha256};
 
 type ApiResult<T> = Result<T, (StatusCode, Json<Value>)>;
 
@@ -103,15 +104,120 @@ fn verify_identity(state: &AppState, user: &User, password: &str, code: Option<&
     Ok(())
 }
 
+// ---------------- Remembered devices ----------------
+
+fn device_key_hash(key: &str) -> String {
+    hex::encode(Sha256::digest(key.trim().as_bytes()))
+}
+
+/// Does this browser's device key let the user skip the 2FA code (sign-in and unlock)?
+/// Needs the admin setting on, the key added within that many days, and no password
+/// change or ended logins since.
+pub(super) fn device_remembered(state: &AppState, user_id: &str, key: Option<&str>) -> bool {
+    let Some(key) = key.map(str::trim).filter(|k| k.len() >= 32) else {
+        return false;
+    };
+    let days = state.policy.read().remember_2fa_days;
+    let Ok((generation, _)) = state.db.get_user_security(user_id) else {
+        return false;
+    };
+    state.db.use_trusted_device(user_id, &device_key_hash(key), days, generation).unwrap_or(false)
+}
+
+/// A short description of the browser, from its User-Agent, for the device list.
+fn device_label(headers: &HeaderMap) -> String {
+    let ua = headers.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
+    let browser = if ua.contains("Edg/") {
+        "Edge"
+    } else if ua.contains("OPR/") {
+        "Opera"
+    } else if ua.contains("Firefox/") {
+        "Firefox"
+    } else if ua.contains("Chrome/") || ua.contains("Chromium/") {
+        "Chrome"
+    } else if ua.contains("Safari/") {
+        "Safari"
+    } else {
+        "Browser"
+    };
+    let os = if ua.contains("Android") {
+        "Android"
+    } else if ua.contains("iPhone") || ua.contains("iPad") {
+        "iOS"
+    } else if ua.contains("Windows") {
+        "Windows"
+    } else if ua.contains("Mac OS") {
+        "macOS"
+    } else if ua.contains("CrOS") {
+        "ChromeOS"
+    } else if ua.contains("Linux") {
+        "Linux"
+    } else {
+        "unknown system"
+    };
+    format!("{} on {}", browser, os)
+}
+
+/// List of the signed-in user's remembered devices.
+pub async fn api_list_devices(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let claims = extract_claims(&state, &headers)?;
+    let days = state.policy.read().remember_2fa_days;
+    let (generation, _) = state.db.get_user_security(&claims.sub).map_err(db_err)?;
+    let devices = state.db.list_trusted_devices(&claims.sub, days, generation).map_err(db_err)?;
+    Ok(Json(json!({ "remember_days": days, "devices": devices })))
+}
+
+pub async fn api_forget_device(State(state): State<AppState>, headers: HeaderMap, AxumPath(id): AxumPath<String>) -> ApiResult<Json<Value>> {
+    let claims = extract_claims(&state, &headers)?;
+    if !state.db.delete_trusted_device(&claims.sub, &id).map_err(db_err)? {
+        return Err(err(StatusCode::NOT_FOUND, "Device not found"));
+    }
+    state.db.log_audit(Some(&claims.sub), &claims.username, "TWO_FACTOR_DEVICE_FORGOTTEN", None, None, Some("One remembered device"), None);
+    Ok(Json(json!({ "ok": true })))
+}
+
+pub async fn api_forget_all_devices(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<Json<Value>> {
+    let claims = extract_claims(&state, &headers)?;
+    let n = state.db.delete_trusted_devices_for_user(&claims.sub).map_err(db_err)?;
+    state.db.log_audit(Some(&claims.sub), &claims.username, "TWO_FACTOR_DEVICE_FORGOTTEN", None, None, Some(&format!("All remembered devices ({})", n)), None);
+    Ok(Json(json!({ "forgotten": n })))
+}
+
+/// Admin: forget all of a user's remembered devices (for example a lost laptop).
+pub async fn api_forget_user_devices(State(state): State<AppState>, headers: HeaderMap, AxumPath(id): AxumPath<String>) -> ApiResult<Json<Value>> {
+    let claims = extract_claims(&state, &headers)?;
+    require_admin(&claims)?;
+    let target = load_user(&state, &id)?;
+    let n = state.db.delete_trusted_devices_for_user(&target.id).map_err(db_err)?;
+    state.db.log_audit(
+        Some(&claims.sub),
+        &claims.username,
+        "TWO_FACTOR_DEVICE_FORGOTTEN",
+        None,
+        None,
+        Some(&format!("All remembered devices of {} ({})", target.username, n)),
+        None,
+    );
+    let message = match n {
+        0 => format!("{} has no remembered devices", target.username),
+        1 => format!("Forgot 1 remembered device of {}", target.username),
+        n => format!("Forgot {} remembered devices of {}", n, target.username),
+    };
+    Ok(Json(json!({ "forgotten": n, "message": message })))
+}
+
 // ---------------- Sign-in, second step ----------------
 
 #[derive(Deserialize)]
 pub struct Login2faPayload {
     pub challenge: String,
     pub code: String,
+    /// "Remember this device" was ticked.
+    #[serde(default)]
+    pub remember: bool,
 }
 
-pub async fn api_login_2fa(State(state): State<AppState>, ip: ClientIp, Json(p): Json<Login2faPayload>) -> ApiResult<Json<Value>> {
+pub async fn api_login_2fa(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<Login2faPayload>) -> ApiResult<Json<Value>> {
     let secret = jwt_secret(&state);
     let (user_id, gen) = verify_2fa_challenge(&p.challenge, &secret).map_err(|e| err(StatusCode::UNAUTHORIZED, &e))?;
     let user = load_user(&state, &user_id)?;
@@ -134,22 +240,42 @@ pub async fn api_login_2fa(State(state): State<AppState>, ip: ClientIp, Json(p):
     let token = create_jwt(&user, &secret, login_hours(&state), generation)
         .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
     let _ = state.db.update_last_login(&user.id);
+
+    // "Remember this device": a random key for the browser; only its fingerprint is kept.
+    let days = state.policy.read().remember_2fa_days;
+    let mut device = None;
+    if p.remember && days > 0 {
+        let mut raw = [0u8; 32];
+        getrandom::getrandom(&mut raw).map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+        let key = hex::encode(raw);
+        let id = state
+            .db
+            .add_trusted_device(&user.id, &device_key_hash(&key), &device_label(&headers), generation)
+            .map_err(db_err)?;
+        device = Some((key, id));
+    }
+    let remembered_note = if device.is_some() { format!(", device remembered for {} days", days) } else { String::new() };
     state.db.log_audit(
         Some(&user.id),
         &user.username,
         "LOGIN_SUCCESS",
         None,
         None,
-        Some(&format!("User logged in via local auth with 2FA ({})", note)),
+        Some(&format!("User logged in via local auth with 2FA ({}{})", note, remembered_note)),
         ip.as_opt(),
     );
     let safe_user: UserSafe = user.into();
-    Ok(Json(json!({
+    let mut body = json!({
         "token": token,
         "user": safe_user,
         "must_change_password": must_change,
         "two_factor_setup_required": false,
-    })))
+    });
+    if let Some((key, id)) = device {
+        body["device_key"] = json!(key);
+        body["device_id"] = json!(id);
+    }
+    Ok(Json(body))
 }
 
 // ---------------- Lock screen & activity ----------------
@@ -164,6 +290,9 @@ pub async fn api_lock(State(state): State<AppState>, headers: HeaderMap) -> ApiR
 pub struct UnlockPayload {
     pub password: String,
     pub code: Option<String>,
+    /// This browser's remembered-device key, if it has one (skips the code).
+    #[serde(default)]
+    pub device_key: Option<String>,
 }
 
 pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, ip: ClientIp, Json(p): Json<UnlockPayload>) -> ApiResult<Json<Value>> {
@@ -173,7 +302,8 @@ pub async fn api_unlock(State(state): State<AppState>, headers: HeaderMap, ip: C
         return Err(err(StatusCode::BAD_REQUEST, "This account signs in through its provider; use Switch User to sign in again"));
     }
     let needs_code = state.policy.read().lock_requires_2fa
-        && state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false);
+        && state.db.get_two_factor(&user.id).map(|t| t.enabled()).unwrap_or(false)
+        && !device_remembered(&state, &user.id, p.device_key.as_deref());
     if needs_code && p.code.as_deref().map(str::trim).unwrap_or("").is_empty() {
         return Err((
             StatusCode::UNAUTHORIZED,
@@ -331,6 +461,14 @@ pub async fn api_set_security_policy(
     let text = serde_json::to_string(&policy).map_err(db_err)?;
     state.db.set_setting(SECURITY_POLICY_KEY, &text).map_err(db_err)?;
     *state.policy.write() = policy.clone();
+    // Turning "remember devices" off ends every remembered device, so turning it on
+    // again later does not bring old ones back.
+    if policy.remember_2fa_days == 0 {
+        let n = state.db.delete_all_trusted_devices().map_err(db_err)?;
+        if n > 0 {
+            state.db.log_audit(Some(&claims.sub), &claims.username, "TWO_FACTOR_DEVICE_FORGOTTEN", None, None, Some(&format!("All remembered devices of all users ({})", n)), None);
+        }
+    }
     let roles = if policy.require_2fa_roles.is_empty() { "none".to_string() } else { policy.require_2fa_roles.join(", ") };
     state.db.log_audit(
         Some(&claims.sub),
@@ -339,12 +477,13 @@ pub async fn api_set_security_policy(
         None,
         None,
         Some(&format!(
-            "login {} h, idle {} min ({}), lock-screen 2FA {}, 2FA required for: {}, sharing {}, recording sharing {}",
+            "login {} h, idle {} min ({}), lock-screen 2FA {}, 2FA required for: {}, remember devices {}, sharing {}, recording sharing {}",
             policy.max_login_hours,
             policy.idle_minutes,
             policy.idle_action,
             if policy.lock_requires_2fa { "on" } else { "off" },
             roles,
+            if policy.remember_2fa_days > 0 { format!("{} days", policy.remember_2fa_days) } else { "off".to_string() },
             policy.sharing,
             if policy.recording_sharing { "on" } else { "off" }
         )),

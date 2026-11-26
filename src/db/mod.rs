@@ -7,8 +7,11 @@ use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
+mod login_states;
 mod recordings;
+mod trusted_devices;
 pub use recordings::{RecordingRecord, RecordingShare};
+pub use trusted_devices::TrustedDevice;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
@@ -349,6 +352,8 @@ impl Database {
         let _ = conn.execute("ALTER TABLE connections ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
         let _ = conn.execute("ALTER TABLE groups ADD COLUMN record_sessions INTEGER NOT NULL DEFAULT 0;", []);
         conn.execute_batch(recordings::SCHEMA)?;
+        conn.execute_batch(login_states::SCHEMA)?;
+        conn.execute_batch(trusted_devices::SCHEMA)?;
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS user_preferences (
@@ -481,6 +486,7 @@ impl Database {
                 totp_secret_enc = ?2, totp_pending_enc = NULL, totp_last_step = ?3, recovery_codes = ?4",
             params![user_id, secret_enc, step, codes],
         )?;
+        self.delete_trusted_devices_for_user(user_id)?;
         Ok(())
     }
 
@@ -508,6 +514,7 @@ impl Database {
                 totp_last_step = 0, recovery_codes = NULL WHERE user_id = ?1",
             params![user_id],
         )?;
+        self.delete_trusted_devices_for_user(user_id)?;
         Ok(())
     }
 

@@ -455,6 +455,35 @@ function randomizeLoginBackground(targetEl = null) {
   elements.forEach(el => { el.style.backgroundImage = bgStyle; });
 }
 
+// ---- Remembered devices for 2FA: this browser's key per account (kept across sign-outs) ----
+const DEVICE_KEYS = 'remote_2fa_devices';
+
+function rememberedDevices() {
+  try { return JSON.parse(localStorage.getItem(DEVICE_KEYS)) || {}; } catch (e) { return {}; }
+}
+
+/** { key, id } for this account on this browser, or null. */
+function rememberedDevice(username) {
+  return username ? rememberedDevices()[username.trim().toLowerCase()] || null : null;
+}
+
+function rememberedDeviceKey(username) {
+  const d = rememberedDevice(username);
+  return d ? d.key : null;
+}
+
+function saveRememberedDevice(username, key, id) {
+  const all = rememberedDevices();
+  all[username.trim().toLowerCase()] = { key, id };
+  localStorage.setItem(DEVICE_KEYS, JSON.stringify(all));
+}
+
+function dropRememberedDevice(username) {
+  const all = rememberedDevices();
+  delete all[username.trim().toLowerCase()];
+  localStorage.setItem(DEVICE_KEYS, JSON.stringify(all));
+}
+
 /** Hide or show the app behind the sign-in screens (see body.auth-gate in app.css). */
 function setAppHidden(hidden) {
   document.body.classList.toggle('auth-gate', hidden);
@@ -558,12 +587,14 @@ async function handleLoginSubmit() {
     const res = await fetch('api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, device_key: rememberedDeviceKey(username) }),
     });
 
     const data = await res.json();
     if (res.ok && data.two_factor_required) {
-      state.login2fa = { challenge: data.challenge, password };
+      // A code was asked although this browser had a key: that key no longer works.
+      if (rememberedDeviceKey(username)) dropRememberedDevice(username);
+      state.login2fa = { challenge: data.challenge, password, username, rememberDays: data.remember_days || 0 };
       showLogin2faStep(true);
     } else if (res.ok) {
       finishLogin(data, password);
@@ -616,6 +647,12 @@ function showLogin2faStep(on) {
   state.loginForgot = false;
   const code = document.getElementById('login-2fa-code');
   if (code) code.value = '';
+  const days = on && state.login2fa ? state.login2fa.rememberDays : 0;
+  show('login-remember-row', days > 0);
+  const remember = document.getElementById('login-remember');
+  if (remember) remember.checked = false;
+  const rememberText = document.getElementById('login-remember-text');
+  if (rememberText && days > 0) rememberText.textContent = `Remember this device for ${days} day${days === 1 ? '' : 's'}`;
   const btn = document.querySelector('#btn-submit-login span');
   if (btn) btn.textContent = on ? 'Verify' : 'Log In';
   document.getElementById('login-error').style.display = 'none';
@@ -643,10 +680,11 @@ async function submitLogin2fa() {
     const res = await fetch('api/auth/login/2fa', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ challenge: state.login2fa.challenge, code }),
+      body: JSON.stringify({ challenge: state.login2fa.challenge, code, remember: !!document.getElementById('login-remember')?.checked }),
     });
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
+      if (data.device_key) saveRememberedDevice(state.login2fa.username, data.device_key, data.device_id);
       finishLogin(data, state.login2fa.password);
     } else {
       errEl.textContent = data.error || 'That code is not valid';
@@ -718,7 +756,8 @@ function lockSession(serverLocked = false) {
   const lockEl = document.getElementById('session-lock-screen');
   const alreadyShown = lockEl && lockEl.style.display === 'flex';
   const codeGroup = document.getElementById('lock-2fa-group');
-  const needCode = !!(state.sessionPolicy && state.sessionPolicy.lock_requires_2fa && state.currentUser && state.currentUser.two_factor_enabled);
+  const remembered = !!(state.sessionPolicy && state.sessionPolicy.remember_2fa_days > 0 && state.currentUser && rememberedDeviceKey(state.currentUser.username));
+  const needCode = !remembered && !!(state.sessionPolicy && state.sessionPolicy.lock_requires_2fa && state.currentUser && state.currentUser.two_factor_enabled);
   if (codeGroup) codeGroup.style.display = needCode ? '' : 'none';
   if (alreadyShown) return;
   const menu = document.getElementById('profile-dropdown-menu');
@@ -771,7 +810,7 @@ async function submitUnlockSession() {
   try {
     const res = await apiFetch('api/auth/unlock', {
       method: 'POST',
-      body: JSON.stringify({ password, code: code || null }),
+      body: JSON.stringify({ password, code: code || null, device_key: rememberedDeviceKey(state.currentUser && state.currentUser.username) }),
     });
 
     if (res.ok) {
@@ -5062,7 +5101,8 @@ function renderUsersTable(users) {
           <div style="display: flex; gap: 4px;">
             ${toggleBtn}
             ${u.auth_provider === 'local' ? `<button class="btn btn-secondary btn-sm" data-reset-user="${escapeHtml(u.id)}" data-reset-name="${escapeHtml(u.username)}" data-reset-email="${escapeHtml(u.email || '')}" title="Give this user a new password">Reset password</button>` : ''}
-            ${u.two_factor ? `<button class="btn btn-secondary btn-sm" onclick="resetUserTwoFactor('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')" title="Turn off two-factor authentication (lost phone)">Reset 2FA</button>` : ''}
+            ${u.two_factor ? `<button class="btn btn-secondary btn-sm" onclick="resetUserTwoFactor('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')" title="Turn off two-factor authentication (lost phone)">Reset 2FA</button>
+              <button class="btn btn-secondary btn-sm" onclick="forgetUserDevices('${escapeHtml(u.id)}', '${escapeHtml(u.username)}')" title="Forget the devices this user chose to remember (they ask for a code again)">Forget devices</button>` : ''}
             <button class="btn btn-secondary btn-sm text-danger" onclick="deleteUser('${u.id}')">Delete</button>
           </div>
         </td>
@@ -7336,7 +7376,62 @@ async function loadSecurityPage() {
         ? '<span class="text-muted text-sm">Required for your role by your administrator.</span>'
         : '<button type="button" class="btn btn-secondary btn-sm text-danger" onclick="turnOffTwoFactor()">Turn off</button>'}
     </div>
-  </div>`;
+  </div>
+  <div class="tf-card" id="tf-devices-card" style="margin-top:12px; display:none;"></div>`;
+  loadRememberedDevices();
+}
+
+/** Settings > Security: browsers that may skip the 2FA code. */
+async function loadRememberedDevices() {
+  const card = document.getElementById('tf-devices-card');
+  if (!card) return;
+  let d;
+  try {
+    const res = await apiFetch('api/me/2fa/devices');
+    if (!res.ok) return;
+    d = await res.json();
+  } catch (e) { return; }
+  const mine = rememberedDevice(state.currentUser && state.currentUser.username);
+  if (!d.remember_days && !d.devices.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const when = (t) => new Date(t * 1000).toLocaleString();
+  const rows = d.devices.map((x) => `<tr>
+      <td><b>${escapeHtml(x.label)}</b>${mine && mine.id === x.id ? ' <span class="tf-pill on">This device</span>' : ''}
+        <div class="text-muted">Added ${when(x.created_at)} · last used ${when(x.last_used_at)} · until ${when(x.expires_at)}</div></td>
+      <td><button type="button" class="btn btn-secondary btn-sm" onclick="forgetRememberedDevice('${escapeHtml(x.id)}')">Forget</button></td>
+    </tr>`).join('');
+  card.innerHTML = `<div class="tf-card-title">Remembered devices</div>
+    <p class="text-muted text-sm">${d.remember_days
+      ? `Tick "Remember this device" at the code step and that browser skips the code for ${d.remember_days} day${d.remember_days === 1 ? '' : 's'}, both when signing in and when unlocking. Your password is still needed.`
+      : 'Your administrator has turned remembering devices off.'}</p>
+    ${d.devices.length ? `<table class="tf-devices">${rows}</table>
+      <div class="tf-card-actions"><button type="button" class="btn btn-secondary btn-sm text-danger" onclick="forgetAllRememberedDevices()">Forget all</button></div>`
+      : '<p class="text-muted text-sm">No remembered devices.</p>'}`;
+}
+
+async function forgetRememberedDevice(id) {
+  const res = await apiFetch(`api/me/2fa/devices/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    showToast(d.error || 'Could not forget the device', 'danger');
+    return;
+  }
+  const mine = rememberedDevice(state.currentUser && state.currentUser.username);
+  if (mine && mine.id === id) dropRememberedDevice(state.currentUser.username);
+  showToast('Device forgotten', 'success');
+  loadRememberedDevices();
+}
+
+async function forgetAllRememberedDevices() {
+  if (!(await uiConfirm('Forget all remembered devices? Each of them asks for a code again at the next sign-in.', { title: 'Forget all devices', okText: 'Forget all', danger: true }))) return;
+  const res = await apiFetch('api/me/2fa/devices', { method: 'DELETE' });
+  if (!res.ok) {
+    showToast('Could not forget the devices', 'danger');
+    return;
+  }
+  if (state.currentUser) dropRememberedDevice(state.currentUser.username);
+  showToast('All remembered devices forgotten', 'success');
+  loadRememberedDevices();
 }
 
 function renewRecoveryCodes() {
@@ -7395,6 +7490,10 @@ async function loadAdminSecurity() {
       <div class="sec-label">Lock screen<div class="pw-hint">Also ask for a code when unlocking, for users who have 2FA on.</div></div>
       <label class="pw-check"><input type="checkbox" id="sec-lock-2fa" ${p.lock_requires_2fa ? 'checked' : ''}/> <span>Ask for a 2FA code to unlock</span></label>
     </div>
+    <div class="sec-row">
+      <div class="sec-label">Remember devices<div class="pw-hint">Users can tick "Remember this device" at the code step. That browser then skips the code, at sign-in and on the lock screen, for this many days; the password is still needed. Changing the password or turning 2FA off ends it. 0 turns it off and forgets every remembered device.</div></div>
+      <div class="sec-field"><input type="number" id="sec-remember-days" class="form-input" min="0" max="90" value="${p.remember_2fa_days || 0}"/><span class="text-muted text-sm">days</span></div>
+    </div>
     <div class="settings-section-title">Sessions</div>
     <div class="sec-row">
       <div class="sec-label">Login lifetime<div class="pw-hint">After this, everyone signs in again. Open connections keep running until then.</div></div>
@@ -7440,6 +7539,7 @@ async function saveSecurityPolicy() {
     idle_minutes: parseInt(document.getElementById('sec-idle-min').value, 10) || 0,
     idle_action: document.getElementById('sec-idle-action').value,
     lock_requires_2fa: document.getElementById('sec-lock-2fa').checked,
+    remember_2fa_days: parseInt(document.getElementById('sec-remember-days').value, 10) || 0,
     require_2fa_roles: [...document.querySelectorAll('.sec-role:checked')].map((b) => b.value),
     sharing: document.getElementById('sec-sharing').value,
     recording_sharing: document.getElementById('sec-rec-sharing').checked,
@@ -7461,11 +7561,23 @@ async function saveSecurityPolicy() {
     idle_minutes: d.idle_minutes,
     idle_action: d.idle_action,
     lock_requires_2fa: d.lock_requires_2fa,
+    remember_2fa_days: d.remember_2fa_days,
   };
   showToast('Security settings saved', 'success');
   refreshSessionInfo().then(() => {
     if (state.currentUser && state.currentUser.two_factor_setup_required) openTwoFactorSetup(true);
   });
+}
+
+async function forgetUserDevices(id, username) {
+  if (!(await uiConfirm(`Forget all devices ${username} chose to remember? Each of them asks for a 2FA code again at the next sign-in or unlock.`, { title: 'Forget devices', okText: 'Forget devices', danger: true }))) return;
+  const res = await apiFetch(`api/users/${encodeURIComponent(id)}/2fa-devices`, { method: 'DELETE' });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    showToast(d.error || 'Could not forget the devices', 'danger');
+    return;
+  }
+  showToast(d.message || 'Devices forgotten', 'success');
 }
 
 async function resetUserTwoFactor(id, username) {

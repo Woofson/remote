@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Themes: {} available", themes.len());
 
     let policy = remoted::server::load_security_policy(&db, config.server.token_expiry_hours);
-    let sessions = Arc::new(remoted::auth::policy::SessionTracker::default());
+    let sessions = Arc::new(remoted::auth::policy::SessionTracker::with_store(db.clone()));
     let app_state = AppState {
         config: Arc::new(RwLock::new(config.clone())),
         db,

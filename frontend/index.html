@@ -804,6 +804,10 @@
                 <input type="text" id="login-2fa-code" class="login-input tf-code-input" inputmode="numeric" autocomplete="one-time-code" spellcheck="false" maxlength="12" placeholder="123 456" />
               </div>
               <p class="login-hint">Enter the 6-digit code from your authenticator app. Lost your phone? Enter one of your recovery codes instead.</p>
+              <label class="login-remember" id="login-remember-row" style="display: none;">
+                <input type="checkbox" id="login-remember" />
+                <span id="login-remember-text">Remember this device</span>
+              </label>
               <button type="button" class="login-link-btn" onclick="cancelLogin2fa()">Use a different account</button>
             </div>
             <div id="login-error" class="login-error-msg" style="display: none;"></div>

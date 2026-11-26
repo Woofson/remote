@@ -26,6 +26,9 @@ pub struct SecurityPolicy {
     pub sharing: String,
     /// Users may share session recordings with other users and groups (#31). Off by default.
     pub recording_sharing: bool,
+    /// Days a browser may skip the 2FA code (sign-in and unlock) after "remember this
+    /// device"; 0 = off (the default).
+    pub remember_2fa_days: i64,
 }
 
 impl Default for SecurityPolicy {
@@ -38,6 +41,7 @@ impl Default for SecurityPolicy {
             require_2fa_roles: Vec::new(),
             sharing: "full".into(),
             recording_sharing: false,
+            remember_2fa_days: 0,
         }
     }
 }
@@ -61,6 +65,9 @@ impl SecurityPolicy {
         }
         if let Some(r) = self.require_2fa_roles.iter().find(|r| !ROLES.contains(&r.as_str())) {
             return Err(format!("Unknown role '{}'", r));
+        }
+        if !(0..=90).contains(&self.remember_2fa_days) {
+            return Err("Remembering devices for 2FA must be between 0 (off) and 90 days".into());
         }
         if !matches!(self.sharing.as_str(), "full" | "view" | "off") {
             return Err("Session sharing must be full, view or off".into());
@@ -108,36 +115,84 @@ impl SessionState {
     }
 }
 
-/// Live per-login state, kept in memory (a server restart forgets idle time and locks).
+/// Saved login states are kept this long: the longest login lifetime an admin can set
+/// (720 hours), so raising the lifetime later cannot bring an ended login back.
+const STORE_KEEP_SECS: i64 = 720 * 3600;
+
+/// Live per-login state. Idle time is kept in memory (a restart starts it again); locks and
+/// ended logins are also saved in the database when a store is given, so they survive a restart.
 #[derive(Default)]
 pub struct SessionTracker {
     sessions: Mutex<HashMap<String, SessionState>>,
+    store: Option<crate::db::Database>,
 }
 
 impl SessionTracker {
+    /// A tracker that saves locks and ended logins, starting from what was saved before.
+    pub fn with_store(db: crate::db::Database) -> Self {
+        let mut map = HashMap::new();
+        match db.load_login_states(STORE_KEEP_SECS) {
+            Ok(rows) => {
+                for (sid, state) in rows {
+                    let mut s = SessionState::fresh(state == "locked");
+                    s.expired = state == "expired";
+                    s.logged_out = state == "logged_out";
+                    map.insert(sid, s);
+                }
+            }
+            Err(e) => tracing::warn!("Could not read saved login states: {}", e),
+        }
+        Self { sessions: Mutex::new(map), store: Some(db) }
+    }
+
+    /// Save a login's new state (call without holding the map lock).
+    fn save(&self, sid: &str, state: Option<&str>) {
+        if let Some(db) = &self.store {
+            if let Err(e) = db.set_login_state(sid, state) {
+                tracing::warn!("Could not save login state: {}", e);
+            }
+        }
+    }
+
     /// Look up a login and apply the idle rule. Unknown logins start counting now.
     pub fn check(&self, sid: &str, policy: &SecurityPolicy) -> SessionStatus {
         if sid.is_empty() {
             return SessionStatus::Active;
         }
-        let mut map = self.sessions.lock();
-        let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
-        if s.logged_out {
-            return SessionStatus::LoggedOut;
-        }
-        if s.expired {
-            return SessionStatus::Expired;
-        }
-        if policy.idle_minutes > 0
-            && s.last_activity.elapsed() > Duration::from_secs(policy.idle_minutes as u64 * 60)
-        {
-            if policy.idle_action == "logout" {
-                s.expired = true;
+        let (status, changed) = {
+            let mut map = self.sessions.lock();
+            let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
+            if s.logged_out {
+                return SessionStatus::LoggedOut;
+            }
+            if s.expired {
                 return SessionStatus::Expired;
             }
-            s.locked = true;
+            let mut changed = None;
+            if policy.idle_minutes > 0
+                && s.last_activity.elapsed() > Duration::from_secs(policy.idle_minutes as u64 * 60)
+            {
+                if policy.idle_action == "logout" {
+                    s.expired = true;
+                    changed = Some("expired");
+                } else if !s.locked {
+                    s.locked = true;
+                    changed = Some("locked");
+                }
+            }
+            let status = if s.expired {
+                SessionStatus::Expired
+            } else if s.locked {
+                SessionStatus::Locked
+            } else {
+                SessionStatus::Active
+            };
+            (status, changed)
+        };
+        if let Some(state) = changed {
+            self.save(sid, Some(state));
         }
-        if s.locked { SessionStatus::Locked } else { SessionStatus::Active }
+        status
     }
 
     /// The user did something (typing, clicking). Ignored while locked.
@@ -150,18 +205,32 @@ impl SessionTracker {
     }
 
     pub fn lock(&self, sid: &str) {
-        let mut map = self.sessions.lock();
-        let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(true));
-        s.locked = true;
+        let save = {
+            let mut map = self.sessions.lock();
+            let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(true));
+            s.locked = true;
+            !s.expired && !s.logged_out
+        };
+        if save {
+            self.save(sid, Some("locked"));
+        }
     }
 
     /// Unlock after a successful password check (an idle-ended login stays ended).
     pub fn unlock(&self, sid: &str) {
-        let mut map = self.sessions.lock();
-        let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
-        if !s.expired && !s.logged_out {
-            s.locked = false;
-            s.last_activity = Instant::now();
+        let save = {
+            let mut map = self.sessions.lock();
+            let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
+            if !s.expired && !s.logged_out {
+                s.locked = false;
+                s.last_activity = Instant::now();
+                true
+            } else {
+                false
+            }
+        };
+        if save {
+            self.save(sid, None);
         }
     }
 
@@ -170,9 +239,12 @@ impl SessionTracker {
         if sid.is_empty() {
             return;
         }
-        let mut map = self.sessions.lock();
-        let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
-        s.logged_out = true;
+        {
+            let mut map = self.sessions.lock();
+            let s = map.entry(sid.to_string()).or_insert_with(|| SessionState::fresh(false));
+            s.logged_out = true;
+        }
+        self.save(sid, Some("logged_out"));
     }
 
     /// Drop entries idle for longer than any login can live (keeps memory small).
@@ -272,6 +344,24 @@ mod tests {
         assert_eq!(t.check("a", &p), SessionStatus::LoggedOut);
         t.unlock("a");
         assert_eq!(t.check("a", &p), SessionStatus::LoggedOut, "stays ended");
+    }
+
+    #[test]
+    fn tracker_survives_restart() {
+        let db = crate::db::Database::new_in_memory().unwrap();
+        let p = SecurityPolicy::default();
+        {
+            let t = SessionTracker::with_store(db.clone());
+            t.end("out");
+            t.lock("locked");
+            t.lock("unlocked");
+            t.unlock("unlocked");
+        }
+        let t = SessionTracker::with_store(db);
+        assert_eq!(t.check("out", &p), SessionStatus::LoggedOut);
+        assert_eq!(t.check("locked", &p), SessionStatus::Locked);
+        assert_eq!(t.check("unlocked", &p), SessionStatus::Active);
+        assert_eq!(t.check("new", &p), SessionStatus::Active);
     }
 
     #[test]
