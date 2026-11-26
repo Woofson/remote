@@ -40,6 +40,8 @@ struct Drive {
 #[derive(Debug)]
 pub struct GuardedDriveBackend {
     drives: HashMap<u32, Drive>,
+    /// The virtual printer (#36), when offered.
+    printer: Option<super::rdp_print::PrintSink>,
 }
 
 impl_as_any!(GuardedDriveBackend);
@@ -61,7 +63,7 @@ impl GuardedDriveBackend {
                 ))
             })
             .collect();
-        Self { drives }
+        Self { drives, printer: None }
     }
 }
 
@@ -150,7 +152,24 @@ fn deny(req: ServerDriveIoRequest, status: NtStatus) -> PduResult<Vec<SvcMessage
     Ok(vec![SvcMessage::from(pdu)])
 }
 
+impl GuardedDriveBackend {
+    /// Also receive print jobs for the virtual printer.
+    pub fn with_printer(mut self, spec: super::rdp_print::PrinterSpec) -> Self {
+        self.printer = Some(super::rdp_print::PrintSink::new(spec));
+        self
+    }
+}
+
 impl RdpdrBackend for GuardedDriveBackend {
+    fn handle_printer_io_request(&mut self, req: PrinterIoRequest) -> PduResult<Vec<SvcMessage>> {
+        match self.printer.as_mut() {
+            Some(p) => p.handle(req),
+            None => Ok(vec![SvcMessage::from(RdpdrPdu::DeviceCloseResponse(DeviceCloseResponse {
+                device_io_response: DeviceIoResponse::new(req.into_device_io_request(), NtStatus::NOT_SUPPORTED),
+            }))]),
+        }
+    }
+
     fn handle_server_device_announce_response(&mut self, _pdu: ServerDeviceAnnounceResponse) -> PduResult<()> {
         Ok(())
     }

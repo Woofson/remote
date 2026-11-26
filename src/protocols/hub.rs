@@ -369,8 +369,8 @@ impl Hub {
                         rec.screen_size(dim("width"), dim("height"));
                     }
                 }
-                // Clipboard contents and password prompts belong to the owner.
-                Some("clipboard_sync") | Some("auth_required") => owner_only = true,
+                // Clipboard contents, password prompts and print jobs (#36) belong to the owner.
+                Some("clipboard_sync") | Some("auth_required") | Some("print_job") => owner_only = true,
                 Some(_) => {}
                 None => self.remember_terminal_output(&m),
             },

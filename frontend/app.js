@@ -1762,6 +1762,8 @@ function openEditConnectionModal(id) {
   if (fontSmoothing) fontSmoothing.checked = settings.font_smoothing !== false;
   const driveRedir = document.getElementById('conn-rdp-drive-redirection');
   if (driveRedir) driveRedir.checked = !!settings.enable_drive_redirection;
+  const printing = document.getElementById('conn-rdp-printing');
+  if (printing) printing.checked = !!settings.enable_printing;
   const audio = document.getElementById('conn-rdp-audio');
   if (audio) audio.checked = !!settings.enable_audio;
   fillWakeFields(settings);
@@ -1977,6 +1979,7 @@ async function handleSaveConnection(e) {
     font_smoothing: document.getElementById('conn-rdp-font-smoothing') ? document.getElementById('conn-rdp-font-smoothing').checked : true,
     enable_drive_redirection: document.getElementById('conn-rdp-drive-redirection') ? document.getElementById('conn-rdp-drive-redirection').checked : true,
     enable_audio: document.getElementById('conn-rdp-audio') ? document.getElementById('conn-rdp-audio').checked : false,
+    enable_printing: !!document.getElementById('conn-rdp-printing')?.checked,
     shell: document.getElementById('conn-protocol').value === 'local_pty'
       ? (document.getElementById('conn-local-shell')?.value || null)
       : null,
@@ -2653,6 +2656,8 @@ function setupGraphicsProtocol(pane, ws, bodyEl) {
         } else if (msg.type === 'error') {
           pane.lastError = msg.message;
           showToast(msg.message, 'danger');
+        } else if (msg.type === 'print_job') {
+          onPrintJob(pane, msg);
         } else if (msg.type === 'ended') {
           // Ended on purpose on the remote side (Start menu > Disconnect, sign-out): no reconnect.
           pane.endReason = msg.reason || 'session ended';
@@ -3757,6 +3762,45 @@ function renderPaneTabs(paneIndex) {
       </div>`;
   }).join('');
   strip.querySelector('.pane-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+// ---- RDP printing (#36): a print job arrived as a PDF in the user's Files (Prints folder) ----
+function printJobUrl(path, inline) {
+  return `api/files/download?area=my&path=${encodeURIComponent(path)}${inline ? '&inline=true' : ''}`;
+}
+
+function onPrintJob(pane, msg) {
+  if (msg.error) {
+    showToast(`${pane.conn ? pane.conn.name + ': ' : ''}${msg.error}`, 'warning');
+    return;
+  }
+  let box = pane.el.querySelector('.print-notices');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'print-notices';
+    pane.el.appendChild(box);
+  }
+  const card = document.createElement('div');
+  card.className = 'print-notice';
+  const size = msg.size >= 1048576 ? `${(msg.size / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(msg.size / 1024))} KB`;
+  card.innerHTML = `
+    <svg class="print-notice-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+    <div class="print-notice-text"><b>Printed</b><span title="Saved in your Files, Prints folder">${escapeHtml(msg.name)} · ${size}</span></div>
+    <button type="button" class="btn btn-accent btn-sm" data-print="open">Open</button>
+    <a class="btn btn-secondary btn-sm" data-print="save" href="${printJobUrl(msg.path, false)}" download="${escapeHtml(msg.name)}">Save</a>
+    <button type="button" class="print-notice-close" data-print="close" title="Close">×</button>`;
+  card.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const what = e.target.closest('[data-print]')?.dataset.print;
+    if (what === 'open') window.open(printJobUrl(msg.path, true), '_blank', 'noopener');
+    if (what === 'close' || what === 'open' || what === 'save') setTimeout(() => card.remove(), what === 'close' ? 0 : 400);
+  });
+  box.appendChild(card);
+  // Only the newest few stay; older notices go (the files stay in Prints).
+  while (box.children.length > 3) box.firstElementChild.remove();
+  // An open Files drawer shows the new file.
+  const drawer = document.getElementById('transfer-drawer');
+  if (drawer && drawer.style.display !== 'none' && state.filesArea === 'my') loadFiles(state.filesPath);
 }
 
 /** Show only the selected tab's screen in a pane; a terminal that was hidden is re-fitted. */

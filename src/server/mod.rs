@@ -1983,6 +1983,8 @@ pub struct FilesPathQuery {
     pub path: Option<String>,
     /// "my" (default) or "shared".
     pub area: Option<String>,
+    /// Download only: show a PDF in the browser instead of saving it (print jobs, #36).
+    pub inline: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -2103,11 +2105,22 @@ pub async fn api_files_download(
         .db
         .log_transfer(None, Some(&claims.sub), &area_path(area, &file.rel), size, "download", "completed");
 
-    Response::builder()
+    // PDFs may be shown in the browser's own PDF viewer; never sniffed as anything else.
+    let inline_pdf = q.inline == Some(true) && name.to_lowercase().ends_with(".pdf");
+    let mut builder = Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/octet-stream")
         .header(header::CONTENT_LENGTH, size)
-        .header(header::CONTENT_DISPOSITION, content_disposition(&name))
+        .header("X-Content-Type-Options", "nosniff");
+    builder = if inline_pdf {
+        builder
+            .header(header::CONTENT_TYPE, "application/pdf")
+            .header(header::CONTENT_DISPOSITION, content_disposition(&name).replacen("attachment", "inline", 1))
+    } else {
+        builder
+            .header(header::CONTENT_TYPE, "application/octet-stream")
+            .header(header::CONTENT_DISPOSITION, content_disposition(&name))
+    };
+    builder
         .body(Body::from_stream(tokio_util::io::ReaderStream::new(handle)))
         .map_err(|e| files_err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
@@ -2767,6 +2780,19 @@ pub async fn ws_tunnel_handler(
             (user.id.clone(), user.username.clone(), conn_rec.id.clone(), conn_rec.name.clone(), ip.as_opt().map(str::to_string));
         move |details: String| db.log_audit(Some(&uid), &uname, "WAKE", Some(&cid), Some(&cname), Some(&details), ip_text.as_deref())
     };
+    // RDP printing (#36): every print job goes into the activity log.
+    let print_audit: Arc<dyn Fn(crate::protocols::rdp_print::PrintedJob) + Send + Sync> = {
+        let db = state.db.clone();
+        let (uid, uname, cid, cname, ip_text) =
+            (user.id.clone(), user.username.clone(), conn_rec.id.clone(), conn_rec.name.clone(), ip.as_opt().map(str::to_string));
+        Arc::new(move |job: crate::protocols::rdp_print::PrintedJob| {
+            let details = match &job.error {
+                None => format!("Printed {} ({} KB) to Files/{}", job.file_name, job.size.div_ceil(1024), job.rel_path),
+                Some(e) => format!("Print job not saved: {}", e),
+            };
+            db.log_audit(Some(&uid), &uname, "PRINT_JOB", Some(&cid), Some(&cname), Some(&details), ip_text.as_deref())
+        })
+    };
 
     Ok(ws.on_upgrade(move |mut socket| async move {
         let mut hub_cfg = hub_cfg;
@@ -2848,6 +2874,7 @@ pub async fn ws_tunnel_handler(
                 let mut font_smoothing = true;
 
                 let mut enable_drive_redirection = false;
+                let mut enable_printing = false;
                 let mut keyboard_layout = None;
 
                 if let Ok(settings) = serde_json::from_str::<serde_json::Value>(&conn_rec.settings_json) {
@@ -2885,6 +2912,13 @@ pub async fn ws_tunnel_handler(
                     if let Some(edr) = settings.get("enable_drive_redirection").and_then(|v| v.as_bool()) {
                         enable_drive_redirection = edr && conn_perms.can_transfer;
                     }
+                    // A print job leaves the remote machine like a download: it follows the
+                    // connection's file transfer setting and the user's permission (#36).
+                    if let Some(p) = settings.get("enable_printing").and_then(|v| v.as_bool()) {
+                        enable_printing = p
+                            && conn_perms.can_transfer
+                            && matches!(conn_rec.allow_transfer.as_str(), "full" | "download_only");
+                    }
                     if let Some(kl) = settings.get("keyboard_layout").and_then(|v| v.as_str()) {
                         if !kl.trim().is_empty() {
                             keyboard_layout = Some(kl.trim().to_string());
@@ -2920,6 +2954,14 @@ pub async fn ws_tunnel_handler(
                         session_drives(&state, &user)
                     } else {
                         Vec::new()
+                    },
+                    printer: if enable_printing {
+                        state.transfer_mgr.scope(Area::Mine, &user.id).ok().map(|mine| crate::protocols::rdp_print::PrinterSpec {
+                            files_root: mine.root,
+                            on_job: print_audit.clone(),
+                        })
+                    } else {
+                        None
                     },
                     keyboard_layout,
                 };

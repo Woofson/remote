@@ -40,6 +40,8 @@ pub struct RdpConnectionParams {
     pub font_smoothing: bool,
     /// Drives offered as `\\tsclient\<name>`; empty disables drive redirection.
     pub drives: Vec<super::rdp_drive::DriveSpec>,
+    /// Virtual printer (#36): print jobs saved as PDF in the user's Files.
+    pub printer: Option<super::rdp_print::PrinterSpec>,
     pub keyboard_layout: Option<String>,
 }
 
@@ -602,7 +604,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
                     ws_tx: audio_tx.clone(),
                 })))
             });
-    } else if !params.drives.is_empty() {
+    } else if !params.drives.is_empty() || params.printer.is_some() {
         // Windows only starts the RDPDR channel when the client also advertises RDPSND
         // (MS-RDPEFS, Appendix A). Register a silent RDPSND channel that offers no audio
         // formats, so no audio is streamed.
@@ -613,7 +615,7 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
         });
     }
 
-    if !params.drives.is_empty() {
+    if !params.drives.is_empty() || params.printer.is_some() {
         config_builder = config_builder.with_rdpdr(true);
         for d in &params.drives {
             info!(
@@ -624,10 +626,46 @@ pub async fn handle_rdp_session(socket: WebSocket, params: RdpConnectionParams) 
             );
         }
         let drives = params.drives.clone();
+        // Print jobs: the browser is told (owner only), then the caller (activity log).
+        let printer = params.printer.clone().map(|spec| {
+            info!("RDP Gateway: offering the printer \"{}\" (Microsoft Print to PDF)", super::rdp_print::PRINTER_NAME);
+            let notify_tx = ws_out_tx.clone();
+            let caller = spec.on_job.clone();
+            super::rdp_print::PrinterSpec {
+                files_root: spec.files_root,
+                on_job: Arc::new(move |job: super::rdp_print::PrintedJob| {
+                    let _ = notify_tx.try_send(Message::Text(
+                        json!({
+                            "type": "print_job",
+                            "name": job.file_name,
+                            "path": job.rel_path,
+                            "size": job.size,
+                            "error": job.error,
+                        })
+                        .to_string(),
+                    ));
+                    caller(job);
+                }),
+            }
+        });
         config_builder = config_builder.with_static_channel(move |_ps| {
-            let backend = Box::new(super::rdp_drive::GuardedDriveBackend::new(&drives));
-            let names = drives.iter().map(|d| (d.device_id, d.name.clone())).collect();
-            Some(ironrdp_rdpdr::Rdpdr::new(backend, "Remote".to_owned()).with_drives(Some(names)))
+            let mut backend = super::rdp_drive::GuardedDriveBackend::new(&drives);
+            if let Some(spec) = printer.clone() {
+                backend = backend.with_printer(spec);
+            }
+            let names: Vec<(u32, String)> = drives.iter().map(|d| (d.device_id, d.name.clone())).collect();
+            let mut rdpdr = ironrdp_rdpdr::Rdpdr::new(Box::new(backend), "Remote".to_owned());
+            if !names.is_empty() {
+                rdpdr = rdpdr.with_drives(Some(names));
+            }
+            if printer.is_some() {
+                rdpdr = rdpdr.with_printer_driver(
+                    super::rdp_print::PRINTER_DEVICE_ID,
+                    super::rdp_print::PRINTER_NAME.to_owned(),
+                    ironrdp_rdpdr::pdu::efs::MICROSOFT_PRINT_TO_PDF_DRIVER_NAME.to_owned(),
+                );
+            }
+            Some(rdpdr)
         });
     }
 

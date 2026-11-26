@@ -3473,6 +3473,46 @@ kbd {
 }
 .pane-tab-body.hidden { display: none; }
 
+/* RDP printing (#36): notices for print jobs, bottom right of the session */
+.print-notices {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 30;
+  max-width: calc(100% - 28px);
+}
+.print-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 10px 10px 12px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--woofson-bg-header, #202024);
+  border: 1px solid var(--woofson-border, #3f3f46);
+  border-left: 3px solid var(--woofson-accent, #f59e0b);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  font-size: 12px;
+  color: var(--woofson-text-main);
+  animation: fadeIn 0.15s ease;
+}
+.print-notice-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--woofson-accent, #f59e0b); }
+.print-notice-text { display: flex; flex-direction: column; min-width: 0; }
+.print-notice-text span { color: var(--woofson-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.print-notice a.btn { text-decoration: none; }
+.print-notice-close {
+  background: none;
+  border: none;
+  color: var(--woofson-text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.print-notice-close:hover { color: var(--woofson-text-main); }
+
 .pane-header .pane-header-left { min-width: 0; flex: 1 1 auto; overflow: hidden; }
 .pane-header .pane-header-right { flex-shrink: 0; margin-left: 6px; }
 
